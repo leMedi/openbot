@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { addAgent, updateAgent } from '@/server/agents'
@@ -76,6 +77,13 @@ export function BotDialog({
   function pickAvatar(file: File | null) {
     setAvatarFile(file)
     if (file) setAvatarRemoved(false)
+  }
+
+  // Shape and image are mutually exclusive: picking a shape or color discards
+  // any pending or saved image so the choice shows up in the preview.
+  function clearImage() {
+    setAvatarFile(null)
+    setAvatarRemoved(true)
   }
 
   async function save() {
@@ -171,65 +179,87 @@ export function BotDialog({
                   }
                 />
                 <PopoverContent align="start" className="w-64 p-2.5">
-                  <div className="flex flex-wrap justify-center gap-1">
-                    {AVATAR_SHAPES.map((sh) => (
+                  <Tabs defaultValue={previewUrl ? 'image' : 'shape'} className="flex-col">
+                    <TabsList className="mb-2 h-auto justify-start gap-1 bg-transparent p-0">
+                      <TabsTrigger
+                        value="shape"
+                        className="h-auto flex-none rounded-md px-2 py-0.5 text-xs border-0"
+                      >
+                        Bot
+                      </TabsTrigger>
+                      <TabsTrigger
+                        value="image"
+                        className="h-auto flex-none rounded-md px-2 py-0.5 text-xs border-0"
+                      >
+                        Upload
+                      </TabsTrigger>
+                    </TabsList>
+                    <TabsContent value="shape">
+                      <div className="flex flex-wrap justify-center gap-1">
+                        {AVATAR_SHAPES.map((sh) => (
+                          <button
+                            key={sh.id}
+                            type="button"
+                            title={sh.id}
+                            onClick={() => {
+                              setShape(sh)
+                              clearImage()
+                            }}
+                            className={cn(
+                              'flex size-12 items-center justify-center rounded-lg hover:bg-muted',
+                              sh.id === shape.id && 'ring-2 ring-info',
+                            )}
+                          >
+                            <svg width="36" height="36" viewBox="0 0 48 48">
+                              <path d={sh.d} fill={color} />
+                            </svg>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="mx-auto mt-3 flex max-w-40 flex-wrap justify-center gap-3">
+                        {AVATAR_COLORS.map((c) => (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => {
+                              setColor(c)
+                              clearImage()
+                            }}
+                            className={cn(
+                              'size-5.5 rounded-full',
+                              c === color &&
+                                'ring-2 ring-info ring-offset-2 ring-offset-popover',
+                            )}
+                            style={{ background: c }}
+                          />
+                        ))}
+                      </div>
+                    </TabsContent>
+                    <TabsContent value="image">
                       <button
-                        key={sh.id}
                         type="button"
-                        title={sh.id}
-                        onClick={() => setShape(sh)}
+                        onClick={() => fileInputRef.current?.click()}
+                        className="flex w-full items-center justify-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
+                      >
+                        <ImageUp className="size-3.5 text-muted-foreground" />
+                        Upload image…
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!previewUrl}
+                        onClick={clearImage}
                         className={cn(
-                          'flex size-12 items-center justify-center rounded-lg hover:bg-muted',
-                          sh.id === shape.id && 'ring-2 ring-info',
+                          'flex w-full items-center gap-2 justify-center rounded-md px-2 py-1.5 text-sm',
+                          previewUrl
+                            ? 'text-destructive hover:bg-muted'
+                            : 'cursor-not-allowed text-muted-foreground/50',
                         )}
                       >
-                        <svg width="36" height="36" viewBox="0 0 48 48">
-                          <path d={sh.d} fill={color} />
-                        </svg>
+                        <Trash2 className="size-3.5" />
+                        Remove image
                       </button>
-                    ))}
-                  </div>
-                  <div className="mx-auto mt-3 flex max-w-40 flex-wrap justify-center gap-2">
-                    {AVATAR_COLORS.map((c) => (
-                      <button
-                        key={c}
-                        type="button"
-                        onClick={() => setColor(c)}
-                        className={cn(
-                          'size-5.5 rounded-full',
-                          c === color && 'ring-2 ring-info ring-offset-2 ring-offset-popover',
-                        )}
-                        style={{ background: c }}
-                      />
-                    ))}
-                  </div>
-                  <div className="mt-2.5 border-t pt-1.5">
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
-                    >
-                      <ImageUp className="size-3.5 text-muted-foreground" />
-                      Upload image…
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!previewUrl}
-                      onClick={() => {
-                        setAvatarFile(null)
-                        setAvatarRemoved(true)
-                      }}
-                      className={cn(
-                        'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm',
-                        previewUrl
-                          ? 'text-destructive hover:bg-muted'
-                          : 'cursor-not-allowed text-muted-foreground/50',
-                      )}
-                    >
-                      <Trash2 className="size-3.5" />
-                      Remove image
-                    </button>
-                  </div>
+                    </TabsContent>
+                  </Tabs>
                 </PopoverContent>
               </Popover>
             </div>
