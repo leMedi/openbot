@@ -2,18 +2,26 @@ import { createAgent, getAgent, listAgents, updateAgentProfile } from '@openbot/
 import { createServerFn } from '@tanstack/react-start'
 import * as z from 'zod'
 
-const agentProfileInput = z.object({
+// Creation defaults live in the registry (createAgent); omitted fields here
+// stay omitted so partial updates never reset a stored value.
+const agentProfileFields = z.object({
   name: z.string().trim().min(1, 'Name is required').max(80),
-  description: z.string().trim().max(500).default(''),
-  title: z.string().trim().max(120).default(''),
-  defaultModel: z.string().trim().min(1).max(120).nullable().default(null),
-  notifyOnUpdates: z.boolean().default(true),
-  hiddenFromSidebar: z.boolean().default(false),
+  description: z.string().trim().max(500),
+  title: z.string().trim().max(120),
+  defaultMode: z.string().trim().min(1).max(40),
+  defaultModel: z.string().trim().min(1).max(120).nullable(),
+  approvalMode: z.string().trim().min(1).max(40),
+  notifyOnUpdates: z.boolean(),
+  hiddenFromSidebar: z.boolean(),
+})
+
+const agentCreateInput = agentProfileFields.partial().extend({
+  name: agentProfileFields.shape.name,
 })
 
 const agentUpdateInput = z.object({
   id: z.string().min(1),
-  patch: agentProfileInput.partial(),
+  patch: agentProfileFields.partial(),
 })
 
 export const getAgents = createServerFn({ method: 'GET' }).handler(() =>
@@ -29,7 +37,7 @@ export const getAgentById = createServerFn({ method: 'GET' })
   })
 
 export const addAgent = createServerFn({ method: 'POST' })
-  .validator((input: unknown) => agentProfileInput.parse(input))
+  .validator((input: unknown) => agentCreateInput.parse(input))
   .handler(({ data }) => createAgent(data))
 
 export const updateAgent = createServerFn({ method: 'POST' })

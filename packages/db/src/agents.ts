@@ -3,7 +3,6 @@ import { db } from './client'
 import {
   createManagedFile,
   deleteManagedFileIfUnreferenced,
-  extensionForMediaType,
   readManagedFile,
 } from './files'
 import { createId } from './ids'
@@ -83,9 +82,6 @@ export async function updateAgentProfile(
 
 function assertValidAvatarUpload(upload: AvatarUpload) {
   if (!(AVATAR_MEDIA_TYPES as readonly string[]).includes(upload.mediaType)) {
-    throw new Error(`Unsupported avatar media type: ${upload.mediaType}`)
-  }
-  if (!extensionForMediaType(upload.mediaType)) {
     throw new Error(`Unsupported avatar media type: ${upload.mediaType}`)
   }
   if (upload.bytes.byteLength === 0) {

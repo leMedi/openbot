@@ -54,6 +54,9 @@ function OpenBot() {
 
   const active = conversations.find((c) => c.id === activeId) ?? conversations[0]
   const bot = botIn(bots, active.botId)
+  // Editing is only offered for persisted agents; mock showcase bots have no
+  // server-side profile to edit.
+  const activeAgent = agents.find((a) => a.id === active.botId)
 
   // "Sprint 78 board sweep" carries the full showcase transcript; the rest are
   // adapted from the OpenBot mock data.
@@ -93,11 +96,6 @@ function OpenBot() {
     setDeleteTarget(null)
   }
 
-  function editAgent() {
-    const agent = agents.find((a) => a.id === active.botId) ?? null
-    setBotDialog({ open: true, agent })
-  }
-
   return (
     <div className="flex h-svh overflow-hidden">
       <Sidebar
@@ -124,7 +122,11 @@ function OpenBot() {
         members={members}
         initialEntries={entries}
         activityTabs={tabs}
-        onEditAgent={editAgent}
+        onEditAgent={
+          activeAgent
+            ? () => setBotDialog({ open: true, agent: activeAgent })
+            : undefined
+        }
         headerActions={
           <Button
             variant="ghost"

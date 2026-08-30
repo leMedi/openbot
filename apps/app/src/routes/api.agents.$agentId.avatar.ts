@@ -14,34 +14,27 @@ function errorResponse(error: unknown) {
 
 async function readUpload(request: Request) {
   const contentType = request.headers.get('content-type') ?? ''
-
-  if (contentType.startsWith('multipart/form-data')) {
-    const form = await request.formData()
-    const file = form.get('file')
-    if (!(file instanceof File)) {
-      throw new Error('Expected a "file" form field with the avatar image')
-    }
-    if (file.size > MAX_AVATAR_BYTES) {
-      throw new Error('Avatar upload exceeds the maximum size')
-    }
-    return {
-      bytes: new Uint8Array(await file.arrayBuffer()),
-      originalName: file.name || 'avatar',
-      mediaType: file.type,
-    }
+  if (!contentType.startsWith('multipart/form-data')) {
+    throw new Error('Avatar uploads must be multipart/form-data with a "file" field')
   }
 
-  const declaredLength = Number(request.headers.get('content-length') ?? '0')
-  if (declaredLength > MAX_AVATAR_BYTES) {
+  const form = await request.formData()
+  const file = form.get('file')
+  if (!(file instanceof File)) {
+    throw new Error('Expected a "file" form field with the avatar image')
+  }
+  if (file.size > MAX_AVATAR_BYTES) {
     throw new Error('Avatar upload exceeds the maximum size')
   }
   return {
-    bytes: new Uint8Array(await request.arrayBuffer()),
-    originalName: request.headers.get('x-file-name') ?? 'avatar',
-    mediaType: contentType.split(';')[0].trim(),
+    bytes: new Uint8Array(await file.arrayBuffer()),
+    originalName: file.name || 'avatar',
+    mediaType: file.type,
   }
 }
 
+// The single-user MVP has no authentication layer anywhere; this route shares
+// the trust level of the server-function API boundary.
 export const Route = createFileRoute('/api/agents/$agentId/avatar')({
   server: {
     handlers: {

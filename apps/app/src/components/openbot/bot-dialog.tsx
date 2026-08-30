@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Agent } from '@openbot/db'
 import { Check, ChevronDown, ImageUp, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -56,6 +56,11 @@ export function BotDialog({
     () => (avatarFile ? URL.createObjectURL(avatarFile) : undefined),
     [avatarFile],
   )
+  useEffect(() => {
+    return () => {
+      if (pendingAvatarUrl) URL.revokeObjectURL(pendingAvatarUrl)
+    }
+  }, [pendingAvatarUrl])
   const savedAvatarUrl = agent && !avatarRemoved ? agentAvatarUrl(agent) : undefined
   const previewUrl = pendingAvatarUrl ?? savedAvatarUrl
 

@@ -382,10 +382,14 @@ Recommended implementation slices are:
 - `packages/db/src/schema.ts`: canonical Drizzle table and constraint model.
 - `packages/db/src/json-schemas.ts`: versioned durable JSON contracts.
 - `packages/db/src/ids.ts`: prefixed server ID generation.
-- `packages/db/src/index.ts`: database startup and current repository exports.
-- `packages/db/src/env.ts`: local database and migration paths.
+- `packages/db/src/client.ts`: database startup (pragmas, migrations, turn recovery).
+- `packages/db/src/agents.ts`: agent registry repository, including avatar operations.
+- `packages/db/src/files.ts`: managed-file repository and path containment.
+- `packages/db/src/index.ts`: package exports.
+- `packages/db/src/env.ts`: local database, migration, and managed-file paths.
 - `packages/db/drizzle/`: generated committed migrations and metadata.
 - `apps/app/src/server/agents.ts`: current agent API boundary.
+- `apps/app/src/routes/api.agents.$agentId.avatar.ts`: avatar file-serving API.
 - `apps/app/src/routes/index.tsx`: current agent registry UI.
 
 Generated migrations are deployment artifacts. They do not replace
