@@ -1,0 +1,42 @@
+{
+  "name": "@openbot/app",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#/*": "./src/*"
+  },
+  "scripts": {
+    "with-env": "dotenv -e ../../.env --",
+    "dev": "pnpm with-env vite dev --port 3000",
+    "generate-routes": "tsr generate",
+    "build": "pnpm with-env vite build",
+    "preview": "pnpm with-env vite preview",
+    "typecheck": "pnpm generate-routes && tsc --noEmit",
+    "ui:add": "shadcn add"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.7.0",
+    "@openbot/db": "workspace:*",
+    "@tailwindcss/vite": "4.3.3",
+    "@tanstack/react-router": "1.170.32",
+    "@tanstack/react-start": "1.168.49",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "tailwind-merge": "^3.6.0",
+    "tailwindcss": "4.3.3",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@tanstack/router-cli": "^1.167.33",
+    "@types/node": "26.4.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "@vitejs/plugin-react": "6.1.1",
+    "dotenv-cli": "11.0.0",
+    "shadcn": "4.19.0",
+    "typescript": "7.0.2",
+    "vite": "8.2.2"
+  }
+}
