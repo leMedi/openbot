@@ -2,6 +2,14 @@ export { db } from './client'
 export * from './ids'
 export * from './json-schemas'
 export * from './agents'
+export * from './conversations'
 export * from './files'
-export { agents, managedFiles } from './schema'
-export type { Agent, NewAgent, ManagedFile, NewManagedFile } from './schema'
+export { agents, conversations, managedFiles } from './schema'
+export type {
+  Agent,
+  NewAgent,
+  Conversation,
+  NewConversation,
+  ManagedFile,
+  NewManagedFile,
+} from './schema'

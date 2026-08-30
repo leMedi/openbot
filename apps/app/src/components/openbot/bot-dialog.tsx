@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Agent } from '@openbot/db'
+import type { Agent, Conversation } from '@openbot/db'
 import { ImageUp, Lock, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -36,7 +36,8 @@ export function BotDialog({
   agent: Agent | null
   /** Server-configured model (OPENBOT_AI_MODEL); read-only until model providers land. */
   serverModel: string
-  onSaved: (saved: Agent, created: boolean) => void
+  /** On create, `firstConversation` is the persisted conversation named after the agent. */
+  onSaved: (saved: Agent, firstConversation: Conversation | null) => void
 }) {
   const editing = !!agent
   const [name, setName] = useState(agent?.name ?? '')
@@ -85,9 +86,15 @@ export function BotDialog({
         notifyOnUpdates,
         hiddenFromSidebar,
       }
-      const saved = editing
-        ? await updateAgent({ data: { id: agent.id, patch: profile } })
-        : await addAgent({ data: profile })
+      let saved: Agent
+      let firstConversation: Conversation | null = null
+      if (editing) {
+        saved = await updateAgent({ data: { id: agent.id, patch: profile } })
+      } else {
+        const created = await addAgent({ data: profile })
+        saved = created.agent
+        firstConversation = created.conversation
+      }
 
       if (avatarFile) {
         const form = new FormData()
@@ -110,7 +117,7 @@ export function BotDialog({
         }
       }
 
-      onSaved(saved, !editing)
+      onSaved(saved, firstConversation)
       onOpenChange(false)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Saving the bot failed')

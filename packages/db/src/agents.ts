@@ -46,24 +46,40 @@ export async function getAgent(id: string) {
   return agent
 }
 
+/**
+ * Creates the agent together with its first conversation (titled after the
+ * agent) in one transaction, so a new agent never exists without a room.
+ */
 export async function createAgent(input: AgentProfileInput) {
   const now = Date.now()
-  const [created] = await db
-    .insert(schema.agents)
-    .values({
-      id: createId('agt'),
-      name: input.name,
-      description: input.description ?? '',
-      defaultMode: input.defaultMode ?? 'default',
-      defaultModel: input.defaultModel ?? null,
-      approvalMode: input.approvalMode ?? 'allowlist',
-      notifyOnUpdates: input.notifyOnUpdates ?? true,
-      hiddenFromSidebar: input.hiddenFromSidebar ?? false,
-      createdAt: now,
-      updatedAt: now,
-    })
-    .returning()
-  return created
+  return db.transaction(async (tx) => {
+    const [agent] = await tx
+      .insert(schema.agents)
+      .values({
+        id: createId('agt'),
+        name: input.name,
+        description: input.description ?? '',
+        defaultMode: input.defaultMode ?? 'default',
+        defaultModel: input.defaultModel ?? null,
+        approvalMode: input.approvalMode ?? 'allowlist',
+        notifyOnUpdates: input.notifyOnUpdates ?? true,
+        hiddenFromSidebar: input.hiddenFromSidebar ?? false,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning()
+    const [conversation] = await tx
+      .insert(schema.conversations)
+      .values({
+        id: createId('cnv'),
+        ownerAgentId: agent.id,
+        title: agent.name,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning()
+    return { agent, conversation }
+  })
 }
 
 export async function updateAgentProfile(

@@ -25,13 +25,20 @@ function pngBytes(fill: number) {
 
 describe('agent profiles', () => {
   it('creates, lists, gets, and updates an agent profile', async () => {
-    const created = await dbModule.createAgent({
+    const { agent: created, conversation } = await dbModule.createAgent({
       name: 'Ops Watch',
       description: 'Watches error rates overnight.',
     })
     expect(created.id).toMatch(/^agt_/)
     expect(created.notifyOnUpdates).toBe(true)
     expect(created.hiddenFromSidebar).toBe(false)
+
+    // A first conversation named after the agent is created transactionally.
+    expect(conversation.id).toMatch(/^cnv_/)
+    expect(conversation.ownerAgentId).toBe(created.id)
+    expect(conversation.title).toBe('Ops Watch')
+    const listedConversations = await dbModule.listConversations()
+    expect(listedConversations.map((c) => c.id)).toContain(conversation.id)
 
     const listed = await dbModule.listAgents()
     expect(listed.map((agent) => agent.id)).toContain(created.id)
@@ -54,7 +61,7 @@ describe('agent profiles', () => {
   })
 
   it('keeps profiles across a server restart', async () => {
-    const created = await dbModule.createAgent({
+    const { agent: created, conversation } = await dbModule.createAgent({
       name: 'Restart Survivor',
       description: 'Should outlive the process state.',
       defaultModel: 'claude-opus-5',
@@ -73,12 +80,39 @@ describe('agent profiles', () => {
     expect(survivor?.defaultModel).toBe('claude-opus-5')
     expect(survivor?.notifyOnUpdates).toBe(false)
     expect(survivor?.hiddenFromSidebar).toBe(true)
+
+    const conversations = await reloaded.listConversations()
+    expect(conversations.map((c) => c.id)).toContain(conversation.id)
+  })
+})
+
+describe('conversations', () => {
+  it('creates and deletes a conversation for an agent', async () => {
+    const { agent } = await dbModule.createAgent({ name: 'Convo Owner' })
+
+    const created = await dbModule.createConversation({
+      ownerAgentId: agent.id,
+      title: 'Side project',
+    })
+    expect(created.ownerAgentId).toBe(agent.id)
+    expect(created.title).toBe('Side project')
+
+    expect(await dbModule.deleteConversation(created.id)).toBe(true)
+    expect(await dbModule.deleteConversation(created.id)).toBe(false)
+    const remaining = await dbModule.listConversations()
+    expect(remaining.map((c) => c.id)).not.toContain(created.id)
+  })
+
+  it('rejects a conversation for a missing agent', async () => {
+    await expect(
+      dbModule.createConversation({ ownerAgentId: 'agt_missing' }),
+    ).rejects.toThrow()
   })
 })
 
 describe('agent avatars and managed files', () => {
   it('uploads, serves, replaces, and removes an avatar', async () => {
-    const agent = await dbModule.createAgent({ name: 'Avatar Agent' })
+    const { agent } = await dbModule.createAgent({ name: 'Avatar Agent' })
 
     const withAvatar = await dbModule.setAgentAvatar(agent.id, {
       bytes: pngBytes(1),
@@ -118,8 +152,8 @@ describe('agent avatars and managed files', () => {
   })
 
   it('does not delete a managed file that is still referenced elsewhere', async () => {
-    const owner = await dbModule.createAgent({ name: 'Shared Avatar Owner' })
-    const other = await dbModule.createAgent({ name: 'Shared Avatar Borrower' })
+    const { agent: owner } = await dbModule.createAgent({ name: 'Shared Avatar Owner' })
+    const { agent: other } = await dbModule.createAgent({ name: 'Shared Avatar Borrower' })
 
     const withAvatar = await dbModule.setAgentAvatar(owner.id, {
       bytes: pngBytes(3),
@@ -158,7 +192,7 @@ describe('agent avatars and managed files', () => {
   })
 
   it('rejects unsupported avatar uploads', async () => {
-    const agent = await dbModule.createAgent({ name: 'Picky Agent' })
+    const { agent } = await dbModule.createAgent({ name: 'Picky Agent' })
 
     await expect(
       dbModule.setAgentAvatar(agent.id, {
@@ -186,7 +220,7 @@ describe('agent avatars and managed files', () => {
   })
 
   it('reads managed file bytes only through validated relative paths', async () => {
-    const agent = await dbModule.createAgent({ name: 'Escape Artist' })
+    const { agent } = await dbModule.createAgent({ name: 'Escape Artist' })
     await dbModule.setAgentAvatar(agent.id, {
       bytes: pngBytes(5),
       originalName: 'fine.png',

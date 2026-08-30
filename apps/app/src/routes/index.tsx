@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react'
-import type { Agent } from '@openbot/db'
 import { createFileRoute, useRouter } from '@tanstack/react-router'
+import type { Agent } from '@openbot/db'
 import { BotIcon, MessageCircle, PanelRight } from 'lucide-react'
 import { activityFor, entriesFor } from '@/components/conversation/adapter'
 import { Conversation } from '@/components/conversation/conversation'
 import { botFromAgent } from '@/components/openbot/agents'
 import { BotDialog } from '@/components/openbot/bot-dialog'
+import { conversationFromRow } from '@/components/openbot/conversations'
 import { botIn, type Conversation as BotConversation } from '@/components/openbot/data'
 import { Inspector } from '@/components/openbot/inspector'
 import {
@@ -19,22 +20,29 @@ import { Sidebar } from '@/components/openbot/sidebar'
 import { Button } from '@/components/ui/button'
 import { getAgents } from '@/server/agents'
 import { getServerConfig } from '@/server/config'
+import {
+  addConversation,
+  getConversations,
+  removeConversation,
+} from '@/server/conversations'
 
 export const Route = createFileRoute('/')({
   loader: async () => {
-    const [agents, config] = await Promise.all([getAgents(), getServerConfig()])
-    return { agents, config }
+    const [agents, conversations, config] = await Promise.all([
+      getAgents(),
+      getConversations(),
+      getServerConfig(),
+    ])
+    return { agents, conversations, config }
   },
   component: OpenBot,
 })
 
 function OpenBot() {
-  const { agents, config } = Route.useLoaderData()
+  const { agents, conversations: conversationRows, config } = Route.useLoaderData()
   const router = useRouter()
 
-  // Conversations are client-held until conversation persistence lands.
-  const [conversations, setConversations] = useState<BotConversation[]>([])
-  const [activeId, setActiveId] = useState('')
+  const [activeId, setActiveId] = useState(conversationRows[0]?.id ?? '')
   const [inspectorOpen, setInspectorOpen] = useState(true)
 
   const [pluginsOpen, setPluginsOpen] = useState(false)
@@ -51,6 +59,10 @@ function OpenBot() {
     () => agents.map((agent) => botFromAgent(agent, config.model)),
     [agents, config.model],
   )
+  const conversations = useMemo(
+    () => conversationRows.map(conversationFromRow),
+    [conversationRows],
+  )
 
   const active = conversations.find((c) => c.id === activeId)
   const bot = active ? botIn(bots, active.botId) : undefined
@@ -64,37 +76,25 @@ function OpenBot() {
     return { entries: entriesFor(active, author), tabs: activityFor(active, author) }
   }, [active, bot])
 
-  function selectConversation(id: string) {
-    setActiveId(id)
-    setConversations((all) => all.map((c) => (c.id === id ? { ...c, unread: false } : c)))
-  }
-
-  function openConversation(botId: string, title: string) {
-    const convo: BotConversation = {
-      id: `c${Date.now()}`,
-      botId,
-      title,
-      time: 'Now',
-      messages: [],
-    }
-    setConversations((all) => [convo, ...all])
-    selectConversation(convo.id)
-  }
-
-  function startConversation(botId: string) {
+  async function startConversation(botId: string) {
     const picked = botIn(bots, botId)
-    openConversation(picked.id, `New conversation with ${picked.name}`)
+    const created = await addConversation({
+      data: { agentId: picked.id, title: `New conversation with ${picked.name}` },
+    })
     setNewConvoOpen(false)
+    await router.invalidate()
+    setActiveId(created.id)
   }
 
-  function deleteConversation() {
+  async function deleteConversation() {
     if (!deleteTarget) return
-    setConversations((all) => {
-      const next = all.filter((c) => c.id !== deleteTarget.id)
-      if (deleteTarget.id === activeId) setActiveId(next[0]?.id ?? '')
-      return next
-    })
+    await removeConversation({ data: { id: deleteTarget.id } })
     setDeleteTarget(null)
+    await router.invalidate()
+    if (deleteTarget.id === activeId) {
+      const next = conversations.find((c) => c.id !== deleteTarget.id)
+      setActiveId(next?.id ?? '')
+    }
   }
 
   return (
@@ -103,7 +103,7 @@ function OpenBot() {
         conversations={conversations}
         bots={bots}
         activeId={active?.id ?? ''}
-        onSelect={selectConversation}
+        onSelect={setActiveId}
         onNewBot={() => setBotDialog({ open: true, agent: null })}
         onNewConversation={() => setNewConvoOpen(true)}
         onNewChannel={() => setNewChannelOpen(true)}
@@ -183,11 +183,9 @@ function OpenBot() {
           onOpenChange={(open) => setBotDialog((s) => ({ ...s, open }))}
           agent={botDialog.agent}
           serverModel={config.model}
-          onSaved={async (saved, created) => {
-            // Reload agents before opening the conversation so the new bot
-            // resolves in the header instead of the unknown fallback.
+          onSaved={async (_saved, firstConversation) => {
             await router.invalidate()
-            if (created) openConversation(saved.id, saved.name)
+            if (firstConversation) setActiveId(firstConversation.id)
           }}
         />
       )}
