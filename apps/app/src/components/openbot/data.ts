@@ -56,6 +56,8 @@ export type Bot = {
   id: string
   name: string
   color: string
+  /** Avatar shape id (see AVATAR_SHAPES). */
+  shape: string
   model: string
   prompt: string
   grants: [pluginId: string, accountId: string][]
@@ -391,11 +393,16 @@ export function initialOf(s: string) {
   return (s || '?').trim().charAt(0).toUpperCase()
 }
 
+export function avatarShapePath(id?: string) {
+  return (AVATAR_SHAPES.find((s) => s.id === id) ?? AVATAR_SHAPES[1]).d
+}
+
 // Fallback for conversations whose bot no longer exists (e.g. after deletion).
 const UNKNOWN_BOT: Bot = {
   id: 'unknown',
   name: 'Unknown Bot',
   color: '#9a9aa0',
+  shape: 'squircle',
   model: '',
   prompt: '',
   grants: [],

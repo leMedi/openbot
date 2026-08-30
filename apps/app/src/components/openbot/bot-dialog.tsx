@@ -17,9 +17,9 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { addAgent, updateAgent } from '@/server/agents'
-import { agentAvatarUrl, agentColor } from './agents'
+import { agentAvatarUrl } from './agents'
 import { BotAvatar } from './bot-avatar'
-import { initialOf, PLUGINS } from './data'
+import { AVATAR_COLORS, AVATAR_SHAPES, PLUGINS } from './data'
 
 const ACCEPTED_AVATAR_TYPES = 'image/png,image/jpeg,image/webp,image/gif'
 
@@ -46,6 +46,10 @@ export function BotDialog({
   const [hiddenFromSidebar, setHiddenFromSidebar] = useState(
     agent?.hiddenFromSidebar ?? false,
   )
+  const [shape, setShape] = useState(
+    () => AVATAR_SHAPES.find((s) => s.id === agent?.avatarShape) ?? AVATAR_SHAPES[1],
+  )
+  const [color, setColor] = useState(agent?.avatarColor ?? AVATAR_COLORS[6])
   const [avatarFile, setAvatarFile] = useState<File | null>(null)
   const [avatarRemoved, setAvatarRemoved] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -53,7 +57,6 @@ export function BotDialog({
   const [grants, setGrants] = useState<string[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const color = agent ? agentColor(agent.id) : '#5865c4'
   const pendingAvatarUrl = useMemo(
     () => (avatarFile ? URL.createObjectURL(avatarFile) : undefined),
     [avatarFile],
@@ -83,6 +86,8 @@ export function BotDialog({
       const profile = {
         name,
         description,
+        avatarShape: shape.id,
+        avatarColor: color,
         notifyOnUpdates,
         hiddenFromSidebar,
       }
@@ -155,49 +160,76 @@ export function BotDialog({
                       title="Change avatar"
                       className="flex size-21 items-center justify-center rounded-2xl border border-input bg-transparent transition-colors hover:border-foreground/25 dark:bg-input/30"
                     >
-                      {previewUrl ? (
-                        <img
-                          src={previewUrl}
-                          alt="Avatar preview"
-                          className="size-16 rounded-xl object-cover"
-                        />
-                      ) : (
-                        <span
-                          className="flex size-16 items-center justify-center rounded-xl text-2xl font-bold text-white"
-                          style={{ background: color }}
-                        >
-                          {initialOf(name)}
-                        </span>
-                      )}
+                      <BotAvatar
+                        name={name}
+                        color={color}
+                        shape={shape.id}
+                        src={previewUrl}
+                        className="size-16 rounded-xl text-2xl font-bold"
+                      />
                     </button>
                   }
                 />
-                <PopoverContent align="start" className="w-52 p-1.5">
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
-                  >
-                    <ImageUp className="size-3.5 text-muted-foreground" />
-                    Upload image…
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!previewUrl}
-                    onClick={() => {
-                      setAvatarFile(null)
-                      setAvatarRemoved(true)
-                    }}
-                    className={cn(
-                      'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm',
-                      previewUrl
-                        ? 'text-destructive hover:bg-muted'
-                        : 'cursor-not-allowed text-muted-foreground/50',
-                    )}
-                  >
-                    <Trash2 className="size-3.5" />
-                    Remove image
-                  </button>
+                <PopoverContent align="start" className="w-64 p-2.5">
+                  <div className="flex flex-wrap justify-center gap-1">
+                    {AVATAR_SHAPES.map((sh) => (
+                      <button
+                        key={sh.id}
+                        type="button"
+                        title={sh.id}
+                        onClick={() => setShape(sh)}
+                        className={cn(
+                          'flex size-12 items-center justify-center rounded-lg hover:bg-muted',
+                          sh.id === shape.id && 'ring-2 ring-info',
+                        )}
+                      >
+                        <svg width="36" height="36" viewBox="0 0 48 48">
+                          <path d={sh.d} fill={color} />
+                        </svg>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mx-auto mt-3 flex max-w-40 flex-wrap justify-center gap-2">
+                    {AVATAR_COLORS.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => setColor(c)}
+                        className={cn(
+                          'size-5.5 rounded-full',
+                          c === color && 'ring-2 ring-info ring-offset-2 ring-offset-popover',
+                        )}
+                        style={{ background: c }}
+                      />
+                    ))}
+                  </div>
+                  <div className="mt-2.5 border-t pt-1.5">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
+                    >
+                      <ImageUp className="size-3.5 text-muted-foreground" />
+                      Upload image…
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!previewUrl}
+                      onClick={() => {
+                        setAvatarFile(null)
+                        setAvatarRemoved(true)
+                      }}
+                      className={cn(
+                        'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm',
+                        previewUrl
+                          ? 'text-destructive hover:bg-muted'
+                          : 'cursor-not-allowed text-muted-foreground/50',
+                      )}
+                    >
+                      <Trash2 className="size-3.5" />
+                      Remove image
+                    </button>
+                  </div>
                 </PopoverContent>
               </Popover>
             </div>

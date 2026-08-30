@@ -150,7 +150,7 @@ export function Sidebar({
                     c.id === activeId ? 'bg-primary/25' : 'hover:bg-muted',
                   )}
                 >
-                  <BotAvatar name={bot.name} color={bot.color} src={bot.avatarUrl} />
+                  <BotAvatar name={bot.name} color={bot.color} shape={bot.shape} src={bot.avatarUrl} />
                   {c.unread && (
                     <span className="absolute top-1 right-1 size-1.5 rounded-full bg-info" />
                   )}
@@ -272,7 +272,7 @@ function ConversationRow({
               active ? 'bg-primary text-white' : 'hover:bg-muted',
             )}
           >
-            <BotAvatar name={bot.name} color={bot.color} src={bot.avatarUrl} />
+            <BotAvatar name={bot.name} color={bot.color} shape={bot.shape} src={bot.avatarUrl} />
             <span className="min-w-0 flex-1">
               <span className="flex items-baseline gap-2">
                 <span className="flex-1 truncate text-sm font-medium">

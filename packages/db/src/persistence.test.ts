@@ -30,6 +30,8 @@ describe('agent profiles', () => {
       description: 'Watches error rates overnight.',
     })
     expect(created.id).toMatch(/^agt_/)
+    expect(created.avatarShape).toBe('squircle')
+    expect(created.avatarColor).toBe('#5865c4')
     expect(created.notifyOnUpdates).toBe(true)
     expect(created.hiddenFromSidebar).toBe(false)
 
@@ -49,11 +51,15 @@ describe('agent profiles', () => {
     const updated = await dbModule.updateAgentProfile(created.id, {
       name: 'Ops Watch 2',
       description: 'Updated description',
+      avatarShape: 'hexagon',
+      avatarColor: '#b3536e',
       defaultModel: 'claude-sonnet-5',
       notifyOnUpdates: false,
       hiddenFromSidebar: true,
     })
     expect(updated?.name).toBe('Ops Watch 2')
+    expect(updated?.avatarShape).toBe('hexagon')
+    expect(updated?.avatarColor).toBe('#b3536e')
     expect(updated?.defaultModel).toBe('claude-sonnet-5')
     expect(updated?.notifyOnUpdates).toBe(false)
     expect(updated?.hiddenFromSidebar).toBe(true)

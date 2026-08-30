@@ -4,6 +4,9 @@ export type Author = {
   id: string
   name: string
   color: string
+  /** Avatar shape id (see AVATAR_SHAPES); agents render a shaped avatar. */
+  shape?: string
+  avatarUrl?: string
   kind: 'user' | 'agent' | 'member'
 }
 

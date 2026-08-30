@@ -254,7 +254,13 @@ export function Conversation({
           </Button>
         )}
         <span className={cn('relative', working && 'animate-pulse')}>
-          <BotAvatar name={agent.name} color={agent.color} className="size-6 text-[10px]" />
+          <BotAvatar
+            name={agent.name}
+            color={agent.color}
+            shape={agent.shape}
+            src={agent.avatarUrl}
+            className="size-6 text-[10px]"
+          />
           {working && <span className="absolute -inset-0.5 rounded-lg border border-primary/60" />}
         </span>
         {inThreadView ? (

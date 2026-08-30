@@ -1,12 +1,19 @@
 import { createAgent, getAgent, listAgents, updateAgentProfile } from '@openbot/db'
 import { createServerFn } from '@tanstack/react-start'
 import * as z from 'zod'
+import { AVATAR_COLORS, AVATAR_SHAPES } from '@/components/openbot/data'
 
 // Creation defaults live in the registry (createAgent); omitted fields here
 // stay omitted so partial updates never reset a stored value.
 const agentProfileFields = z.object({
   name: z.string().trim().min(1, 'Name is required').max(80),
   description: z.string().trim().max(500),
+  avatarShape: z
+    .string()
+    .refine((v) => AVATAR_SHAPES.some((s) => s.id === v), 'Unknown avatar shape'),
+  avatarColor: z
+    .string()
+    .refine((v) => AVATAR_COLORS.includes(v), 'Unknown avatar color'),
   defaultMode: z.string().trim().min(1).max(40),
   defaultModel: z.string().trim().min(1).max(120).nullable(),
   approvalMode: z.string().trim().min(1).max(40),

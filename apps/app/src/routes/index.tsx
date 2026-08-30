@@ -72,7 +72,14 @@ function OpenBot() {
 
   const { entries, tabs } = useMemo(() => {
     if (!active || !bot) return { entries: [], tabs: [] }
-    const author = { id: bot.id, name: bot.name, color: bot.color, kind: 'agent' as const }
+    const author = {
+      id: bot.id,
+      name: bot.name,
+      color: bot.color,
+      shape: bot.shape,
+      avatarUrl: bot.avatarUrl,
+      kind: 'agent' as const,
+    }
     return { entries: entriesFor(active, author), tabs: activityFor(active, author) }
   }, [active, bot])
 
@@ -118,7 +125,14 @@ function OpenBot() {
         <Conversation
           key={active.id}
           id={active.id}
-          agent={{ id: bot.id, name: bot.name, color: bot.color, kind: 'agent' }}
+          agent={{
+            id: bot.id,
+            name: bot.name,
+            color: bot.color,
+            shape: bot.shape,
+            avatarUrl: bot.avatarUrl,
+            kind: 'agent',
+          }}
           title={active.title}
           model={bot.model}
           initialEntries={entries}

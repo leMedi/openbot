@@ -55,6 +55,8 @@ export function GroupAvatar({ members, className }: { members: Author[]; classNa
           key={m.id}
           name={m.name}
           color={m.color}
+          shape={m.shape}
+          src={m.avatarUrl}
           className={cn('size-5 rounded-sm text-[8px]', i > 0 && '-ml-1.5 border border-panel')}
         />
       ))}
@@ -173,6 +175,8 @@ export function MessageRow({
             <BotAvatar
               name={entry.author.name}
               color={entry.author.color}
+              shape={entry.author.shape}
+              src={entry.author.avatarUrl}
               className="size-6.5 text-[10px]"
             />
           )}

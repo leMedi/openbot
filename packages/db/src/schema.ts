@@ -43,6 +43,8 @@ export const agents = sqliteTable('agents', {
   avatarFileId: text('avatar_file_id').references(() => managedFiles.id, {
     onDelete: 'set null',
   }),
+  avatarShape: text('avatar_shape').notNull().default('squircle'),
+  avatarColor: text('avatar_color').notNull().default('#5865c4'),
   defaultMode: text('default_mode').notNull().default('default'),
   defaultModel: text('default_model'),
   approvalMode: text('approval_mode').notNull().default('allowlist'),

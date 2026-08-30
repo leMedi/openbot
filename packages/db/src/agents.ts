@@ -20,6 +20,8 @@ export const MAX_AVATAR_BYTES = 5 * 1024 * 1024
 export type AgentProfileInput = {
   name: string
   description?: string
+  avatarShape?: string
+  avatarColor?: string
   defaultMode?: string
   defaultModel?: string | null
   approvalMode?: string
@@ -59,6 +61,8 @@ export async function createAgent(input: AgentProfileInput) {
         id: createId('agt'),
         name: input.name,
         description: input.description ?? '',
+        avatarShape: input.avatarShape ?? 'squircle',
+        avatarColor: input.avatarColor ?? '#5865c4',
         defaultMode: input.defaultMode ?? 'default',
         defaultModel: input.defaultModel ?? null,
         approvalMode: input.approvalMode ?? 'allowlist',

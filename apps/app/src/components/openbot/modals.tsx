@@ -43,7 +43,7 @@ export function NewConversationDialog({
             <CommandEmpty>No bots match</CommandEmpty>
             {bots.map((b) => (
               <CommandItem key={b.id} value={b.name} onSelect={() => onPick(b.id)}>
-                <BotAvatar name={b.name} color={b.color} src={b.avatarUrl} />
+                <BotAvatar name={b.name} color={b.color} shape={b.shape} src={b.avatarUrl} />
                 <span className="flex min-w-0 flex-1 items-baseline gap-2">
                   <span className="truncate text-sm font-medium">{b.name}</span>
                   <span className="text-[10px] text-muted-foreground">{b.model}</span>
@@ -102,6 +102,7 @@ export function NewChannelDialog({
                   <BotAvatar
                     name={b.name}
                     color={b.color}
+                    shape={b.shape}
                     src={b.avatarUrl}
                     className="size-6 text-[10px]"
                   />
