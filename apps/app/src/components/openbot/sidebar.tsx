@@ -32,7 +32,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { BotAvatar } from './bot-avatar'
-import { botById, type Conversation } from './data'
+import { botIn, type Bot, type Conversation } from './data'
 
 // Drag the right border to resize; below SNAP_AT it snaps to the
 // avatar-only rail (COLLAPSED_W), otherwise clamps to [MIN_W, MAX_W].
@@ -44,6 +44,7 @@ const DEFAULT_W = 256
 
 type SidebarProps = {
   conversations: Conversation[]
+  bots: Bot[]
   activeId: string
   onSelect: (id: string) => void
   onNewBot: () => void
@@ -56,6 +57,7 @@ type SidebarProps = {
 
 export function Sidebar({
   conversations,
+  bots,
   activeId,
   onSelect,
   onNewBot,
@@ -90,7 +92,7 @@ export function Sidebar({
   }
 
   const filtered = conversations.filter((c) =>
-    (c.title + botById(c.botId).name).toLowerCase().includes(search.toLowerCase()),
+    (c.title + botIn(bots, c.botId).name).toLowerCase().includes(search.toLowerCase()),
   )
   const pinned = filtered.filter((c) => c.pinned)
   const rest = filtered.filter((c) => !c.pinned)
@@ -136,7 +138,7 @@ export function Sidebar({
           <div className="flex justify-center pt-2.5 pb-1">{plusMenu}</div>
           <div className="flex flex-1 flex-col items-center gap-1 overflow-y-auto py-1">
             {ordered.map((c) => {
-              const bot = botById(c.botId)
+              const bot = botIn(bots, c.botId)
               return (
                 <button
                   key={c.id}
@@ -148,7 +150,7 @@ export function Sidebar({
                     c.id === activeId ? 'bg-primary/25' : 'hover:bg-muted',
                   )}
                 >
-                  <BotAvatar name={bot.name} color={bot.color} />
+                  <BotAvatar name={bot.name} color={bot.color} src={bot.avatarUrl} />
                   {c.unread && (
                     <span className="absolute top-1 right-1 size-1.5 rounded-full bg-info" />
                   )}
@@ -200,6 +202,7 @@ export function Sidebar({
               <ConversationRow
                 key={c.id}
                 conversation={c}
+                bot={botIn(bots, c.botId)}
                 active={c.id === activeId}
                 onSelect={() => onSelect(c.id)}
                 onDelete={() => onDeleteConversation(c.id)}
@@ -244,16 +247,17 @@ export function Sidebar({
 
 function ConversationRow({
   conversation,
+  bot,
   active,
   onSelect,
   onDelete,
 }: {
   conversation: Conversation
+  bot: Bot
   active: boolean
   onSelect: () => void
   onDelete: () => void
 }) {
-  const bot = botById(conversation.botId)
   const last = conversation.messages[conversation.messages.length - 1]
 
   return (
@@ -268,7 +272,7 @@ function ConversationRow({
               active ? 'bg-primary text-white' : 'hover:bg-muted',
             )}
           >
-            <BotAvatar name={bot.name} color={bot.color} />
+            <BotAvatar name={bot.name} color={bot.color} src={bot.avatarUrl} />
             <span className="min-w-0 flex-1">
               <span className="flex items-baseline gap-2">
                 <span className="flex-1 truncate text-sm font-medium">

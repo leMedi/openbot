@@ -60,6 +60,7 @@ export type Bot = {
   prompt: string
   grants: [pluginId: string, accountId: string][]
   memory: string
+  avatarUrl?: string
 }
 
 export type Conversation = {
@@ -677,8 +678,12 @@ export function initialOf(s: string) {
   return (s || '?').trim().charAt(0).toUpperCase()
 }
 
+export function botIn(bots: Bot[], id: string) {
+  return bots.find((b) => b.id === id) ?? BOTS[0]
+}
+
 export function botById(id: string) {
-  return BOTS.find((b) => b.id === id) ?? BOTS[0]
+  return botIn(BOTS, id)
 }
 
 export function pluginById(id: string) {

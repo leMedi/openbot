@@ -1,11 +1,18 @@
 import { useMemo, useState } from 'react'
-import { createFileRoute } from '@tanstack/react-router'
+import type { Agent } from '@openbot/db'
+import { createFileRoute, useRouter } from '@tanstack/react-router'
 import { PanelRight } from 'lucide-react'
-import { activityFor, agentAuthor, entriesFor } from '@/components/conversation/adapter'
+import { activityFor, entriesFor } from '@/components/conversation/adapter'
 import { Conversation } from '@/components/conversation/conversation'
 import { ACTIVITY_TABS, INITIAL_ENTRIES, MEMBERS } from '@/components/conversation/data'
+import { botFromAgent } from '@/components/openbot/agents'
 import { BotDialog } from '@/components/openbot/bot-dialog'
-import { botById, CONVERSATIONS, type Bot, type Conversation as BotConversation } from '@/components/openbot/data'
+import {
+  botIn,
+  BOTS,
+  CONVERSATIONS,
+  type Conversation as BotConversation,
+} from '@/components/openbot/data'
 import { Inspector } from '@/components/openbot/inspector'
 import {
   DeleteConversationDialog,
@@ -16,12 +23,17 @@ import { PluginsDialog } from '@/components/openbot/plugins-dialog'
 import { SettingsDialog } from '@/components/openbot/settings-dialog'
 import { Sidebar } from '@/components/openbot/sidebar'
 import { Button } from '@/components/ui/button'
+import { getAgents } from '@/server/agents'
 
 export const Route = createFileRoute('/')({
+  loader: () => getAgents(),
   component: OpenBot,
 })
 
 function OpenBot() {
+  const agents = Route.useLoaderData()
+  const router = useRouter()
+
   const [conversations, setConversations] = useState<BotConversation[]>(CONVERSATIONS)
   const [activeId, setActiveId] = useState('c1')
   const [inspectorOpen, setInspectorOpen] = useState(true)
@@ -30,14 +42,18 @@ function OpenBot() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [newConvoOpen, setNewConvoOpen] = useState(false)
   const [newChannelOpen, setNewChannelOpen] = useState(false)
-  const [botDialog, setBotDialog] = useState<{ open: boolean; bot: Bot | null }>({
+  const [botDialog, setBotDialog] = useState<{ open: boolean; agent: Agent | null }>({
     open: false,
-    bot: null,
+    agent: null,
   })
   const [deleteTarget, setDeleteTarget] = useState<BotConversation | null>(null)
 
+  // Persisted agents come first; the mock showcase bots remain until the
+  // conversation slices replace them.
+  const bots = useMemo(() => [...agents.map(botFromAgent), ...BOTS], [agents])
+
   const active = conversations.find((c) => c.id === activeId) ?? conversations[0]
-  const bot = botById(active.botId)
+  const bot = botIn(bots, active.botId)
 
   // "Sprint 78 board sweep" carries the full showcase transcript; the rest are
   // adapted from the OpenBot mock data.
@@ -54,10 +70,10 @@ function OpenBot() {
   }
 
   function startConversation(botId: string) {
-    const picked = botById(botId)
+    const picked = botIn(bots, botId)
     const convo: BotConversation = {
       id: `c${Date.now()}`,
-      botId,
+      botId: picked.id,
       title: `New conversation with ${picked.name}`,
       time: 'Now',
       messages: [],
@@ -77,13 +93,19 @@ function OpenBot() {
     setDeleteTarget(null)
   }
 
+  function editAgent() {
+    const agent = agents.find((a) => a.id === active.botId) ?? null
+    setBotDialog({ open: true, agent })
+  }
+
   return (
     <div className="flex h-svh overflow-hidden">
       <Sidebar
         conversations={conversations}
+        bots={bots}
         activeId={active.id}
         onSelect={selectConversation}
-        onNewBot={() => setBotDialog({ open: true, bot: null })}
+        onNewBot={() => setBotDialog({ open: true, agent: null })}
         onNewConversation={() => setNewConvoOpen(true)}
         onNewChannel={() => setNewChannelOpen(true)}
         onOpenPlugins={() => setPluginsOpen(true)}
@@ -96,13 +118,13 @@ function OpenBot() {
       <Conversation
         key={active.id}
         id={active.id}
-        agent={agentAuthor(active.botId)}
+        agent={{ id: bot.id, name: bot.name, color: bot.color, kind: 'agent' }}
         title={active.title}
         model={bot.model}
         members={members}
         initialEntries={entries}
         activityTabs={tabs}
-        onEditAgent={() => setBotDialog({ open: true, bot })}
+        onEditAgent={editAgent}
         headerActions={
           <Button
             variant="ghost"
@@ -125,13 +147,15 @@ function OpenBot() {
         open={newConvoOpen}
         onOpenChange={setNewConvoOpen}
         onPick={startConversation}
+        bots={bots}
       />
-      <NewChannelDialog open={newChannelOpen} onOpenChange={setNewChannelOpen} />
+      <NewChannelDialog open={newChannelOpen} onOpenChange={setNewChannelOpen} bots={bots} />
       {botDialog.open && (
         <BotDialog
           open={botDialog.open}
           onOpenChange={(open) => setBotDialog((s) => ({ ...s, open }))}
-          bot={botDialog.bot}
+          agent={botDialog.agent}
+          onSaved={() => router.invalidate()}
         />
       )}
       <DeleteConversationDialog
@@ -140,6 +164,7 @@ function OpenBot() {
           if (!open) setDeleteTarget(null)
         }}
         onConfirm={deleteConversation}
+        bots={bots}
       />
     </div>
   )

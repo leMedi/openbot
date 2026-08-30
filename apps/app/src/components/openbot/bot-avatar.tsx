@@ -4,12 +4,23 @@ import { initialOf } from './data'
 export function BotAvatar({
   name,
   color,
+  src,
   className,
 }: {
   name: string
   color: string
+  src?: string
   className?: string
 }) {
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt={name}
+        className={cn('size-7 shrink-0 rounded-md object-cover', className)}
+      />
+    )
+  }
   return (
     <div
       className={cn(

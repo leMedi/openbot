@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import { Check, ChevronDown } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
+import type { Agent } from '@openbot/db'
+import { Check, ChevronDown, ImageUp, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -12,37 +13,51 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import { addAgent, updateAgent } from '@/server/agents'
+import { agentAvatarUrl, agentColor } from './agents'
 import { BotAvatar } from './bot-avatar'
-import {
-  AVATAR_COLORS,
-  AVATAR_SHAPES,
-  initialOf,
-  MODEL_GROUPS,
-  PLUGINS,
-  type Bot,
-} from './data'
+import { initialOf, MODEL_GROUPS, PLUGINS } from './data'
+
+const ACCEPTED_AVATAR_TYPES = 'image/png,image/jpeg,image/webp,image/gif'
 
 export function BotDialog({
   open,
   onOpenChange,
-  bot,
+  agent,
+  onSaved,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** When set, the dialog edits an existing bot; otherwise it creates one. */
-  bot: Bot | null
+  /** When set, the dialog edits an existing agent; otherwise it creates one. */
+  agent: Agent | null
+  onSaved: () => void
 }) {
-  const editing = !!bot
-  const [name, setName] = useState(bot?.name ?? '')
-  const [model, setModel] = useState(bot?.model ?? 'Sonnet 4.5')
-  const [shape, setShape] = useState(AVATAR_SHAPES[1])
-  const [color, setColor] = useState(bot?.color ?? AVATAR_COLORS[6])
-  const [grants, setGrants] = useState<string[]>(
-    bot?.grants.map(([p, a]) => `${p}:${a}`) ?? [],
+  const editing = !!agent
+  const [name, setName] = useState(agent?.name ?? '')
+  const [title, setTitle] = useState(agent?.title ?? '')
+  const [description, setDescription] = useState(agent?.description ?? '')
+  const [model, setModel] = useState(agent?.defaultModel ?? 'Sonnet 4.5')
+  const [notifyOnUpdates, setNotifyOnUpdates] = useState(agent?.notifyOnUpdates ?? true)
+  const [hiddenFromSidebar, setHiddenFromSidebar] = useState(
+    agent?.hiddenFromSidebar ?? false,
   )
-  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [avatarFile, setAvatarFile] = useState<File | null>(null)
+  const [avatarRemoved, setAvatarRemoved] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [grants, setGrants] = useState<string[]>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const color = agent ? agentColor(agent.id) : '#5865c4'
+  const pendingAvatarUrl = useMemo(
+    () => (avatarFile ? URL.createObjectURL(avatarFile) : undefined),
+    [avatarFile],
+  )
+  const savedAvatarUrl = agent && !avatarRemoved ? agentAvatarUrl(agent) : undefined
+  const previewUrl = pendingAvatarUrl ?? savedAvatarUrl
 
   const accounts = PLUGINS.filter((p) => p.installed).flatMap((p) =>
     p.accounts.map((a) => ({ plugin: p, account: a, key: `${p.id}:${a.id}` })),
@@ -50,12 +65,64 @@ export function BotDialog({
   const modelProvider =
     MODEL_GROUPS.find((g) => g.models.includes(model)) ?? MODEL_GROUPS[0]
 
+  function pickAvatar(file: File | null) {
+    setAvatarFile(file)
+    if (file) setAvatarRemoved(false)
+  }
+
+  async function save() {
+    if (saving) return
+    setSaving(true)
+    setError(null)
+    try {
+      const profile = {
+        name,
+        title,
+        description,
+        defaultModel: model || null,
+        notifyOnUpdates,
+        hiddenFromSidebar,
+      }
+      const saved = editing
+        ? await updateAgent({ data: { id: agent.id, patch: profile } })
+        : await addAgent({ data: profile })
+
+      if (avatarFile) {
+        const form = new FormData()
+        form.append('file', avatarFile)
+        const response = await fetch(`/api/agents/${saved.id}/avatar`, {
+          method: 'PUT',
+          body: form,
+        })
+        if (!response.ok) {
+          const body = await response.json().catch(() => null)
+          throw new Error(body?.error ?? 'Avatar upload failed')
+        }
+      } else if (editing && avatarRemoved && agent.avatarFileId) {
+        const response = await fetch(`/api/agents/${saved.id}/avatar`, {
+          method: 'DELETE',
+        })
+        if (!response.ok) {
+          const body = await response.json().catch(() => null)
+          throw new Error(body?.error ?? 'Removing the avatar failed')
+        }
+      }
+
+      onSaved()
+      onOpenChange(false)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Saving the bot failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[85vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
         <DialogHeader className="shrink-0 border-b bg-card/50 px-4 py-3">
           <DialogTitle className="text-center text-sm">
-            {editing ? `Edit ${bot.name}` : 'New Bot'}
+            {editing ? `Edit ${agent.name}` : 'New Bot'}
           </DialogTitle>
         </DialogHeader>
 
@@ -64,6 +131,13 @@ export function BotDialog({
             {/* Avatar */}
             <div className="flex w-21 shrink-0 flex-col gap-1.5">
               <Label className="text-[11px] font-semibold text-muted-foreground">Avatar</Label>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPTED_AVATAR_TYPES}
+                className="hidden"
+                onChange={(e) => pickAvatar(e.target.files?.[0] ?? null)}
+              />
               <Popover>
                 <PopoverTrigger
                   render={
@@ -72,55 +146,49 @@ export function BotDialog({
                       title="Change avatar"
                       className="flex size-21 items-center justify-center rounded-2xl border border-input bg-transparent transition-colors hover:border-foreground/25 dark:bg-input/30"
                     >
-                      <span className="relative size-16">
-                        <svg width="64" height="64" viewBox="0 0 48 48">
-                          <path d={shape.d} fill={color} />
-                        </svg>
+                      {previewUrl ? (
+                        <img
+                          src={previewUrl}
+                          alt="Avatar preview"
+                          className="size-16 rounded-xl object-cover"
+                        />
+                      ) : (
                         <span
-                          className={cn(
-                            'absolute inset-0 flex items-center justify-center text-2xl font-bold',
-                            color === '#f2f2f2' ? 'text-muted-foreground' : 'text-white',
-                          )}
+                          className="flex size-16 items-center justify-center rounded-xl text-2xl font-bold text-white"
+                          style={{ background: color }}
                         >
                           {initialOf(name)}
                         </span>
-                      </span>
+                      )}
                     </button>
                   }
                 />
-                <PopoverContent align="start" className="w-64 p-2.5">
-                  <div className="flex flex-wrap justify-center gap-1">
-                    {AVATAR_SHAPES.map((sh) => (
-                      <button
-                        key={sh.id}
-                        type="button"
-                        title={sh.id}
-                        onClick={() => setShape(sh)}
-                        className={cn(
-                          'flex size-12 items-center justify-center rounded-lg hover:bg-muted',
-                          sh.id === shape.id && 'ring-2 ring-info',
-                        )}
-                      >
-                        <svg width="36" height="36" viewBox="0 0 48 48">
-                          <path d={sh.d} fill={color} />
-                        </svg>
-                      </button>
-                    ))}
-                  </div>
-                  <div className="mx-auto mt-3 flex max-w-40 flex-wrap justify-center gap-2">
-                    {AVATAR_COLORS.map((c) => (
-                      <button
-                        key={c}
-                        type="button"
-                        onClick={() => setColor(c)}
-                        className={cn(
-                          'size-5.5 rounded-full',
-                          c === color && 'ring-2 ring-info ring-offset-2 ring-offset-popover',
-                        )}
-                        style={{ background: c }}
-                      />
-                    ))}
-                  </div>
+                <PopoverContent align="start" className="w-52 p-1.5">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
+                  >
+                    <ImageUp className="size-3.5 text-muted-foreground" />
+                    Upload image…
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!previewUrl}
+                    onClick={() => {
+                      setAvatarFile(null)
+                      setAvatarRemoved(true)
+                    }}
+                    className={cn(
+                      'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm',
+                      previewUrl
+                        ? 'text-destructive hover:bg-muted'
+                        : 'cursor-not-allowed text-muted-foreground/50',
+                    )}
+                  >
+                    <Trash2 className="size-3.5" />
+                    Remove image
+                  </button>
                 </PopoverContent>
               </Popover>
             </div>
@@ -132,6 +200,14 @@ export function BotDialog({
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Ops Watch"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-[11px] font-semibold text-muted-foreground">Title</Label>
+                <Input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="On-call sentinel"
                 />
               </div>
               <div className="flex flex-col gap-1.5">
@@ -187,13 +263,35 @@ export function BotDialog({
 
           <div className="flex flex-col gap-1.5">
             <Label className="text-[11px] font-semibold text-muted-foreground">
-              Instructions
+              Description
             </Label>
             <Textarea
-              defaultValue={bot?.prompt}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
               placeholder="You keep an eye on the sprint board. Flag anything stale, never invent ticket numbers."
               className="min-h-21 text-xs"
             />
+          </div>
+
+          <div className="flex flex-col gap-2 rounded-lg border px-3.5 py-3">
+            <label className="flex cursor-pointer items-center gap-3">
+              <span className="min-w-0 flex-1">
+                <span className="block text-xs font-semibold">Notify on updates</span>
+                <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                  Send a notification when this bot posts an update.
+                </span>
+              </span>
+              <Switch checked={notifyOnUpdates} onCheckedChange={setNotifyOnUpdates} />
+            </label>
+            <label className="flex cursor-pointer items-center gap-3">
+              <span className="min-w-0 flex-1">
+                <span className="block text-xs font-semibold">Hide from sidebar</span>
+                <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                  Keep the bot running without showing it in navigation.
+                </span>
+              </span>
+              <Switch checked={hiddenFromSidebar} onCheckedChange={setHiddenFromSidebar} />
+            </label>
           </div>
 
           <div className="flex flex-col gap-1.5">
@@ -230,60 +328,22 @@ export function BotDialog({
               ))}
             </div>
           </div>
-
-          {editing && (
-            <div className="flex flex-col gap-1.5">
-              <Label className="text-[11px] font-semibold text-destructive">Danger Zone</Label>
-              <div className="flex items-center gap-3 rounded-lg border border-destructive/35 px-3.5 py-3">
-                <div className="min-w-0 flex-1">
-                  <div className="text-xs font-semibold text-destructive">Delete Bot</div>
-                  <div className="mt-0.5 text-[11px] text-muted-foreground">
-                    Deletes this bot and all of its conversations.
-                  </div>
-                </div>
-                <Button variant="destructive" size="xs" onClick={() => setDeleteOpen(true)}>
-                  Delete…
-                </Button>
-              </div>
-            </div>
-          )}
         </div>
 
         <DialogFooter className="mx-0 mb-0 shrink-0 items-center border-t bg-card/50 px-5 py-3">
-          <span className="mr-auto text-[11px] text-muted-foreground/70">
-            {editing ? 'Changes apply to every conversation.' : 'Starts a first conversation.'}
+          <span className="mr-auto min-w-0 truncate text-[11px] text-muted-foreground/70">
+            {error ? (
+              <span className="text-destructive">{error}</span>
+            ) : editing ? (
+              'Changes apply to every conversation.'
+            ) : (
+              'Starts a first conversation.'
+            )}
           </span>
-          <Button size="sm" onClick={() => onOpenChange(false)}>
-            {editing ? 'Save Changes' : 'Create Bot'}
+          <Button size="sm" disabled={!name.trim() || saving} onClick={save}>
+            {saving ? 'Saving…' : editing ? 'Save Changes' : 'Create Bot'}
           </Button>
         </DialogFooter>
-
-        <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-          <DialogContent className="sm:max-w-sm">
-            <DialogHeader>
-              <DialogTitle>Delete {bot?.name}?</DialogTitle>
-            </DialogHeader>
-            <p className="text-xs leading-normal text-muted-foreground">
-              This deletes the bot and its conversations, including their full history. This can't
-              be undone.
-            </p>
-            <DialogFooter>
-              <Button variant="secondary" size="sm" onClick={() => setDeleteOpen(false)}>
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => {
-                  setDeleteOpen(false)
-                  onOpenChange(false)
-                }}
-              >
-                Delete Bot
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       </DialogContent>
     </Dialog>
   )

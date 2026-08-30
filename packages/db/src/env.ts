@@ -35,3 +35,7 @@ mkdirSync(dataDirectory, { recursive: true })
 export const databasePath = path.join(dataDirectory, 'store.db')
 export const databaseUrl = `file:${databasePath}`
 export const migrationsDirectory = path.join(workspaceRoot, 'packages/db/drizzle')
+
+export const filesDirectory = path.join(dataDirectory, 'files')
+
+mkdirSync(filesDirectory, { recursive: true })

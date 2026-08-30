@@ -1,0 +1,217 @@
+import { existsSync, mkdtempSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { eq } from 'drizzle-orm'
+
+// A fresh temporary data directory must be configured before the package is
+// imported: opening the database, enabling foreign keys, requesting WAL, and
+// applying migrations all happen on import (the public startup path).
+const dataDirectory = mkdtempSync(path.join(os.tmpdir(), 'openbot-db-test-'))
+process.env.OPENBOT_DATA_DIR = dataDirectory
+
+type DbModule = typeof import('./index')
+
+let dbModule: DbModule
+
+beforeAll(async () => {
+  dbModule = await import('./index')
+})
+
+function pngBytes(fill: number) {
+  return new Uint8Array([0x89, 0x50, 0x4e, 0x47, fill, fill, fill])
+}
+
+describe('agent profiles', () => {
+  it('creates, lists, gets, and updates an agent profile', async () => {
+    const created = await dbModule.createAgent({
+      name: 'Ops Watch',
+      description: 'Watches error rates overnight.',
+      title: 'On-call sentinel',
+    })
+    expect(created.id).toMatch(/^agt_/)
+    expect(created.notifyOnUpdates).toBe(true)
+    expect(created.hiddenFromSidebar).toBe(false)
+
+    const listed = await dbModule.listAgents()
+    expect(listed.map((agent) => agent.id)).toContain(created.id)
+
+    const fetched = await dbModule.getAgent(created.id)
+    expect(fetched?.name).toBe('Ops Watch')
+    expect(fetched?.title).toBe('On-call sentinel')
+
+    const updated = await dbModule.updateAgentProfile(created.id, {
+      name: 'Ops Watch 2',
+      description: 'Updated description',
+      title: 'Sentinel',
+      defaultModel: 'claude-sonnet-5',
+      notifyOnUpdates: false,
+      hiddenFromSidebar: true,
+    })
+    expect(updated?.name).toBe('Ops Watch 2')
+    expect(updated?.defaultModel).toBe('claude-sonnet-5')
+    expect(updated?.notifyOnUpdates).toBe(false)
+    expect(updated?.hiddenFromSidebar).toBe(true)
+    expect(updated?.updatedAt).toBeGreaterThanOrEqual(created.updatedAt)
+  })
+
+  it('keeps profiles across a server restart', async () => {
+    const created = await dbModule.createAgent({
+      name: 'Restart Survivor',
+      description: 'Should outlive the process state.',
+      defaultModel: 'claude-opus-5',
+      notifyOnUpdates: false,
+      hiddenFromSidebar: true,
+    })
+
+    // Re-import the package with a cleared module registry: a fresh client is
+    // opened against the same data directory, re-running the startup path.
+    vi.resetModules()
+    const reloaded: DbModule = await import('./index')
+
+    const survivor = await reloaded.getAgent(created.id)
+    expect(survivor?.name).toBe('Restart Survivor')
+    expect(survivor?.description).toBe('Should outlive the process state.')
+    expect(survivor?.defaultModel).toBe('claude-opus-5')
+    expect(survivor?.notifyOnUpdates).toBe(false)
+    expect(survivor?.hiddenFromSidebar).toBe(true)
+  })
+})
+
+describe('agent avatars and managed files', () => {
+  it('uploads, serves, replaces, and removes an avatar', async () => {
+    const agent = await dbModule.createAgent({ name: 'Avatar Agent' })
+
+    const withAvatar = await dbModule.setAgentAvatar(agent.id, {
+      bytes: pngBytes(1),
+      originalName: 'first.png',
+      mediaType: 'image/png',
+    })
+    expect(withAvatar.avatarFileId).toMatch(/^fil_/)
+
+    const served = await dbModule.getAgentAvatarFile(agent.id)
+    expect(served).toBeDefined()
+    expect(served?.file.mediaType).toBe('image/png')
+    expect(served?.file.relativePath.startsWith('avatars/')).toBe(true)
+    expect(Buffer.from(served!.bytes)).toEqual(Buffer.from(pngBytes(1)))
+
+    const firstFileId = withAvatar.avatarFileId!
+    const firstPath = dbModule.resolveManagedFilePath(served!.file.relativePath)
+    expect(existsSync(firstPath)).toBe(true)
+
+    const replaced = await dbModule.setAgentAvatar(agent.id, {
+      bytes: pngBytes(2),
+      originalName: 'second.png',
+      mediaType: 'image/png',
+    })
+    expect(replaced.avatarFileId).not.toBe(firstFileId)
+    expect(await dbModule.getManagedFile(firstFileId)).toBeUndefined()
+    expect(existsSync(firstPath)).toBe(false)
+
+    const secondFileId = replaced.avatarFileId!
+    const secondFile = await dbModule.getManagedFile(secondFileId)
+    const secondPath = dbModule.resolveManagedFilePath(secondFile!.relativePath)
+
+    const removed = await dbModule.removeAgentAvatar(agent.id)
+    expect(removed.avatarFileId).toBeNull()
+    expect(await dbModule.getManagedFile(secondFileId)).toBeUndefined()
+    expect(existsSync(secondPath)).toBe(false)
+    expect(await dbModule.getAgentAvatarFile(agent.id)).toBeUndefined()
+  })
+
+  it('does not delete a managed file that is still referenced elsewhere', async () => {
+    const owner = await dbModule.createAgent({ name: 'Shared Avatar Owner' })
+    const other = await dbModule.createAgent({ name: 'Shared Avatar Borrower' })
+
+    const withAvatar = await dbModule.setAgentAvatar(owner.id, {
+      bytes: pngBytes(3),
+      originalName: 'shared.png',
+      mediaType: 'image/png',
+    })
+    const sharedFileId = withAvatar.avatarFileId!
+
+    // One managed file may be referenced by multiple avatars; point a second
+    // agent at the same file to simulate that.
+    await dbModule.db
+      .update(dbModule.agents)
+      .set({ avatarFileId: sharedFileId })
+      .where(eq(dbModule.agents.id, other.id))
+
+    await dbModule.removeAgentAvatar(owner.id)
+    const sharedFile = await dbModule.getManagedFile(sharedFileId)
+    expect(sharedFile).toBeDefined()
+    expect(existsSync(dbModule.resolveManagedFilePath(sharedFile!.relativePath))).toBe(
+      true,
+    )
+
+    // Once the last reference is gone the file is deleted.
+    await dbModule.removeAgentAvatar(other.id)
+    expect(await dbModule.getManagedFile(sharedFileId)).toBeUndefined()
+  })
+
+  it('rejects managed paths that escape the data directory', () => {
+    expect(() => dbModule.resolveManagedFilePath('../escape.txt')).toThrow()
+    expect(() => dbModule.resolveManagedFilePath('avatars/../../escape.txt')).toThrow()
+    expect(() => dbModule.resolveManagedFilePath('/etc/passwd')).toThrow()
+    expect(() => dbModule.resolveManagedFilePath('')).toThrow()
+
+    const resolved = dbModule.resolveManagedFilePath('avatars/fil_ok.png')
+    expect(resolved.startsWith(path.join(dataDirectory, 'files'))).toBe(true)
+  })
+
+  it('rejects unsupported avatar uploads', async () => {
+    const agent = await dbModule.createAgent({ name: 'Picky Agent' })
+
+    await expect(
+      dbModule.setAgentAvatar(agent.id, {
+        bytes: pngBytes(4),
+        originalName: 'evil.svg',
+        mediaType: 'image/svg+xml',
+      }),
+    ).rejects.toThrow(/media type/)
+
+    await expect(
+      dbModule.setAgentAvatar(agent.id, {
+        bytes: new Uint8Array(0),
+        originalName: 'empty.png',
+        mediaType: 'image/png',
+      }),
+    ).rejects.toThrow(/empty/)
+
+    await expect(
+      dbModule.setAgentAvatar(agent.id, {
+        bytes: new Uint8Array(dbModule.MAX_AVATAR_BYTES + 1),
+        originalName: 'huge.png',
+        mediaType: 'image/png',
+      }),
+    ).rejects.toThrow(/maximum size/)
+  })
+
+  it('reads managed file bytes only through validated relative paths', async () => {
+    const agent = await dbModule.createAgent({ name: 'Escape Artist' })
+    await dbModule.setAgentAvatar(agent.id, {
+      bytes: pngBytes(5),
+      originalName: 'fine.png',
+      mediaType: 'image/png',
+    })
+    const served = await dbModule.getAgentAvatarFile(agent.id)
+    const onDisk = await readFile(
+      dbModule.resolveManagedFilePath(served!.file.relativePath),
+    )
+    expect(Buffer.from(onDisk)).toEqual(Buffer.from(pngBytes(5)))
+
+    // A row whose stored path escapes the managed directory must be refused.
+    await dbModule.db.insert(dbModule.managedFiles).values({
+      id: 'fil_escape_test',
+      relativePath: '../escape-row.txt',
+      originalName: 'escape-row.txt',
+      mediaType: 'text/plain',
+      byteSize: 1,
+      createdAt: Date.now(),
+    })
+    await expect(dbModule.readManagedFile('fil_escape_test')).rejects.toThrow(
+      /escapes/,
+    )
+  })
+})

@@ -18,16 +18,18 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { BotAvatar } from './bot-avatar'
-import { botById, BOTS, type Conversation } from './data'
+import { botIn, type Bot, type Conversation } from './data'
 
 export function NewConversationDialog({
   open,
   onOpenChange,
   onPick,
+  bots,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onPick: (botId: string) => void
+  bots: Bot[]
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -39,9 +41,9 @@ export function NewConversationDialog({
           <CommandInput placeholder="Search bots" />
           <CommandList className="p-1.5">
             <CommandEmpty>No bots match</CommandEmpty>
-            {BOTS.map((b) => (
+            {bots.map((b) => (
               <CommandItem key={b.id} value={b.name} onSelect={() => onPick(b.id)}>
-                <BotAvatar name={b.name} color={b.color} />
+                <BotAvatar name={b.name} color={b.color} src={b.avatarUrl} />
                 <span className="flex min-w-0 flex-1 items-baseline gap-2">
                   <span className="truncate text-sm font-medium">{b.name}</span>
                   <span className="text-[10px] text-muted-foreground">{b.model}</span>
@@ -59,9 +61,11 @@ export function NewConversationDialog({
 export function NewChannelDialog({
   open,
   onOpenChange,
+  bots,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  bots: Bot[]
 }) {
   const [name, setName] = useState('')
   const [picked, setPicked] = useState<string[]>([])
@@ -90,12 +94,17 @@ export function NewChannelDialog({
           <div className="flex flex-col gap-1.5">
             <Label className="text-[11px] font-semibold text-muted-foreground">Bots</Label>
             <div className="max-h-52 overflow-y-auto rounded-lg border">
-              {BOTS.map((b) => (
+              {bots.map((b) => (
                 <label
                   key={b.id}
                   className="flex cursor-pointer items-center gap-2.5 border-b px-3 py-2 last:border-b-0 hover:bg-muted/50"
                 >
-                  <BotAvatar name={b.name} color={b.color} className="size-6 text-[10px]" />
+                  <BotAvatar
+                    name={b.name}
+                    color={b.color}
+                    src={b.avatarUrl}
+                    className="size-6 text-[10px]"
+                  />
                   <span className="flex min-w-0 flex-1 items-baseline gap-2">
                     <span className="text-sm font-medium">{b.name}</span>
                     <span className="text-[10px] text-muted-foreground">{b.model}</span>
@@ -139,12 +148,14 @@ export function DeleteConversationDialog({
   conversation,
   onOpenChange,
   onConfirm,
+  bots,
 }: {
   conversation: Conversation | null
   onOpenChange: (open: boolean) => void
   onConfirm: () => void
+  bots: Bot[]
 }) {
-  const bot = conversation ? botById(conversation.botId) : null
+  const bot = conversation ? botIn(bots, conversation.botId) : null
 
   return (
     <Dialog open={!!conversation} onOpenChange={onOpenChange}>
