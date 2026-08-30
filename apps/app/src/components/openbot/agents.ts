@@ -15,12 +15,14 @@ export function agentAvatarUrl(agent: Agent) {
   return `/api/agents/${agent.id}/avatar?v=${encodeURIComponent(agent.avatarFileId)}`
 }
 
-export function botFromAgent(agent: Agent): Bot {
+export function botFromAgent(agent: Agent, model: string): Bot {
   return {
     id: agent.id,
     name: agent.name,
     color: agentColor(agent.id),
-    model: agent.defaultModel ?? 'Sonnet 4.5',
+    // The server-configured model applies to every agent until the model
+    // providers and listing feature lands.
+    model,
     prompt: agent.description,
     grants: [],
     memory: '',

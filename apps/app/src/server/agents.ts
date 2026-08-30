@@ -7,7 +7,6 @@ import * as z from 'zod'
 const agentProfileFields = z.object({
   name: z.string().trim().min(1, 'Name is required').max(80),
   description: z.string().trim().max(500),
-  title: z.string().trim().max(120),
   defaultMode: z.string().trim().min(1).max(40),
   defaultModel: z.string().trim().min(1).max(120).nullable(),
   approvalMode: z.string().trim().min(1).max(40),

@@ -28,7 +28,6 @@ describe('agent profiles', () => {
     const created = await dbModule.createAgent({
       name: 'Ops Watch',
       description: 'Watches error rates overnight.',
-      title: 'On-call sentinel',
     })
     expect(created.id).toMatch(/^agt_/)
     expect(created.notifyOnUpdates).toBe(true)
@@ -39,12 +38,10 @@ describe('agent profiles', () => {
 
     const fetched = await dbModule.getAgent(created.id)
     expect(fetched?.name).toBe('Ops Watch')
-    expect(fetched?.title).toBe('On-call sentinel')
 
     const updated = await dbModule.updateAgentProfile(created.id, {
       name: 'Ops Watch 2',
       description: 'Updated description',
-      title: 'Sentinel',
       defaultModel: 'claude-sonnet-5',
       notifyOnUpdates: false,
       hiddenFromSidebar: true,

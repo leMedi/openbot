@@ -88,7 +88,7 @@ values. Timestamps are Unix epoch milliseconds stored as integers.
 
 An `agents` row contains:
 
-- Name, description, and title.
+- Name and description.
 - Optional avatar managed-file reference.
 - Default mode and model.
 - Approval mode.

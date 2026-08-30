@@ -18,14 +18,18 @@ import { SettingsDialog } from '@/components/openbot/settings-dialog'
 import { Sidebar } from '@/components/openbot/sidebar'
 import { Button } from '@/components/ui/button'
 import { getAgents } from '@/server/agents'
+import { getServerConfig } from '@/server/config'
 
 export const Route = createFileRoute('/')({
-  loader: () => getAgents(),
+  loader: async () => {
+    const [agents, config] = await Promise.all([getAgents(), getServerConfig()])
+    return { agents, config }
+  },
   component: OpenBot,
 })
 
 function OpenBot() {
-  const agents = Route.useLoaderData()
+  const { agents, config } = Route.useLoaderData()
   const router = useRouter()
 
   // Conversations are client-held until conversation persistence lands.
@@ -43,7 +47,10 @@ function OpenBot() {
   })
   const [deleteTarget, setDeleteTarget] = useState<BotConversation | null>(null)
 
-  const bots = useMemo(() => agents.map(botFromAgent), [agents])
+  const bots = useMemo(
+    () => agents.map((agent) => botFromAgent(agent, config.model)),
+    [agents, config.model],
+  )
 
   const active = conversations.find((c) => c.id === activeId)
   const bot = active ? botIn(bots, active.botId) : undefined
@@ -171,6 +178,7 @@ function OpenBot() {
           open={botDialog.open}
           onOpenChange={(open) => setBotDialog((s) => ({ ...s, open }))}
           agent={botDialog.agent}
+          serverModel={config.model}
           onSaved={() => router.invalidate()}
         />
       )}

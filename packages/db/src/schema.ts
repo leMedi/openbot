@@ -40,7 +40,6 @@ export const agents = sqliteTable('agents', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   description: text('description').notNull().default(''),
-  title: text('title').notNull().default(''),
   avatarFileId: text('avatar_file_id').references(() => managedFiles.id, {
     onDelete: 'set null',
   }),

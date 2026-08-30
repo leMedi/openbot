@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Agent } from '@openbot/db'
-import { Check, ChevronDown, ImageUp, Trash2 } from 'lucide-react'
+import { ImageUp, Lock, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -19,7 +19,7 @@ import { cn } from '@/lib/utils'
 import { addAgent, updateAgent } from '@/server/agents'
 import { agentAvatarUrl, agentColor } from './agents'
 import { BotAvatar } from './bot-avatar'
-import { initialOf, MODEL_GROUPS, PLUGINS } from './data'
+import { initialOf, PLUGINS } from './data'
 
 const ACCEPTED_AVATAR_TYPES = 'image/png,image/jpeg,image/webp,image/gif'
 
@@ -27,19 +27,20 @@ export function BotDialog({
   open,
   onOpenChange,
   agent,
+  serverModel,
   onSaved,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   /** When set, the dialog edits an existing agent; otherwise it creates one. */
   agent: Agent | null
+  /** Server-configured model (OPENBOT_AI_MODEL); read-only until model providers land. */
+  serverModel: string
   onSaved: () => void
 }) {
   const editing = !!agent
   const [name, setName] = useState(agent?.name ?? '')
-  const [title, setTitle] = useState(agent?.title ?? '')
   const [description, setDescription] = useState(agent?.description ?? '')
-  const [model, setModel] = useState(agent?.defaultModel ?? 'Sonnet 4.5')
   const [notifyOnUpdates, setNotifyOnUpdates] = useState(agent?.notifyOnUpdates ?? true)
   const [hiddenFromSidebar, setHiddenFromSidebar] = useState(
     agent?.hiddenFromSidebar ?? false,
@@ -67,8 +68,6 @@ export function BotDialog({
   const accounts = PLUGINS.filter((p) => p.installed).flatMap((p) =>
     p.accounts.map((a) => ({ plugin: p, account: a, key: `${p.id}:${a.id}` })),
   )
-  const modelProvider =
-    MODEL_GROUPS.find((g) => g.models.includes(model)) ?? MODEL_GROUPS[0]
 
   function pickAvatar(file: File | null) {
     setAvatarFile(file)
@@ -82,9 +81,7 @@ export function BotDialog({
     try {
       const profile = {
         name,
-        title,
         description,
-        defaultModel: model || null,
         notifyOnUpdates,
         hiddenFromSidebar,
       }
@@ -208,60 +205,19 @@ export function BotDialog({
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label className="text-[11px] font-semibold text-muted-foreground">Title</Label>
-                <Input
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="On-call sentinel"
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
                 <Label className="text-[11px] font-semibold text-muted-foreground">Model</Label>
-                <Popover>
-                  <PopoverTrigger
-                    render={
-                      <button
-                        type="button"
-                        className="flex h-8 items-center gap-2 rounded-lg border border-input bg-transparent px-2.5 text-sm transition-colors hover:border-foreground/25 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none dark:bg-input/30"
-                      >
-                        <BotAvatar
-                          name={modelProvider.provider}
-                          color={modelProvider.hue}
-                          className="size-4 rounded-sm text-[8px]"
-                        />
-                        <span className="flex-1 truncate text-left">{model}</span>
-                        <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-                      </button>
-                    }
-                  />
-                  <PopoverContent align="start" className="w-60 p-1">
-                    {MODEL_GROUPS.map((g) => (
-                      <div key={g.provider}>
-                        <div className="flex items-center gap-1.5 px-2 pt-1.5 pb-1">
-                          <BotAvatar
-                            name={g.provider}
-                            color={g.hue}
-                            className="size-3.5 rounded-sm text-[7px]"
-                          />
-                          <span className="text-[10px] font-semibold text-muted-foreground">
-                            {g.provider}
-                          </span>
-                        </div>
-                        {g.models.map((m) => (
-                          <button
-                            key={m}
-                            type="button"
-                            onClick={() => setModel(m)}
-                            className="flex w-full items-center gap-2 rounded-md py-1.5 pr-2 pl-7 text-sm hover:bg-muted"
-                          >
-                            <span className="flex-1 text-left">{m}</span>
-                            {m === model && <Check className="size-3 text-info" />}
-                          </button>
-                        ))}
-                      </div>
-                    ))}
-                  </PopoverContent>
-                </Popover>
+                <div
+                  title="Configured by the server (OPENBOT_AI_MODEL)"
+                  className="flex h-8 cursor-not-allowed items-center gap-2 rounded-lg border border-input bg-muted/40 px-2.5 text-sm text-muted-foreground dark:bg-input/20"
+                >
+                  <span className="flex-1 truncate text-left">
+                    {serverModel || 'Not configured'}
+                  </span>
+                  <Lock className="size-3 shrink-0" />
+                </div>
+                <p className="text-[10px] leading-normal text-muted-foreground/70">
+                  Set by the server. Model selection is coming with providers.
+                </p>
               </div>
             </div>
           </div>
