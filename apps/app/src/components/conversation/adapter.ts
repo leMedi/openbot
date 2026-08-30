@@ -1,18 +1,12 @@
 // Adapts the OpenBot mock conversations (components/openbot/data.ts) to the
 // conversation entry protocol so the app renders them with the new components.
 
-import {
-  botById,
-  type Conversation as BotConversation,
-  type Message as BotMessage,
+import type {
+  Conversation as BotConversation,
+  Message as BotMessage,
 } from '@/components/openbot/data'
 import { YOU } from './data'
 import type { ActivityTab, Author, Card, Entry, MessageEntry } from './types'
-
-export function agentAuthor(botId: string): Author {
-  const bot = botById(botId)
-  return { id: bot.id, name: bot.name, color: bot.color, kind: 'agent' }
-}
 
 function toMarkdown(m: BotMessage): string {
   const parts: string[] = []
@@ -75,9 +69,8 @@ function toMessage(m: BotMessage, agent: Author): MessageEntry {
   }
 }
 
-/** Convert one OpenBot mock conversation into transcript entries. */
-export function entriesFor(convo: BotConversation): Entry[] {
-  const agent = agentAuthor(convo.botId)
+/** Convert one client-held conversation into transcript entries. */
+export function entriesFor(convo: BotConversation, agent: Author): Entry[] {
   const out: Entry[] = []
   for (const m of convo.messages) {
     if (m.routine) {
@@ -111,8 +104,7 @@ export function entriesFor(convo: BotConversation): Entry[] {
 }
 
 /** Root activity tab derived from the transcript. */
-export function activityFor(convo: BotConversation): ActivityTab[] {
-  const agent = agentAuthor(convo.botId)
+export function activityFor(convo: BotConversation, agent: Author): ActivityTab[] {
   return [
     {
       id: 'root',
