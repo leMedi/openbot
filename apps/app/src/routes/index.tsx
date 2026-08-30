@@ -69,18 +69,22 @@ function OpenBot() {
     setConversations((all) => all.map((c) => (c.id === id ? { ...c, unread: false } : c)))
   }
 
-  function startConversation(botId: string) {
-    const picked = botIn(bots, botId)
+  function openConversation(botId: string, title: string) {
     const convo: BotConversation = {
       id: `c${Date.now()}`,
-      botId: picked.id,
-      title: `New conversation with ${picked.name}`,
+      botId,
+      title,
       time: 'Now',
       messages: [],
     }
     setConversations((all) => [convo, ...all])
-    setNewConvoOpen(false)
     selectConversation(convo.id)
+  }
+
+  function startConversation(botId: string) {
+    const picked = botIn(bots, botId)
+    openConversation(picked.id, `New conversation with ${picked.name}`)
+    setNewConvoOpen(false)
   }
 
   function deleteConversation() {
@@ -179,7 +183,12 @@ function OpenBot() {
           onOpenChange={(open) => setBotDialog((s) => ({ ...s, open }))}
           agent={botDialog.agent}
           serverModel={config.model}
-          onSaved={() => router.invalidate()}
+          onSaved={async (saved, created) => {
+            // Reload agents before opening the conversation so the new bot
+            // resolves in the header instead of the unknown fallback.
+            await router.invalidate()
+            if (created) openConversation(saved.id, saved.name)
+          }}
         />
       )}
       <DeleteConversationDialog

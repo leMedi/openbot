@@ -36,7 +36,7 @@ export function BotDialog({
   agent: Agent | null
   /** Server-configured model (OPENBOT_AI_MODEL); read-only until model providers land. */
   serverModel: string
-  onSaved: () => void
+  onSaved: (saved: Agent, created: boolean) => void
 }) {
   const editing = !!agent
   const [name, setName] = useState(agent?.name ?? '')
@@ -110,7 +110,7 @@ export function BotDialog({
         }
       }
 
-      onSaved()
+      onSaved(saved, !editing)
       onOpenChange(false)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Saving the bot failed')
