@@ -116,6 +116,114 @@ describe('conversations', () => {
   })
 })
 
+describe('conversation navigation', () => {
+  it('persists title, plan, origin, and purpose across a restart', async () => {
+    const { agent } = await dbModule.createAgent({ name: 'Nav Agent' })
+    const created = await dbModule.createConversation({
+      ownerAgentId: agent.id,
+      title: 'Initial title',
+      origin: 'user',
+      purpose: 'Track the persistence work',
+    })
+    expect(created.origin).toBe('user')
+    expect(created.purpose).toBe('Track the persistence work')
+
+    const updated = await dbModule.updateConversation(created.id, {
+      title: 'Renamed title',
+      currentPlanUri: 'plan://nav-agent/1',
+    })
+    expect(updated?.title).toBe('Renamed title')
+    expect(updated?.currentPlanUri).toBe('plan://nav-agent/1')
+    expect(updated?.updatedAt).toBeGreaterThanOrEqual(created.updatedAt)
+
+    vi.resetModules()
+    const reloaded: DbModule = await import('./index')
+    const survivor = await reloaded.getConversation(created.id)
+    expect(survivor?.title).toBe('Renamed title')
+    expect(survivor?.currentPlanUri).toBe('plan://nav-agent/1')
+    expect(survivor?.origin).toBe('user')
+    expect(survivor?.purpose).toBe('Track the persistence work')
+  })
+
+  it('marks a conversation unread and read', async () => {
+    const { agent } = await dbModule.createAgent({ name: 'Unread Agent' })
+    const created = await dbModule.createConversation({ ownerAgentId: agent.id })
+    expect(created.manuallyUnread).toBe(false)
+    expect(created.lastReadSequenceNo).toBe(0)
+
+    const unread = await dbModule.markConversationUnread(created.id)
+    expect(unread?.manuallyUnread).toBe(true)
+
+    // New transcript activity moves the read horizon forward.
+    await dbModule.allocateConversationSequence(created.id)
+    await dbModule.allocateConversationSequence(created.id)
+
+    const read = await dbModule.markConversationRead(created.id)
+    expect(read?.manuallyUnread).toBe(false)
+    // Everything allocated so far is now read: last read = next - 1.
+    expect(read?.lastReadSequenceNo).toBe(read!.nextSequenceNo - 1)
+  })
+
+  it('allocates sequence numbers atomically without duplicates', async () => {
+    const { agent } = await dbModule.createAgent({ name: 'Sequence Agent' })
+    const created = await dbModule.createConversation({ ownerAgentId: agent.id })
+
+    const allocated = await Promise.all(
+      Array.from({ length: 25 }, () =>
+        dbModule.allocateConversationSequence(created.id),
+      ),
+    )
+    expect(new Set(allocated).size).toBe(25)
+    expect(Math.min(...allocated)).toBe(1)
+    expect(Math.max(...allocated)).toBe(25)
+
+    const after = await dbModule.getConversation(created.id)
+    expect(after?.nextSequenceNo).toBe(26)
+  })
+
+  it('clears a conversation into a fresh one and removes dependent state', async () => {
+    const { agent } = await dbModule.createAgent({ name: 'Clear Agent' })
+    const created = await dbModule.createConversation({
+      ownerAgentId: agent.id,
+      title: 'Busy room',
+      origin: 'user',
+      purpose: 'Long-running work',
+    })
+
+    const sequenceNo = await dbModule.allocateConversationSequence(created.id)
+    const now = Date.now()
+    await dbModule.db.insert(dbModule.conversationMessages).values({
+      id: 'msg_clear_test',
+      conversationId: created.id,
+      sequenceNo,
+      kind: 'message',
+      role: 'user',
+      direction: 'inbound',
+      bodyText: 'hello',
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    const fresh = await dbModule.clearConversation(created.id)
+    expect(fresh.id).not.toBe(created.id)
+    expect(fresh.ownerAgentId).toBe(agent.id)
+    expect(fresh.title).toBe('Busy room')
+    expect(fresh.origin).toBe('user')
+    expect(fresh.purpose).toBe('Long-running work')
+    expect(fresh.nextSequenceNo).toBe(1)
+    expect(fresh.currentPlanUri).toBeNull()
+
+    expect(await dbModule.getConversation(created.id)).toBeUndefined()
+    const orphanedMessages = await dbModule.db
+      .select()
+      .from(dbModule.conversationMessages)
+      .where(eq(dbModule.conversationMessages.conversationId, created.id))
+    expect(orphanedMessages).toHaveLength(0)
+
+    await expect(dbModule.clearConversation(created.id)).rejects.toThrow(/not found/)
+  })
+})
+
 describe('agent avatars and managed files', () => {
   it('uploads, serves, replaces, and removes an avatar', async () => {
     const { agent } = await dbModule.createAgent({ name: 'Avatar Agent' })

@@ -162,8 +162,8 @@ A conversation stores:
 - Optional origin and purpose metadata.
 - Creation and update timestamps.
 
-The client remembers its last selected agent in `localStorage`. This is
-client-local navigation preference, not server domain state.
+The client remembers its last selected conversation in `localStorage`. This
+is client-local navigation preference, not server domain state.
 
 Clearing a conversation deletes that conversation and its dependent messages,
 turns, and checkpoints, then creates a fresh conversation. Managed files are
@@ -384,11 +384,14 @@ Recommended implementation slices are:
 - `packages/db/src/ids.ts`: prefixed server ID generation.
 - `packages/db/src/client.ts`: database startup (pragmas, migrations, turn recovery).
 - `packages/db/src/agents.ts`: agent registry repository, including avatar operations.
+- `packages/db/src/conversations.ts`: conversation repository (navigation state,
+  atomic sequence allocation, clear-into-fresh-conversation).
 - `packages/db/src/files.ts`: managed-file repository and path containment.
 - `packages/db/src/index.ts`: package exports.
 - `packages/db/src/env.ts`: local database, migration, and managed-file paths.
 - `packages/db/drizzle/`: generated committed migrations and metadata.
 - `apps/app/src/server/agents.ts`: current agent API boundary.
+- `apps/app/src/server/conversations.ts`: conversation API boundary.
 - `apps/app/src/routes/api.agents.$agentId.avatar.ts`: avatar file-serving API.
 - `apps/app/src/routes/index.tsx`: current agent registry UI.
 

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createFileRoute, useRouter } from '@tanstack/react-router'
 import type { Agent } from '@openbot/db'
 import { BotIcon, MessageCircle, PanelRight } from 'lucide-react'
@@ -10,9 +10,11 @@ import { conversationFromRow } from '@/components/openbot/conversations'
 import { botIn, type Conversation as BotConversation } from '@/components/openbot/data'
 import { Inspector } from '@/components/openbot/inspector'
 import {
+  ClearConversationDialog,
   DeleteConversationDialog,
   NewChannelDialog,
   NewConversationDialog,
+  RenameConversationDialog,
 } from '@/components/openbot/modals'
 import { PluginsDialog } from '@/components/openbot/plugins-dialog'
 import { SettingsDialog } from '@/components/openbot/settings-dialog'
@@ -22,9 +24,15 @@ import { getAgents } from '@/server/agents'
 import { getServerConfig } from '@/server/config'
 import {
   addConversation,
+  clearConversation,
   getConversations,
   removeConversation,
+  renameConversation,
+  setConversationUnread,
 } from '@/server/conversations'
+
+// Client-local navigation preference, deliberately not server domain state.
+const LAST_CONVERSATION_KEY = 'openbot:last-conversation'
 
 export const Route = createFileRoute('/')({
   loader: async () => {
@@ -54,6 +62,8 @@ function OpenBot() {
     agent: null,
   })
   const [deleteTarget, setDeleteTarget] = useState<BotConversation | null>(null)
+  const [renameTarget, setRenameTarget] = useState<BotConversation | null>(null)
+  const [clearTarget, setClearTarget] = useState<BotConversation | null>(null)
 
   const bots = useMemo(
     () => agents.map((agent) => botFromAgent(agent, config.model)),
@@ -63,6 +73,29 @@ function OpenBot() {
     () => conversationRows.map(conversationFromRow),
     [conversationRows],
   )
+
+  // Restore the last selected conversation after mount; localStorage is
+  // unavailable during server rendering.
+  useEffect(() => {
+    const saved = localStorage.getItem(LAST_CONVERSATION_KEY)
+    if (saved && conversationRows.some((c) => c.id === saved)) setActiveId(saved)
+    // Run once on mount: restoring again after loader refreshes would fight
+    // in-session selection changes.
+  }, [])
+
+  // Skip the mount run so the default selection never overwrites the saved
+  // value before the restore effect above has been applied.
+  const selectionRestored = useRef(false)
+  useEffect(() => {
+    if (!selectionRestored.current) {
+      selectionRestored.current = true
+      return
+    }
+    if (activeId) localStorage.setItem(LAST_CONVERSATION_KEY, activeId)
+  }, [activeId])
+
+  const findConversation = (id: string) =>
+    conversations.find((c) => c.id === id) ?? null
 
   const active = conversations.find((c) => c.id === activeId)
   const bot = active ? botIn(bots, active.botId) : undefined
@@ -86,11 +119,47 @@ function OpenBot() {
   async function startConversation(botId: string) {
     const picked = botIn(bots, botId)
     const created = await addConversation({
-      data: { agentId: picked.id, title: `New conversation with ${picked.name}` },
+      data: {
+        agentId: picked.id,
+        title: `New conversation with ${picked.name}`,
+        origin: 'user',
+      },
     })
     setNewConvoOpen(false)
     await router.invalidate()
     setActiveId(created.id)
+  }
+
+  async function selectConversation(id: string) {
+    setActiveId(id)
+    const picked = findConversation(id)
+    if (picked?.unread) {
+      await setConversationUnread({ data: { id, unread: false } })
+      await router.invalidate()
+    }
+  }
+
+  async function toggleUnread(id: string) {
+    const target = findConversation(id)
+    if (!target) return
+    await setConversationUnread({ data: { id, unread: !target.unread } })
+    await router.invalidate()
+  }
+
+  async function submitRename(title: string) {
+    if (!renameTarget) return
+    await renameConversation({ data: { id: renameTarget.id, title } })
+    setRenameTarget(null)
+    await router.invalidate()
+  }
+
+  async function confirmClearConversation() {
+    if (!clearTarget) return
+    const fresh = await clearConversation({ data: { id: clearTarget.id } })
+    const wasActive = clearTarget.id === activeId
+    setClearTarget(null)
+    await router.invalidate()
+    if (wasActive) setActiveId(fresh.id)
   }
 
   async function deleteConversation() {
@@ -110,15 +179,17 @@ function OpenBot() {
         conversations={conversations}
         bots={bots}
         activeId={active?.id ?? ''}
-        onSelect={setActiveId}
+        onSelect={selectConversation}
         onNewBot={() => setBotDialog({ open: true, agent: null })}
         onNewConversation={() => setNewConvoOpen(true)}
         onNewChannel={() => setNewChannelOpen(true)}
+        onNewConversationWith={startConversation}
         onOpenPlugins={() => setPluginsOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
-        onDeleteConversation={(id) =>
-          setDeleteTarget(conversations.find((c) => c.id === id) ?? null)
-        }
+        onRenameConversation={(id) => setRenameTarget(findConversation(id))}
+        onToggleUnread={toggleUnread}
+        onClearConversation={(id) => setClearTarget(findConversation(id))}
+        onDeleteConversation={(id) => setDeleteTarget(findConversation(id))}
       />
 
       {active && bot ? (
@@ -203,6 +274,21 @@ function OpenBot() {
           }}
         />
       )}
+      <RenameConversationDialog
+        conversation={renameTarget}
+        onOpenChange={(open) => {
+          if (!open) setRenameTarget(null)
+        }}
+        onSubmit={submitRename}
+      />
+      <ClearConversationDialog
+        conversation={clearTarget}
+        onOpenChange={(open) => {
+          if (!open) setClearTarget(null)
+        }}
+        onConfirm={confirmClearConversation}
+        bots={bots}
+      />
       <DeleteConversationDialog
         conversation={deleteTarget}
         onOpenChange={(open) => {

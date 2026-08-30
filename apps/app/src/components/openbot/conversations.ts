@@ -9,12 +9,18 @@ function timeLabel(epochMs: number) {
   return `${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
+/** Unread when marked manually or when transcript rows exist past the read horizon. */
+export function isUnread(row: ConversationRow) {
+  return row.manuallyUnread || row.lastReadSequenceNo < row.nextSequenceNo - 1
+}
+
 export function conversationFromRow(row: ConversationRow): Conversation {
   return {
     id: row.id,
     botId: row.ownerAgentId ?? '',
     title: row.title ?? 'Untitled',
     time: timeLabel(row.updatedAt),
+    unread: isUnread(row),
     messages: [],
   }
 }

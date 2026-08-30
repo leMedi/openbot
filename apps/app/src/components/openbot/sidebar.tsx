@@ -4,6 +4,7 @@ import {
   BotIcon,
   CheckCircle2,
   Copy,
+  Eraser,
   FolderPlus,
   Hash,
   MessageCircle,
@@ -50,8 +51,12 @@ type SidebarProps = {
   onNewBot: () => void
   onNewConversation: () => void
   onNewChannel: () => void
+  onNewConversationWith: (botId: string) => void
   onOpenPlugins: () => void
   onOpenSettings: () => void
+  onRenameConversation: (id: string) => void
+  onToggleUnread: (id: string) => void
+  onClearConversation: (id: string) => void
   onDeleteConversation: (id: string) => void
 }
 
@@ -63,8 +68,12 @@ export function Sidebar({
   onNewBot,
   onNewConversation,
   onNewChannel,
+  onNewConversationWith,
   onOpenPlugins,
   onOpenSettings,
+  onRenameConversation,
+  onToggleUnread,
+  onClearConversation,
   onDeleteConversation,
 }: SidebarProps) {
   const [search, setSearch] = useState('')
@@ -205,6 +214,10 @@ export function Sidebar({
                 bot={botIn(bots, c.botId)}
                 active={c.id === activeId}
                 onSelect={() => onSelect(c.id)}
+                onNewConversationWith={onNewConversationWith}
+                onRename={() => onRenameConversation(c.id)}
+                onToggleUnread={() => onToggleUnread(c.id)}
+                onClear={() => onClearConversation(c.id)}
                 onDelete={() => onDeleteConversation(c.id)}
               />
             ))}
@@ -250,12 +263,20 @@ function ConversationRow({
   bot,
   active,
   onSelect,
+  onNewConversationWith,
+  onRename,
+  onToggleUnread,
+  onClear,
   onDelete,
 }: {
   conversation: Conversation
   bot: Bot
   active: boolean
   onSelect: () => void
+  onNewConversationWith: (botId: string) => void
+  onRename: () => void
+  onToggleUnread: () => void
+  onClear: () => void
   onDelete: () => void
 }) {
   const last = conversation.messages[conversation.messages.length - 1]
@@ -313,27 +334,32 @@ function ConversationRow({
         }
       />
       <ContextMenuContent className="w-52">
-        <ContextMenuItem>
+        <ContextMenuItem onClick={onRename}>
           <Pencil /> Rename
         </ContextMenuItem>
         <ContextMenuItem>
           <Pin /> {conversation.pinned ? 'Unpin' : 'Pin'}
         </ContextMenuItem>
-        <ContextMenuItem>
+        <ContextMenuItem onClick={onToggleUnread}>
           <CheckCircle2 /> Mark as {conversation.unread ? 'read' : 'unread'}
         </ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuItem>
+        <ContextMenuItem onClick={() => onNewConversationWith(bot.id)}>
           <MessageCircle /> New conversation with {bot.name}
         </ContextMenuItem>
         <ContextMenuItem>
           <FolderPlus /> Add to section…
         </ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuItem>
+        <ContextMenuItem
+          onClick={() => navigator.clipboard.writeText(conversation.id)}
+        >
           <Copy /> Copy conversation ID
         </ContextMenuItem>
         <ContextMenuSeparator />
+        <ContextMenuItem onClick={onClear}>
+          <Eraser /> Clear history
+        </ContextMenuItem>
         <ContextMenuItem variant="destructive" onClick={onDelete}>
           <Trash2 /> Delete
         </ContextMenuItem>

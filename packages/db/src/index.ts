@@ -4,7 +4,7 @@ export * from './json-schemas'
 export * from './agents'
 export * from './conversations'
 export * from './files'
-export { agents, conversations, managedFiles } from './schema'
+export { agents, conversations, conversationMessages, managedFiles } from './schema'
 export type {
   Agent,
   NewAgent,
