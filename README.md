@@ -5,13 +5,15 @@
 ```sh
 pnpm install
 cp .env.example .env
-pnpm db:migrate
 pnpm dev
 ```
 
 The app runs at `http://localhost:3000`. Relative values of
 `OPENBOT_DATA_DIR` are resolved from the repository root, and the database is
 stored at `$OPENBOT_DATA_DIR/store.db`.
+The server applies committed database migrations automatically at startup and
+stops if migration fails. `pnpm db:migrate` remains available for explicit
+deployment or development migration runs.
 
 ## Commands
 

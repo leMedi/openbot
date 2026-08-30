@@ -27,12 +27,11 @@ function findWorkspaceRoot(start: string) {
   }
 }
 
-export const dataDirectory = path.resolve(
-  findWorkspaceRoot(process.cwd()),
-  env.OPENBOT_DATA_DIR,
-)
+export const workspaceRoot = findWorkspaceRoot(process.cwd())
+export const dataDirectory = path.resolve(workspaceRoot, env.OPENBOT_DATA_DIR)
 
 mkdirSync(dataDirectory, { recursive: true })
 
 export const databasePath = path.join(dataDirectory, 'store.db')
 export const databaseUrl = `file:${databasePath}`
+export const migrationsDirectory = path.join(workspaceRoot, 'packages/db/drizzle')
