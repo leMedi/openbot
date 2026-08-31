@@ -1,15 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
-import {
-  appendCheckpointWithExecutor,
-  getCurrentCheckpointWithExecutor,
-} from './checkpoints'
+import { appendCheckpointWithExecutor } from './checkpoints'
 import { db } from './client'
 import type { DbExecutor } from './conversations'
 import { createId } from './ids'
 import {
   type CheckpointState,
-  checkpointStateSchema,
   type EffectiveTools,
   effectiveToolsSchema,
   type WaitingState,
@@ -512,8 +508,6 @@ export type TurnSuccessInput = {
   /** Authoring agent identity recorded on the transcript row (group rooms). */
   senderAgentId?: string | null
   checkpointState: CheckpointState
-  /** The executing group member's rendered memory for transactional merging. */
-  memoryPrompt?: { agentId: string; prompt: string }
 }
 
 /**
@@ -538,27 +532,10 @@ export function finalizeTurnSuccess(input: TurnSuccessInput) {
       },
       tx,
     )
-    let checkpointState = input.checkpointState
-    if (input.memoryPrompt) {
-      const current = await getCurrentCheckpointWithExecutor(
-        input.conversationId,
-        tx,
-      )
-      const priorMemoryPrompts = current
-        ? checkpointStateSchema.parse(current.stateJson).memoryPromptsByAgent ?? {}
-        : {}
-      checkpointState = {
-        ...checkpointState,
-        memoryPromptsByAgent: {
-          ...priorMemoryPrompts,
-          [input.memoryPrompt.agentId]: input.memoryPrompt.prompt,
-        },
-      }
-    }
     const checkpoint = await appendCheckpointWithExecutor(
       tx,
       input.conversationId,
-      checkpointState,
+      input.checkpointState,
     )
     const turn = await completeTurn(input.turnId, { status: 'succeeded' }, tx)
     if (!turn) throw new Error(`Turn ${input.turnId} not found`)

@@ -89,15 +89,29 @@ export const reactionsSchema = z
 // Model-facing checkpoint state (schema version 1): the full prompt history
 // needed to resume the conversation, including the frozen system prompt for
 // the current compaction epoch. Display concerns stay in conversation_messages.
+// Tool fields use the OpenAI wire names because checkpointed messages are
+// replayed verbatim as request payloads.
+export const modelToolCallSchema = z.object({
+  id: z.string().min(1),
+  type: z.literal('function'),
+  function: z.object({
+    name: z.string().min(1),
+    arguments: z.string(),
+  }),
+})
+
 export const modelMessageSchema = z.object({
   role: z.enum(['system', 'user', 'assistant', 'tool']),
   content: z.string(),
+  tool_calls: z.array(modelToolCallSchema).optional(),
+  tool_call_id: z.string().min(1).optional(),
 })
 
+// Older checkpoints may carry a legacy memoryPromptsByAgent snapshot map;
+// parsing strips it, since the system prompt is now re-rendered every run.
 export const checkpointStateSchema = z.object({
   version: z.literal(1),
   modelMessages: z.array(modelMessageSchema),
-  memoryPromptsByAgent: z.record(z.string(), z.string()).optional(),
 })
 
 export const effectiveToolsSchema = z.object({
@@ -145,6 +159,7 @@ export const oauthCredentialsSchema = z.object({
 })
 
 export type VersionedObject = z.infer<typeof versionedObjectSchema>
+export type ModelToolCall = z.infer<typeof modelToolCallSchema>
 export type ModelMessage = z.infer<typeof modelMessageSchema>
 export type CheckpointState = z.infer<typeof checkpointStateSchema>
 export type GroupMembers = z.infer<typeof groupMembersSchema>

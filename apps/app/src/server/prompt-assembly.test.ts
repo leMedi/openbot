@@ -19,17 +19,18 @@ beforeAll(async () => {
   ])
 })
 
-describe('private prompt memory', () => {
-  it('includes relevant provenance and freezes it in the checkpoint epoch', async () => {
-    const { agent: alpha, conversation } = await db.createAgent({ name: 'Alpha' })
-    const { agent: beta } = await db.createAgent({ name: 'Beta' })
-    const shared = await db.createMemoryItem({
+describe('memory prompt rendering', () => {
+  it('renders shared and agent sections with dates, provenance, and scope isolation', async () => {
+    const { agent: alpha } = await db.createAgent({ name: 'Render Alpha' })
+    const { agent: beta } = await db.createAgent({ name: 'Render Beta' })
+    await db.createMemoryItem({
       scope: 'user',
       kind: 'profile',
-      content: 'Prefers concise answers.',
+      content: 'The user works as a software engineer.',
       authoredByAgentId: beta.id,
+      authoredByAgentName: beta.name,
     })
-    const alphaMemory = await db.createMemoryItem({
+    await db.createMemoryItem({
       scope: 'agent',
       subjectAgentId: alpha.id,
       kind: 'note',
@@ -41,6 +42,55 @@ describe('private prompt memory', () => {
       kind: 'note',
       content: 'This belongs only to Beta.',
     })
+
+    const rendered = prompts.renderMemoryPrompt(
+      await db.listPromptMemoryForAgent(alpha.id),
+    )
+    expect(rendered).toContain('About the user (shared):')
+    expect(rendered).toContain('[via Render Beta]')
+    expect(rendered).toContain('The user works as a software engineer.')
+    expect(rendered).toContain('About the user:')
+    expect(rendered).toContain('Track release readiness.')
+    expect(rendered).not.toContain('This belongs only to Beta.')
+    expect(rendered).toMatch(/\(learned \d{4}-\d{2}-\d{2}\)/)
+  })
+
+  it('bounds the recent section and points overflow at recallMemory', () => {
+    const now = Date.now()
+    const items = Array.from({ length: 20 }, (_, index) => ({
+      id: `mem_${String(index).padStart(3, '0')}`,
+      scope: 'agent' as const,
+      subjectAgentId: 'agent_x',
+      authoredByAgentId: null,
+      authoredByAgentName: null,
+      kind: 'note' as const,
+      content: `Fact number ${index}`,
+      metadataJson: { version: 1 as const },
+      createdAt: now,
+      updatedAt: now + index,
+    }))
+    const rendered = prompts.renderMemorySystemPrompt(items)
+    // 15 recent records survive; the 5 oldest are folded into the omission line.
+    expect(rendered).toContain('Fact number 19')
+    expect(rendered).not.toContain('Fact number 0\n')
+    expect(rendered).toContain('5 more facts not shown — search them with recallMemory.')
+  })
+
+  it('renders empty sections as nothing', () => {
+    expect(prompts.renderUserMemorySystemPrompt([])).toBe('')
+    expect(prompts.renderMemorySystemPrompt([])).toBe('')
+    expect(prompts.renderMemoryPrompt([])).toBe('')
+  })
+})
+
+describe('dynamic private prompt', () => {
+  it('re-renders the system prompt from live memory while keeping checkpoint history', async () => {
+    const { agent: alpha, conversation } = await db.createAgent({ name: 'Alpha' })
+    const shared = await db.createMemoryItem({
+      scope: 'user',
+      kind: 'profile',
+      content: 'Prefers concise answers.',
+    })
     const { turn: firstTurn } = await db.acceptUserMessage({
       conversationId: conversation.id,
       text: 'What should I know?',
@@ -51,11 +101,9 @@ describe('private prompt memory', () => {
       conversationId: conversation.id,
       turnId: firstTurn.id,
     })
-    const systemPrompt = firstPrompt[0]?.content ?? ''
-    expect(systemPrompt).toContain('Prefers concise answers.')
-    expect(systemPrompt).toContain(`authored by agent ${beta.id}`)
-    expect(systemPrompt).toContain('Track release readiness.')
-    expect(systemPrompt).not.toContain('This belongs only to Beta.')
+    expect(firstPrompt[0]?.role).toBe('system')
+    expect(firstPrompt[0]?.content).toContain('Prefers concise answers.')
+    expect(firstPrompt[0]?.content).toContain('Agent profile:')
     expect(firstPrompt.at(-1)).toEqual({
       role: 'user',
       content: 'What should I know?',
@@ -63,51 +111,41 @@ describe('private prompt memory', () => {
 
     await db.createConversationCheckpoint(conversation.id, {
       version: 1,
-      modelMessages: firstPrompt,
+      modelMessages: [
+        ...firstPrompt,
+        { role: 'assistant', content: 'Noted.' },
+      ],
     })
     await db.updateMemoryItem(
       { id: shared.id, scope: 'user' },
       { content: 'Now prefers detailed answers.' },
     )
-    await db.deleteMemoryItem({
-      id: alphaMemory.id,
-      scope: 'agent',
-      subjectAgentId: alpha.id,
-    })
     const { turn: secondTurn } = await db.acceptUserMessage({
       conversationId: conversation.id,
       text: 'Has anything changed?',
     })
 
-    const frozenPrompt = await prompts.assemblePrivateModelMessages({
+    const secondPrompt = await prompts.assemblePrivateModelMessages({
       agent: alpha,
       conversationId: conversation.id,
       turnId: secondTurn.id,
     })
-    expect(frozenPrompt[0]).toEqual(firstPrompt[0])
-    expect(frozenPrompt[0]?.content).not.toContain('Now prefers detailed answers.')
-    expect(frozenPrompt.at(-1)).toEqual({
+    // Fresh system prompt reflects the live memory edit...
+    expect(secondPrompt[0]?.role).toBe('system')
+    expect(secondPrompt[0]?.content).toContain('Now prefers detailed answers.')
+    expect(secondPrompt[0]?.content).not.toContain('Prefers concise answers.')
+    // ...while checkpointed history is replayed without its stale system prompt.
+    expect(secondPrompt.filter((message) => message.role === 'system')).toHaveLength(1)
+    expect(secondPrompt.map((message) => message.content)).toContain('Noted.')
+    expect(secondPrompt.at(-1)).toEqual({
       role: 'user',
       content: 'Has anything changed?',
     })
-
-    const freshConversation = await db.clearConversation(conversation.id)
-    const { turn: freshTurn } = await db.acceptUserMessage({
-      conversationId: freshConversation.id,
-      text: 'Start fresh.',
-    })
-    const freshPrompt = await prompts.assemblePrivateModelMessages({
-      agent: alpha,
-      conversationId: freshConversation.id,
-      turnId: freshTurn.id,
-    })
-    expect(freshPrompt[0]?.content).toContain('Now prefers detailed answers.')
-    expect(freshPrompt[0]?.content).not.toContain('Track release readiness.')
   })
 })
 
-describe('group prompt memory', () => {
-  it("freezes each member's memory within the shared checkpoint epoch", async () => {
+describe('dynamic group prompt', () => {
+  it("re-renders each member's memory on every run", async () => {
     const { agent: alpha } = await db.createAgent({ name: 'Group Alpha' })
     const { agent: beta } = await db.createAgent({ name: 'Group Beta' })
     const { group, conversation } = await db.createGroup({
@@ -130,28 +168,20 @@ describe('group prompt memory', () => {
       members: [alpha, beta],
       conversationId: conversation.id,
     })
-    expect(firstPrompt.modelMessages[0]?.content).toContain(
-      'Alpha remembers the first version.',
-    )
-    await db.createConversationCheckpoint(conversation.id, {
-      version: 1,
-      modelMessages: firstPrompt.modelMessages,
-      memoryPromptsByAgent: { [alpha.id]: firstPrompt.memoryPrompt },
-    })
+    expect(firstPrompt[0]?.content).toContain('Alpha remembers the first version.')
+    expect(firstPrompt[0]?.content).toContain('shared group room "Memory Room"')
+
     await db.updateMemoryItem(
       { id: memory.id, scope: 'agent', subjectAgentId: alpha.id },
       { content: 'Alpha remembers the changed version.' },
     )
-
-    const frozenPrompt = await prompts.assembleGroupModelMessages({
+    const secondPrompt = await prompts.assembleGroupModelMessages({
       agent: alpha,
       group,
       members: [alpha, beta],
       conversationId: conversation.id,
     })
-    expect(frozenPrompt.modelMessages[0]).toEqual(firstPrompt.modelMessages[0])
-    expect(frozenPrompt.modelMessages[0]?.content).not.toContain(
-      'Alpha remembers the changed version.',
-    )
+    expect(secondPrompt[0]?.content).toContain('Alpha remembers the changed version.')
+    expect(secondPrompt[0]?.content).not.toContain('Alpha remembers the first version.')
   })
 })

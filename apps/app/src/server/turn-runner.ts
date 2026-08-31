@@ -20,10 +20,15 @@ import {
   waitingStateSchema,
 } from '@openbot/db'
 import { getAiConfig, streamChatCompletion } from './ai'
+import { agentToolDefinitions, executeAgentToolCall } from './agent-tools'
 import {
   assembleGroupModelMessages,
   assemblePrivateModelMessages,
 } from './prompt-assembly'
+
+// A turn may interleave tool calls and completions, but must settle on a
+// visible answer; the final round runs without tools to force one.
+const MAX_TOOL_ROUNDS = 8
 
 // In-memory execution state. Durable truth lives in the turns table; these
 // maps only fan visible output out to connected clients and serialize
@@ -123,12 +128,14 @@ async function executeTurn(turnId: string) {
     const waitingState = claimed.waitingStateJson
       ? waitingStateSchema.parse(claimed.waitingStateJson)
       : undefined
-    // Historical snapshot of what this execution actually used. No tools are
-    // wired up yet, so the effective tool list is honestly empty.
+    // Historical snapshot of what this execution actually used.
     await recordTurnExecution(turnId, {
       modelProvider: 'openai-compatible',
       modelId: config.model,
-      effectiveTools: { version: 1, tools: [] },
+      effectiveTools: {
+        version: 1,
+        tools: agentToolDefinitions.map((tool) => tool.function.name),
+      },
       effectivePermissions: { version: 1, approvalMode: agent.approvalMode },
       runtimeContext: {
         version: 1,
@@ -144,28 +151,20 @@ async function executeTurn(turnId: string) {
     })
 
     // Model-facing input. Group rooms rebuild the shared transcript from this
-    // member's perspective; private rooms use the current checkpoint's frozen
-    // history (or a fresh system prompt on the first turn) plus this turn's
-    // user messages.
-    let modelMessages
-    let memoryPrompt: { agentId: string; prompt: string } | undefined
-    if (group) {
-      const members = await memberAgentsOf(group)
-      const prompt = await assembleGroupModelMessages({
-        agent,
-        group,
-        members,
-        conversationId: conversation.id,
-      })
-      modelMessages = prompt.modelMessages
-      memoryPrompt = { agentId: agent.id, prompt: prompt.memoryPrompt }
-    } else {
-      modelMessages = await assemblePrivateModelMessages({
-        agent,
-        conversationId: conversation.id,
-        turnId,
-      })
-    }
+    // member's perspective; private rooms replay the checkpoint history. The
+    // system prompt is re-rendered from live profile and memory every run.
+    const modelMessages = group
+      ? await assembleGroupModelMessages({
+          agent,
+          group,
+          members: await memberAgentsOf(group),
+          conversationId: conversation.id,
+        })
+      : await assemblePrivateModelMessages({
+          agent,
+          conversationId: conversation.id,
+          turnId,
+        })
 
     console.info('[agent prompt]', {
       agent: { id: agent.id, name: agent.name },
@@ -173,15 +172,49 @@ async function executeTurn(turnId: string) {
       prompt: modelMessages,
     })
 
-    const assistantText = await streamChatCompletion(
-      config,
-      modelMessages,
-      (delta) => {
-        active.accumulated += delta
-        emit({ type: 'delta', text: delta })
-      },
-      active.controller.signal,
-    )
+    const onDelta = (delta: string) => {
+      active.accumulated += delta
+      emit({ type: 'delta', text: delta })
+    }
+
+    // Completion/tool loop: each round may answer or request tool calls;
+    // tool results are appended and the model is called again.
+    const visibleTexts: string[] = []
+    let finalText = ''
+    for (let round = 0; ; round += 1) {
+      const allowTools = round < MAX_TOOL_ROUNDS
+      const completion = await streamChatCompletion(
+        config,
+        modelMessages,
+        onDelta,
+        active.controller.signal,
+        allowTools ? agentToolDefinitions : undefined,
+      )
+      if (completion.text) visibleTexts.push(completion.text)
+      if (completion.toolCalls.length === 0) {
+        finalText = completion.text
+        break
+      }
+      modelMessages.push({
+        role: 'assistant',
+        content: completion.text,
+        tool_calls: completion.toolCalls,
+      })
+      for (const toolCall of completion.toolCalls) {
+        console.info('[agent tool]', {
+          agent: { id: agent.id, name: agent.name },
+          tool: toolCall.function.name,
+          arguments: toolCall.function.arguments,
+        })
+        modelMessages.push({
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          content: await executeAgentToolCall(agent, toolCall),
+        })
+      }
+    }
+    // The visible transcript row carries everything the user watched stream.
+    const assistantText = visibleTexts.join('\n\n')
 
     // One transaction: assistant row, next checkpoint (pointer advance), and
     // the succeeded status — so a crash never persists a partial outcome.
@@ -194,9 +227,8 @@ async function executeTurn(turnId: string) {
       senderAgentId: group ? agent.id : null,
       checkpointState: {
         version: 1,
-        modelMessages: [...modelMessages, { role: 'assistant', content: assistantText }],
+        modelMessages: [...modelMessages, { role: 'assistant', content: finalText }],
       },
-      memoryPrompt,
     })
     emitTerminal({ type: 'done', message: assistantMessage })
   } catch (error) {

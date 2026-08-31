@@ -167,53 +167,81 @@ describe('durable memory', () => {
     ).toBeUndefined()
   })
 
-  it('merges group member memory snapshots during successive completion', async () => {
-    const { agent: alpha } = await dbModule.createAgent({ name: 'Merge Alpha' })
-    const { agent: beta } = await dbModule.createAgent({ name: 'Merge Beta' })
-    const { conversation } = await dbModule.createGroup({
-      name: 'Merge Room',
-      members: [
-        { type: 'agent', agentId: alpha.id },
-        { type: 'agent', agentId: beta.id },
-      ],
+  it('searches accessible memory grep-style, scoped, recent first, with limit', async () => {
+    const { agent: alpha } = await dbModule.createAgent({ name: 'Search Alpha' })
+    const { agent: beta } = await dbModule.createAgent({ name: 'Search Beta' })
+    const first = await dbModule.createMemoryItem({
+      scope: 'agent',
+      subjectAgentId: alpha.id,
+      kind: 'note',
+      content: 'Rotate the signing key quarterly.',
+    })
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    const second = await dbModule.createMemoryItem({
+      scope: 'user',
+      kind: 'note',
+      content: 'The user rotates keys on Mondays.',
+    })
+    await dbModule.createMemoryItem({
+      scope: 'agent',
+      subjectAgentId: beta.id,
+      kind: 'note',
+      content: 'Beta key rotation is unrelated.',
+    })
+    await dbModule.createMemoryItem({
+      scope: 'user',
+      kind: 'note',
+      content: 'Content with 100% literal_percent characters.',
     })
 
-    async function prepareChild(agentId: string, text: string) {
-      const { turn: groupTurn } = await dbModule.acceptUserMessage({
-        conversationId: conversation.id,
-        text,
-      })
-      await dbModule.claimQueuedTurn(groupTurn.id)
-      const { childTurn } = await dbModule.queueGroupChildTurn({
-        groupTurnId: groupTurn.id,
-        targetAgentId: agentId,
-      })
-      await dbModule.claimQueuedTurn(childTurn.id)
-      return childTurn
-    }
+    // Other agents' private memory is invisible; results are newest first.
+    const found = await dbModule.searchMemoryForAgent(alpha.id, { query: 'key' })
+    expect(found.map((item) => item.id)).toEqual([second.id, first.id])
 
-    const alphaTurn = await prepareChild(alpha.id, 'Alpha should answer')
-    const betaTurn = await prepareChild(beta.id, 'Beta should answer')
-    await dbModule.finalizeTurnSuccess({
-      turnId: alphaTurn.id,
-      conversationId: conversation.id,
-      assistantText: 'Alpha answer',
-      checkpointState: { version: 1, modelMessages: [] },
-      memoryPrompt: { agentId: alpha.id, prompt: 'alpha frozen memory' },
-    })
-    await dbModule.finalizeTurnSuccess({
-      turnId: betaTurn.id,
-      conversationId: conversation.id,
-      assistantText: 'Beta answer',
-      checkpointState: { version: 1, modelMessages: [] },
-      memoryPrompt: { agentId: beta.id, prompt: 'beta frozen memory' },
-    })
+    // Scope narrows to shared or own-agent memory.
+    expect(
+      (await dbModule.searchMemoryForAgent(alpha.id, { query: 'key', scope: 'user' })).map(
+        (item) => item.id,
+      ),
+    ).toEqual([second.id])
+    expect(
+      (await dbModule.searchMemoryForAgent(alpha.id, { query: 'key', scope: 'agent' })).map(
+        (item) => item.id,
+      ),
+    ).toEqual([first.id])
 
-    const checkpoint = await dbModule.getCurrentCheckpoint(conversation.id)
-    const state = dbModule.checkpointStateSchema.parse(checkpoint?.stateJson)
-    expect(state.memoryPromptsByAgent).toEqual({
-      [alpha.id]: 'alpha frozen memory',
-      [beta.id]: 'beta frozen memory',
+    // '*' spans words; LIKE metacharacters in the query stay literal.
+    expect(
+      (await dbModule.searchMemoryForAgent(alpha.id, { query: 'rotate*quarterly' })).map(
+        (item) => item.id,
+      ),
+    ).toEqual([first.id])
+    expect(
+      await dbModule.searchMemoryForAgent(alpha.id, { query: '100% literal_percent' }),
+    ).toHaveLength(1)
+    expect(await dbModule.searchMemoryForAgent(alpha.id, { query: '5% literal' })).toHaveLength(0)
+
+    expect(await dbModule.searchMemoryForAgent(alpha.id, { query: 'key', limit: 1 })).toHaveLength(1)
+
+    // Recency follows updates, not just creation.
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    await dbModule.updateMemoryItem(
+      { id: first.id, scope: 'agent', subjectAgentId: alpha.id },
+      { content: 'Rotate the signing key monthly.' },
+    )
+    const reordered = await dbModule.searchMemoryForAgent(alpha.id, { query: 'key' })
+    expect(reordered[0]?.id).toBe(first.id)
+  })
+
+  it('strips legacy frozen-memory snapshots from checkpoint state', () => {
+    const state = dbModule.checkpointStateSchema.parse({
+      version: 1,
+      modelMessages: [{ role: 'system', content: 'old epoch' }],
+      memoryPromptsByAgent: { agent_legacy: 'frozen memory' },
+    })
+    expect(state).toEqual({
+      version: 1,
+      modelMessages: [{ role: 'system', content: 'old epoch' }],
     })
   })
 })

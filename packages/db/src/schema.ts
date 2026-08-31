@@ -316,6 +316,8 @@ export const memoryItems = sqliteTable('memory_items', {
   authoredByAgentId: text('authored_by_agent_id').references(() => agents.id, {
     onDelete: 'set null',
   }),
+  // Denormalized so "[via <assistant>]" provenance survives author deletion.
+  authoredByAgentName: text('authored_by_agent_name'),
   kind: text('kind').notNull(),
   content: text('content').notNull(),
   metadataJson: text('metadata_json', { mode: 'json' })

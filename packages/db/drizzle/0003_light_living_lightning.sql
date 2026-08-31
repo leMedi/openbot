@@ -1,0 +1,1 @@
+ALTER TABLE `memory_items` ADD `authored_by_agent_name` text;

@@ -1,4 +1,4 @@
-import { and, asc, eq, or } from 'drizzle-orm'
+import { and, asc, desc, eq, or, sql } from 'drizzle-orm'
 import * as z from 'zod'
 import { db } from './client'
 import { createId } from './ids'
@@ -11,6 +11,7 @@ const memoryFields = {
   kind: memoryKindSchema,
   content: z.string().trim().min(1).max(20_000),
   authoredByAgentId: z.string().min(1).nullable().optional(),
+  authoredByAgentName: z.string().trim().min(1).max(200).nullable().optional(),
   metadata: versionedObjectSchema.optional(),
 }
 
@@ -63,6 +64,7 @@ export async function createMemoryItem(input: MemoryItemCreateInput) {
       subjectAgentId:
         validated.scope === 'agent' ? validated.subjectAgentId : null,
       authoredByAgentId: validated.authoredByAgentId ?? null,
+      authoredByAgentName: validated.authoredByAgentName ?? null,
       kind: validated.kind,
       content: validated.content,
       metadataJson: validated.metadata ?? { version: 1 },
@@ -111,6 +113,68 @@ export async function listPromptMemoryForAgent(agentId: string) {
     ...items.filter((item) => item.scope === 'user'),
     ...items.filter((item) => item.scope === 'agent'),
   ]
+}
+
+/** Every memory item this agent may touch: shared-user or scoped to itself. */
+function accessibleToAgentCondition(agentId: string) {
+  return or(
+    eq(schema.memoryItems.scope, 'user'),
+    and(
+      eq(schema.memoryItems.scope, 'agent'),
+      eq(schema.memoryItems.subjectAgentId, agentId),
+    ),
+  )
+}
+
+/** Resolves an item by id only if the agent is allowed to access it. */
+export async function getMemoryItemForAgent(agentId: string, id: string) {
+  const [item] = await db
+    .select()
+    .from(schema.memoryItems)
+    .where(and(eq(schema.memoryItems.id, id), accessibleToAgentCondition(agentId)))
+    .limit(1)
+  return item
+}
+
+export const memorySearchSchema = z.object({
+  query: z.string().trim().min(1).max(200),
+  scope: z.enum(['user', 'agent']).optional(),
+  limit: z.number().int().min(1).max(25).default(10),
+})
+
+export type MemorySearchInput = z.input<typeof memorySearchSchema>
+
+/**
+ * Grep-like recall over the memory an agent is allowed to access: the query
+ * matches item content case-insensitively as a substring, with `*` as the
+ * only wildcard (any run of characters). An explicit scope narrows the search
+ * to shared-user or own-agent memory. Most recently updated items first.
+ */
+export async function searchMemoryForAgent(
+  agentId: string,
+  input: MemorySearchInput,
+) {
+  const { query, scope, limit } = memorySearchSchema.parse(input)
+  const scopeAccess =
+    scope === undefined
+      ? accessibleToAgentCondition(agentId)
+      : scope === 'user'
+        ? eq(schema.memoryItems.scope, 'user')
+        : and(
+            eq(schema.memoryItems.scope, 'agent'),
+            eq(schema.memoryItems.subjectAgentId, agentId),
+          )
+  const pattern = `%${query
+    .replace(/[\\%_]/g, (character) => `\\${character}`)
+    .replace(/\*/g, '%')}%`
+  return db
+    .select()
+    .from(schema.memoryItems)
+    .where(
+      and(scopeAccess, sql`${schema.memoryItems.content} LIKE ${pattern} ESCAPE '\\'`),
+    )
+    .orderBy(desc(schema.memoryItems.updatedAt), desc(schema.memoryItems.id))
+    .limit(limit)
 }
 
 export async function updateMemoryItem(
