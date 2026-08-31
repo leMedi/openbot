@@ -224,6 +224,220 @@ describe('conversation navigation', () => {
   })
 })
 
+describe('conversation transcript', () => {
+  it('appends and lists transcript rows in conversation order', async () => {
+    const { agent } = await dbModule.createAgent({ name: 'Transcript Agent' })
+    const conversation = await dbModule.createConversation({ ownerAgentId: agent.id })
+
+    const first = await dbModule.appendConversationMessage({
+      conversationId: conversation.id,
+      kind: 'message',
+      role: 'user',
+      direction: 'inbound',
+      bodyText: 'first',
+    })
+    const second = await dbModule.appendConversationMessage({
+      conversationId: conversation.id,
+      kind: 'status',
+      direction: 'internal',
+      bodyText: 'thinking',
+    })
+    const third = await dbModule.appendConversationMessage({
+      conversationId: conversation.id,
+      kind: 'message',
+      role: 'assistant',
+      direction: 'outbound',
+      bodyText: 'second',
+    })
+
+    expect(first.sequenceNo).toBeLessThan(second.sequenceNo)
+    expect(second.sequenceNo).toBeLessThan(third.sequenceNo)
+
+    const listed = await dbModule.listConversationMessages(conversation.id)
+    expect(listed.map((m) => m.id)).toEqual([first.id, second.id, third.id])
+    expect(listed.map((m) => m.kind)).toEqual(['message', 'status', 'message'])
+  })
+
+  it('accepts a user message atomically with its queued turn', async () => {
+    const { agent } = await dbModule.createAgent({ name: 'Send Agent' })
+    const conversation = await dbModule.createConversation({ ownerAgentId: agent.id })
+
+    const { message, turn } = await dbModule.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'hello there',
+    })
+
+    expect(message.id).toMatch(/^ent_/)
+    expect(message.kind).toBe('message')
+    expect(message.role).toBe('user')
+    expect(message.bodyText).toBe('hello there')
+    expect(message.turnId).toBe(turn.id)
+
+    expect(turn.id).toMatch(/^trn_/)
+    expect(turn.conversationId).toBe(conversation.id)
+    expect(turn.targetAgentId).toBe(agent.id)
+    expect(turn.lane).toBe('user')
+    expect(turn.status).toBe('queued')
+
+    await expect(
+      dbModule.acceptUserMessage({ conversationId: 'cnv_missing', text: 'nope' }),
+    ).rejects.toThrow(/not found/)
+  })
+})
+
+describe('turns', () => {
+  it('claims a queued turn exactly once and completes it', async () => {
+    const { agent } = await dbModule.createAgent({ name: 'Turn Agent' })
+    const conversation = await dbModule.createConversation({ ownerAgentId: agent.id })
+    const { turn } = await dbModule.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'do work',
+    })
+
+    const next = await dbModule.findNextQueuedTurn(conversation.id)
+    expect(next?.id).toBe(turn.id)
+
+    const claimed = await dbModule.claimQueuedTurn(turn.id)
+    expect(claimed?.status).toBe('running')
+    expect(claimed?.attemptCount).toBe(1)
+    expect(claimed?.startedAt).not.toBeNull()
+
+    // Claiming is atomic: a second claim of the same turn yields nothing.
+    expect(await dbModule.claimQueuedTurn(turn.id)).toBeUndefined()
+    expect(await dbModule.findNextQueuedTurn(conversation.id)).toBeUndefined()
+
+    const snapshotted = await dbModule.recordTurnExecution(turn.id, {
+      modelProvider: 'openai-compatible',
+      modelId: 'test-model',
+      effectiveTools: { version: 1, tools: [] },
+      effectivePermissions: { version: 1, approvalMode: agent.approvalMode },
+      runtimeContext: { version: 1, baseUrl: 'https://example.test/v1' },
+    })
+    expect(snapshotted?.modelId).toBe('test-model')
+    expect(snapshotted?.effectiveToolsJson).toEqual({ version: 1, tools: [] })
+    expect(snapshotted?.effectivePermissionsJson).toMatchObject({
+      approvalMode: agent.approvalMode,
+    })
+    expect(snapshotted?.runtimeContextJson).toMatchObject({
+      baseUrl: 'https://example.test/v1',
+    })
+
+    const done = await dbModule.completeTurn(turn.id, { status: 'succeeded' })
+    expect(done?.status).toBe('succeeded')
+    expect(done?.completedAt).not.toBeNull()
+  })
+
+  it('records failure details when a turn fails', async () => {
+    const { agent } = await dbModule.createAgent({ name: 'Failing Turn Agent' })
+    const conversation = await dbModule.createConversation({ ownerAgentId: agent.id })
+    const { turn } = await dbModule.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'break',
+    })
+
+    await dbModule.claimQueuedTurn(turn.id)
+    const failed = await dbModule.completeTurn(turn.id, {
+      status: 'failed',
+      error: { version: 1, message: 'provider unavailable' },
+    })
+    expect(failed?.status).toBe('failed')
+    expect(failed?.errorJson).toMatchObject({ message: 'provider unavailable' })
+  })
+
+  it('resets interrupted running turns to queued after a restart', async () => {
+    const { agent } = await dbModule.createAgent({ name: 'Crash Agent' })
+    const conversation = await dbModule.createConversation({ ownerAgentId: agent.id })
+    const { turn } = await dbModule.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'crash mid-flight',
+    })
+    const claimed = await dbModule.claimQueuedTurn(turn.id)
+    expect(claimed?.status).toBe('running')
+
+    vi.resetModules()
+    const reloaded: DbModule = await import('./index')
+
+    const recovered = await reloaded.getTurn(turn.id)
+    expect(recovered?.status).toBe('queued')
+    expect(recovered?.attemptCount).toBe(2)
+    expect(recovered?.startedAt).toBeNull()
+    expect(await reloaded.findNextQueuedTurn(conversation.id)).toMatchObject({
+      id: turn.id,
+    })
+  })
+})
+
+describe('conversation checkpoints', () => {
+  it('creates immutable versioned checkpoints and advances the pointer', async () => {
+    const { agent } = await dbModule.createAgent({ name: 'Checkpoint Agent' })
+    const conversation = await dbModule.createConversation({ ownerAgentId: agent.id })
+
+    const first = await dbModule.createConversationCheckpoint(conversation.id, {
+      version: 1,
+      modelMessages: [
+        { role: 'system', content: 'You are Checkpoint Agent.' },
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hi' },
+      ],
+    })
+    expect(first.id).toMatch(/^chk_/)
+    expect(first.schemaVersion).toBe(1)
+    expect(first.parentCheckpointId).toBeNull()
+    expect(first.contentHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(first.byteSize).toBeGreaterThan(0)
+
+    const afterFirst = await dbModule.getConversation(conversation.id)
+    expect(afterFirst?.currentCheckpointId).toBe(first.id)
+
+    const second = await dbModule.createConversationCheckpoint(conversation.id, {
+      version: 1,
+      modelMessages: [
+        { role: 'system', content: 'You are Checkpoint Agent.' },
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hi' },
+        { role: 'user', content: 'more' },
+        { role: 'assistant', content: 'sure' },
+      ],
+    })
+    expect(second.parentCheckpointId).toBe(first.id)
+
+    const afterSecond = await dbModule.getConversation(conversation.id)
+    expect(afterSecond?.currentCheckpointId).toBe(second.id)
+
+    // The first checkpoint is untouched by later checkpoint creation.
+    const current = await dbModule.getCurrentCheckpoint(conversation.id)
+    expect(current?.id).toBe(second.id)
+    expect(dbModule.checkpointStateSchema.parse(current?.stateJson).modelMessages)
+      .toHaveLength(5)
+  })
+
+  it('restores checkpoint state across a restart', async () => {
+    const { agent } = await dbModule.createAgent({ name: 'Resume Agent' })
+    const conversation = await dbModule.createConversation({ ownerAgentId: agent.id })
+    const checkpoint = await dbModule.createConversationCheckpoint(conversation.id, {
+      version: 1,
+      modelMessages: [{ role: 'user', content: 'remember me' }],
+    })
+
+    vi.resetModules()
+    const reloaded: DbModule = await import('./index')
+
+    const current = await reloaded.getCurrentCheckpoint(conversation.id)
+    expect(current?.id).toBe(checkpoint.id)
+    const state = reloaded.checkpointStateSchema.parse(current?.stateJson)
+    expect(state.modelMessages).toEqual([{ role: 'user', content: 'remember me' }])
+  })
+
+  it('rejects a checkpoint for a missing conversation', async () => {
+    await expect(
+      dbModule.createConversationCheckpoint('cnv_missing', {
+        version: 1,
+        modelMessages: [],
+      }),
+    ).rejects.toThrow(/not found/)
+  })
+})
+
 describe('agent avatars and managed files', () => {
   it('uploads, serves, replaces, and removes an avatar', async () => {
     const { agent } = await dbModule.createAgent({ name: 'Avatar Agent' })

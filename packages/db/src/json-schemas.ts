@@ -86,6 +86,19 @@ export const reactionsSchema = z
     }
   })
 
+// Model-facing checkpoint state (schema version 1): the full prompt history
+// needed to resume the conversation, including the frozen system prompt for
+// the current compaction epoch. Display concerns stay in conversation_messages.
+export const modelMessageSchema = z.object({
+  role: z.enum(['system', 'user', 'assistant', 'tool']),
+  content: z.string(),
+})
+
+export const checkpointStateSchema = z.object({
+  version: z.literal(1),
+  modelMessages: z.array(modelMessageSchema),
+})
+
 export const effectiveToolsSchema = z.object({
   version: z.literal(1),
   tools: z.array(z.string().min(1)),
@@ -106,6 +119,8 @@ export const oauthCredentialsSchema = z.object({
 })
 
 export type VersionedObject = z.infer<typeof versionedObjectSchema>
+export type ModelMessage = z.infer<typeof modelMessageSchema>
+export type CheckpointState = z.infer<typeof checkpointStateSchema>
 export type GroupMembers = z.infer<typeof groupMembersSchema>
 export type Attachments = z.infer<typeof attachmentsSchema>
 export type Reactions = z.infer<typeof reactionsSchema>

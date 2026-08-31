@@ -94,13 +94,17 @@ export async function markConversationUnread(id: string) {
   return updated
 }
 
+/** The database handle or a transaction handle from `db.transaction`. */
+export type DbExecutor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0]
+
 /**
  * Atomically advances next_sequence_no and returns the allocated sequence
  * number. A single UPDATE … RETURNING statement means two concurrent
- * allocations can never observe the same value.
+ * allocations can never observe the same value. Pass a transaction handle to
+ * allocate as part of a larger atomic operation.
  */
-export async function allocateConversationSequence(id: string) {
-  const [updated] = await db
+export async function allocateConversationSequence(id: string, executor: DbExecutor = db) {
+  const [updated] = await executor
     .update(schema.conversations)
     .set({
       nextSequenceNo: sql`${schema.conversations.nextSequenceNo} + 1`,

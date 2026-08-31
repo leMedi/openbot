@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { ConversationMessage, Turn } from '@openbot/db'
 import { ArrowLeft, PanelRightOpen, Pencil } from 'lucide-react'
 import { BotAvatar } from '@/components/openbot/bot-avatar'
 import { Badge } from '@/components/ui/badge'
@@ -9,6 +10,7 @@ import { YOU } from './data'
 import { FullConversationDialog } from './full-conversation'
 import { GroupAvatar, type MessageRowHandlers } from './rows'
 import { Transcript } from './transcript'
+import { streamTurn } from './turn-stream'
 import type { ActivityTab, Author, Draft, Entry, MessageEntry } from './types'
 
 let seq = 100
@@ -45,6 +47,13 @@ export type ConversationProps = {
   headerActions?: React.ReactNode
   /** Read-only conversations hide message actions and the composer. */
   readOnly?: boolean
+  /**
+   * Durable send boundary: persists the user message and returns its queued
+   * agent turn. When absent, sends stay client-local (mock/demo usage).
+   */
+  onSendMessage?: (draft: Draft) => Promise<{ message: ConversationMessage; turn: Turn }>
+  /** Called after a turn reaches a terminal state (refresh sidebar state etc.). */
+  onTurnSettled?: () => void
 }
 
 export function Conversation({
@@ -58,6 +67,8 @@ export function Conversation({
   onEditAgent,
   headerActions,
   readOnly,
+  onSendMessage,
+  onTurnSettled,
 }: ConversationProps) {
   const [entries, setEntries] = useState<Entry[]>(initialEntries)
   const [replyTo, setReplyTo] = useState<string | undefined>()
@@ -130,58 +141,108 @@ export function Conversation({
     setEntries((all) => all.filter((e) => e.id !== entryId))
   }, [])
 
-  const resend = useCallback((entryId: string) => {
+  /**
+   * The durable send path: optimistic queued row, atomic server accept
+   * (user message + queued turn), then the turn's visible output streamed
+   * into a streaming entry until the persisted assistant message replaces it.
+   */
+  async function sendToServer(draft: Draft) {
+    const localId = nextId()
+    setEntries((all) => [
+      ...all,
+      {
+        type: 'message',
+        id: localId,
+        author: YOU,
+        time: nowTime(),
+        text: draft.prompt,
+        attachments: draft.attachments.length > 0 ? draft.attachments : undefined,
+        replyTo: draft.replyToId,
+        delivery: 'queued',
+      },
+    ])
+    setReplyTo(undefined)
+
+    let accepted: { message: ConversationMessage; turn: Turn }
+    try {
+      accepted = await onSendMessage!(draft)
+    } catch {
+      setEntries((all) =>
+        mapMessages(all, (m) => (m.id === localId ? { ...m, delivery: 'failed' } : m)),
+      )
+      return
+    }
     setEntries((all) =>
       mapMessages(all, (m) =>
-        m.id === entryId ? { ...m, delivery: 'delivered', time: nowTime() } : m,
+        m.id === localId ? { ...m, id: accepted.message.id, delivery: 'delivered' } : m,
       ),
     )
-  }, [])
 
-  function agentReplies(toThread?: string) {
-    const streamingId = nextId()
-    const streaming: MessageEntry = {
-      type: 'message',
-      id: streamingId,
-      author: agent,
-      time: nowTime(),
-      markdown: '',
-      delivery: 'streaming',
+    const streamingId = `streaming-${accepted.turn.id}`
+    setEntries((all) => [
+      ...all,
+      {
+        type: 'message',
+        id: streamingId,
+        author: agent,
+        time: nowTime(),
+        markdown: '',
+        delivery: 'streaming',
+      },
+    ])
+    const replaceStreaming = (entry: Entry) =>
+      setEntries((all) => all.map((e) => (e.id === streamingId ? entry : e)))
+    try {
+      await streamTurn(accepted.turn.id, (event) => {
+        if (event.type === 'delta') {
+          setEntries((all) =>
+            mapMessages(all, (m) =>
+              m.id === streamingId
+                ? { ...m, markdown: (m.markdown ?? '') + event.text }
+                : m,
+            ),
+          )
+        } else if (event.type === 'done') {
+          setEntries((all) =>
+            mapMessages(all, (m) =>
+              m.id === streamingId
+                ? {
+                    ...m,
+                    id: event.message.id,
+                    markdown: event.message.bodyText ?? '',
+                    delivery: 'delivered',
+                  }
+                : m,
+            ),
+          )
+        } else {
+          replaceStreaming({
+            type: 'timeline',
+            id: streamingId,
+            text: `Turn failed: ${event.message}`,
+            time: nowTime(),
+            icon: 'notice',
+          })
+        }
+      })
+    } catch {
+      replaceStreaming({
+        type: 'timeline',
+        id: streamingId,
+        text: 'Lost the turn stream — reload to catch up. The agent keeps working.',
+        time: nowTime(),
+        icon: 'notice',
+      })
     }
-    const respond = (m: MessageEntry): MessageEntry => ({
-      ...m,
-      markdown: 'Noted — **on it**. I will report back here.',
-      delivery: 'delivered',
-    })
-    if (toThread) {
-      setEntries((all) =>
-        all.map((e) =>
-          e.type === 'message' && e.id === toThread
-            ? { ...e, thread: [...(e.thread ?? []), streaming] }
-            : e,
-        ),
-      )
-      setTimeout(() => {
-        setEntries((all) =>
-          all.map((e) =>
-            e.type === 'message' && e.id === toThread
-              ? {
-                  ...e,
-                  thread: (e.thread ?? []).map((t) => (t.id === streamingId ? respond(t) : t)),
-                }
-              : e,
-          ),
-        )
-      }, 1400)
-    } else {
-      setEntries((all) => [...all, streaming])
-      setTimeout(() => {
-        setEntries((all) => all.map((e) => (e.id === streamingId ? respond(e as MessageEntry) : e)))
-      }, 1400)
-    }
+    onTurnSettled?.()
   }
 
   function send(draft: Draft, toThread?: string) {
+    // Threads are not persisted yet; thread sends stay client-local.
+    if (!toThread && onSendMessage) {
+      void sendToServer(draft)
+      return
+    }
     const message: MessageEntry = {
       type: 'message',
       id: nextId(),
@@ -204,8 +265,26 @@ export function Conversation({
       setEntries((all) => [...all, message])
       setReplyTo(undefined)
     }
-    agentReplies(toThread)
   }
+
+  const resend = useCallback(
+    (entryId: string) => {
+      const entry = findEntry(entryId)
+      if (onSendMessage && entry?.type === 'message' && entry.text) {
+        setEntries((all) => all.filter((e) => e.id !== entryId))
+        void sendToServer({ prompt: entry.text, attachments: entry.attachments ?? [] })
+        return
+      }
+      setEntries((all) =>
+        mapMessages(all, (m) =>
+          m.id === entryId ? { ...m, delivery: 'delivered', time: nowTime() } : m,
+        ),
+      )
+    },
+    // sendToServer is re-created per render but only captures stable setters/props.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [findEntry, onSendMessage],
+  )
 
   const handlers: MessageRowHandlers = {
     onToggleReaction: toggleReaction,

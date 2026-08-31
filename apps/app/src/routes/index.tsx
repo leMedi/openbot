@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createFileRoute, useRouter } from '@tanstack/react-router'
-import type { Agent } from '@openbot/db'
+import type { Agent, ConversationMessage } from '@openbot/db'
 import { BotIcon, MessageCircle, PanelRight } from 'lucide-react'
-import { activityFor, entriesFor } from '@/components/conversation/adapter'
+import {
+  activityFromMessages,
+  entriesFromMessages,
+} from '@/components/conversation/adapter'
 import { Conversation } from '@/components/conversation/conversation'
 import { botFromAgent } from '@/components/openbot/agents'
 import { BotDialog } from '@/components/openbot/bot-dialog'
@@ -22,6 +25,10 @@ import { Sidebar } from '@/components/openbot/sidebar'
 import { Button } from '@/components/ui/button'
 import { getAgents } from '@/server/agents'
 import { getServerConfig } from '@/server/config'
+import {
+  getConversationMessages,
+  sendConversationMessage,
+} from '@/server/messages'
 import {
   addConversation,
   clearConversation,
@@ -103,8 +110,33 @@ function OpenBot() {
     ? agents.find((a) => a.id === active.botId)
     : undefined
 
+  // The persisted transcript for the selected conversation. Loaded on
+  // selection rather than in the route loader because the active id is a
+  // client-local preference.
+  const [transcript, setTranscript] = useState<{
+    conversationId: string
+    rows: ConversationMessage[]
+  } | null>(null)
+  useEffect(() => {
+    if (!activeId) return
+    let cancelled = false
+    getConversationMessages({ data: { conversationId: activeId } })
+      .then((rows) => {
+        if (!cancelled) setTranscript({ conversationId: activeId, rows })
+      })
+      .catch(() => {
+        if (!cancelled) setTranscript({ conversationId: activeId, rows: [] })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeId])
+  const transcriptReady = transcript?.conversationId === active?.id
+
   const { entries, tabs } = useMemo(() => {
-    if (!active || !bot) return { entries: [], tabs: [] }
+    if (!active || !bot || !transcript || transcript.conversationId !== active.id) {
+      return { entries: [], tabs: [] }
+    }
     const author = {
       id: bot.id,
       name: bot.name,
@@ -113,8 +145,11 @@ function OpenBot() {
       avatarUrl: bot.avatarUrl,
       kind: 'agent' as const,
     }
-    return { entries: entriesFor(active, author), tabs: activityFor(active, author) }
-  }, [active, bot])
+    return {
+      entries: entriesFromMessages(transcript.rows, author),
+      tabs: activityFromMessages(transcript.rows, author),
+    }
+  }, [active, bot, transcript, transcriptReady])
 
   async function startConversation(botId: string) {
     const picked = botIn(bots, botId)
@@ -192,7 +227,13 @@ function OpenBot() {
         onDeleteConversation={(id) => setDeleteTarget(findConversation(id))}
       />
 
-      {active && bot ? (
+      {active && bot && !transcriptReady ? (
+        // The Conversation component seeds its entry state from
+        // initialEntries at mount, so wait for the persisted transcript.
+        <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">
+          Loading conversation…
+        </div>
+      ) : active && bot ? (
         <Conversation
           key={active.id}
           id={active.id}
@@ -208,6 +249,18 @@ function OpenBot() {
           model={bot.model}
           initialEntries={entries}
           activityTabs={tabs}
+          onSendMessage={(draft) =>
+            sendConversationMessage({
+              data: { conversationId: active.id, text: draft.prompt },
+            })
+          }
+          onTurnSettled={async () => {
+            // The assistant message advanced the sequence counter; the user
+            // is looking at it, so move the read horizon and refresh the
+            // sidebar ordering.
+            await setConversationUnread({ data: { id: active.id, unread: false } })
+            await router.invalidate()
+          }}
           onEditAgent={
             activeAgent
               ? () => setBotDialog({ open: true, agent: activeAgent })

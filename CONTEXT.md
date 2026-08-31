@@ -362,20 +362,25 @@ behavior is being implemented.
 ## Implementation Status
 
 The schema, generated initial migration, startup migration path, JSON contracts,
-ID helper, and existing create/list-agent operations are implemented. Most
-domain repositories and APIs are not yet implemented.
+ID helper, agent profile and avatar services, conversation navigation, the
+transcript repository, the durable turn queue with restart recovery, the
+checkpoint repository, and single-agent turn execution with streamed visible
+output are implemented. A turn is executed by the server-side runner
+(`apps/app/src/server/turn-runner.ts`): it claims the queued turn, snapshots
+the effective model/tools/permissions/runtime context, streams one
+OpenAI-compatible chat completion, appends the assistant transcript row,
+writes the next immutable checkpoint, and marks the turn terminal. Visible
+output reaches clients over a per-turn SSE route; execution never depends on
+a connected client.
 
-Recommended implementation slices are:
+Remaining implementation slices are:
 
-1. Agent profile update/delete and managed avatar service.
-2. Conversation creation, sequence allocation, checkpoint repository, and
-   message pagination.
-3. Durable turn queue, restart recovery, and waiting-turn resume.
-4. Transactional direct agent delivery.
-5. Groups and sequential orchestration.
-6. Memory operations and prompt assembly.
-7. Managed attachments and file-serving APIs.
-8. MCP server, account, OAuth callback, and safe credential access services.
+1. Waiting-turn resume (persisted prompts/options) and tool execution.
+2. Transactional direct agent delivery.
+3. Groups and sequential orchestration.
+4. Memory operations and prompt assembly.
+5. Managed attachments and file-serving APIs.
+6. MCP server, account, OAuth callback, and safe credential access services.
 
 ## Source Map
 
@@ -386,13 +391,25 @@ Recommended implementation slices are:
 - `packages/db/src/agents.ts`: agent registry repository, including avatar operations.
 - `packages/db/src/conversations.ts`: conversation repository (navigation state,
   atomic sequence allocation, clear-into-fresh-conversation).
+- `packages/db/src/messages.ts`: transcript repository (ordered appends and the
+  atomic user-message + queued-turn accept).
+- `packages/db/src/turns.ts`: durable turn queue (claim, execution snapshots,
+  completion).
+- `packages/db/src/checkpoints.ts`: immutable checkpoint repository and
+  current-checkpoint pointer.
 - `packages/db/src/files.ts`: managed-file repository and path containment.
 - `packages/db/src/index.ts`: package exports.
 - `packages/db/src/env.ts`: local database, migration, and managed-file paths.
 - `packages/db/drizzle/`: generated committed migrations and metadata.
 - `apps/app/src/server/agents.ts`: current agent API boundary.
 - `apps/app/src/server/conversations.ts`: conversation API boundary.
+- `apps/app/src/server/messages.ts`: transcript read and durable send API boundary.
+- `apps/app/src/server/ai.ts`: OpenAI-compatible streaming inference client.
+- `apps/app/src/server/turn-runner.ts`: turn executor, per-conversation drain,
+  and in-memory visible-output fan-out.
 - `apps/app/src/routes/api.agents.$agentId.avatar.ts`: avatar file-serving API.
+- `apps/app/src/routes/api.turns.$turnId.stream.ts`: per-turn SSE stream of
+  visible output.
 - `apps/app/src/routes/index.tsx`: current agent registry UI.
 
 Generated migrations are deployment artifacts. They do not replace

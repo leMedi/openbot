@@ -1,0 +1,113 @@
+import { asc, eq } from 'drizzle-orm'
+import { db } from './client'
+import { allocateConversationSequence, type DbExecutor } from './conversations'
+import { createId } from './ids'
+import type { VersionedObject } from './json-schemas'
+import * as schema from './schema'
+
+export type MessageAppendInput = {
+  conversationId: string
+  kind: 'message' | 'tool_call' | 'tool_result' | 'status' | 'system' | 'other'
+  role?: 'user' | 'assistant' | 'system' | 'tool'
+  direction: 'inbound' | 'outbound' | 'internal'
+  bodyText?: string | null
+  payload?: VersionedObject
+  turnId?: string | null
+}
+
+export function listConversationMessages(conversationId: string) {
+  return db
+    .select()
+    .from(schema.conversationMessages)
+    .where(eq(schema.conversationMessages.conversationId, conversationId))
+    .orderBy(asc(schema.conversationMessages.sequenceNo))
+}
+
+/**
+ * Appends one transcript row at the next conversation sequence number.
+ * Sequence allocation and the insert share the executor, so passing a
+ * transaction handle makes the append part of a larger atomic operation.
+ */
+export async function appendConversationMessage(
+  input: MessageAppendInput,
+  executor: DbExecutor = db,
+) {
+  const sequenceNo = await allocateConversationSequence(input.conversationId, executor)
+  const now = Date.now()
+  const [message] = await executor
+    .insert(schema.conversationMessages)
+    .values({
+      id: createId('ent'),
+      conversationId: input.conversationId,
+      turnId: input.turnId ?? null,
+      sequenceNo,
+      kind: input.kind,
+      role: input.role ?? null,
+      direction: input.direction,
+      bodyText: input.bodyText ?? null,
+      ...(input.payload && { payloadJson: input.payload }),
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning()
+  return message
+}
+
+export type UserMessageInput = {
+  conversationId: string
+  text: string
+  payload?: VersionedObject
+}
+
+/**
+ * The durable composer boundary: one transaction appends the user's
+ * transcript row and creates the queued agent turn that will answer it.
+ * Either both exist afterwards or neither does.
+ */
+export async function acceptUserMessage(input: UserMessageInput) {
+  return db.transaction(async (tx) => {
+    const [conversation] = await tx
+      .select()
+      .from(schema.conversations)
+      .where(eq(schema.conversations.id, input.conversationId))
+      .limit(1)
+    if (!conversation) {
+      throw new Error(`Conversation ${input.conversationId} not found`)
+    }
+    if (!conversation.ownerAgentId) {
+      throw new Error(
+        `Conversation ${input.conversationId} has no owner agent; group turns are not implemented`,
+      )
+    }
+
+    const now = Date.now()
+    const [turn] = await tx
+      .insert(schema.turns)
+      .values({
+        id: createId('trn'),
+        conversationId: conversation.id,
+        targetAgentId: conversation.ownerAgentId,
+        lane: 'user',
+        source: 'composer',
+        status: 'queued',
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning()
+
+    const message = await appendConversationMessage(
+      {
+        conversationId: conversation.id,
+        kind: 'message',
+        role: 'user',
+        direction: 'inbound',
+        bodyText: input.text,
+        payload: input.payload,
+        turnId: turn.id,
+      },
+      tx,
+    )
+
+    return { message, turn }
+  })
+}

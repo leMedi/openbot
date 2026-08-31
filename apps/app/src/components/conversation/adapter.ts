@@ -1,118 +1,104 @@
-// Adapts the OpenBot mock conversations (components/openbot/data.ts) to the
-// conversation entry protocol so the app renders them with the new components.
+// Adapts persisted conversation transcript rows (@openbot/db
+// conversation_messages) to the conversation entry protocol so the app
+// renders them with the existing components. Checkpoints and turns are
+// model/scheduler state and deliberately never become transcript rows.
 
-import type {
-  Conversation as BotConversation,
-  Message as BotMessage,
-} from '@/components/openbot/data'
+import type { ConversationMessage } from '@openbot/db'
 import { YOU } from './data'
-import type { ActivityTab, Author, Card, Entry, MessageEntry } from './types'
+import type { ActivityItem, ActivityTab, Author, Entry, ToolCall } from './types'
 
-function toMarkdown(m: BotMessage): string {
-  const parts: string[] = []
-  if (m.title) parts.push(`**${m.title}**`)
-  if (m.text) parts.push(m.text)
-  if (m.items && m.items.length > 0) {
-    parts.push(m.items.map((it) => `- \`${it.key}\` — ${it.val}`).join('\n'))
-  }
-  if (m.choice) {
-    parts.push(
-      m.choice.options
-        .map((o, i) => `${i + 1}. ${o.label}${o.hint ? ` — *${o.hint}*` : ''}`)
-        .join('\n'),
-    )
-  }
-  if (m.remote) parts.push(`Live at \`${m.remote.url}\` on the shared machine.`)
-  return parts.join('\n\n')
+function timeLabel(epochMs: number) {
+  const d = new Date(epochMs)
+  const h = d.getHours() % 12 || 12
+  return `${h}:${String(d.getMinutes()).padStart(2, '0')} ${d.getHours() >= 12 ? 'PM' : 'AM'}`
 }
 
-function toCards(m: BotMessage): Card[] | undefined {
-  const cards: Card[] = []
-  if (m.permission) {
-    cards.push({
-      kind: 'permission',
-      action: m.permission.action,
-      detail: `${m.permission.plugin} · ${m.permission.account} — ${m.permission.preview}`,
-      status: m.permission.status,
-    })
-  }
-  if (m.access) {
-    cards.push({
-      kind: 'permission',
-      action: `Access request — ${m.access.plugin} (${m.access.account})`,
-      detail: 'The bot needs this account to continue. Granting applies to this bot only.',
-      status: m.access.status === 'granted' ? 'approved' : m.access.status,
-    })
-  }
-  if (m.remote) {
-    cards.push({
-      kind: 'cloud-agent',
-      title: m.remote.blocker,
-      agent: `remote: ${m.remote.machine}`,
-      status: m.remote.status === 'stuck' ? 'error' : 'running',
-    })
-  }
-  return cards.length > 0 ? cards : undefined
+type ToolPayload = {
+  name?: unknown
+  preview?: unknown
+  status?: unknown
+  detail?: unknown
 }
 
-function toMessage(m: BotMessage, agent: Author): MessageEntry {
-  const isUser = m.role === 'user'
+function toolCallFrom(row: ConversationMessage): ToolCall {
+  const payload = (row.payloadJson ?? {}) as ToolPayload
+  const status = payload.status
   return {
-    type: 'message',
-    id: m.id,
-    author: isUser ? YOU : agent,
-    time: m.time,
-    text: isUser ? m.text : undefined,
-    markdown: isUser ? undefined : toMarkdown(m),
-    cards: toCards(m),
-    thread: m.thread?.map((t) => toMessage(t, agent)),
+    name: typeof payload.name === 'string' ? payload.name : 'Tool',
+    preview:
+      typeof payload.preview === 'string' ? payload.preview : (row.bodyText ?? ''),
+    status:
+      status === 'pending' || status === 'success' || status === 'failed'
+        ? status
+        : ('success' as const),
+    detail: typeof payload.detail === 'string' ? payload.detail : undefined,
   }
 }
 
-/** Convert one client-held conversation into transcript entries. */
-export function entriesFor(convo: BotConversation, agent: Author): Entry[] {
+/** Convert persisted transcript rows into renderable entries. */
+export function entriesFromMessages(
+  rows: ConversationMessage[],
+  agent: Author,
+): Entry[] {
   const out: Entry[] = []
-  for (const m of convo.messages) {
-    if (m.routine) {
+  for (const row of rows) {
+    const time = timeLabel(row.createdAt)
+    if (row.kind === 'message' && row.role === 'user') {
+      out.push({
+        type: 'message',
+        id: row.id,
+        author: YOU,
+        time,
+        text: row.bodyText ?? '',
+        replyTo: row.replyToEntryId ?? undefined,
+      })
+    } else if (row.kind === 'message') {
+      out.push({
+        type: 'message',
+        id: row.id,
+        author: agent,
+        time,
+        markdown: row.bodyText ?? '',
+        replyTo: row.replyToEntryId ?? undefined,
+      })
+    } else if (row.kind === 'tool_call' || row.kind === 'tool_result') {
+      out.push({ type: 'tool', id: row.id, author: agent, time, call: toolCallFrom(row) })
+    } else {
+      // status / system / other display events
       out.push({
         type: 'timeline',
-        id: `${m.id}-routine`,
-        text: `Routine “${m.routine}” ran`,
-        time: m.time,
-        icon: 'automation',
+        id: row.id,
+        text: row.bodyText ?? 'Event',
+        time,
+        icon: 'notice',
       })
     }
-    if (m.delegation) {
-      out.push({
-        type: 'tool',
-        id: `${m.id}-delegation`,
-        author: agent,
-        time: m.time,
-        call: {
-          name: `Asked ${m.delegation.toName}`,
-          preview:
-            m.delegation.status === 'done'
-              ? `answered${m.delegation.duration ? ` in ${m.delegation.duration}` : ''}`
-              : 'working…',
-          status: m.delegation.status === 'done' ? 'success' : 'pending',
-        },
-      })
-    }
-    out.push(toMessage(m, agent))
   }
   return out
 }
 
-/** Root activity tab derived from the transcript. */
-export function activityFor(convo: BotConversation, agent: Author): ActivityTab[] {
-  return [
-    {
-      id: 'root',
-      title: agent.name,
-      items: convo.messages.map((m) => ({
-        kind: m.role === 'user' ? ('you' as const) : ('agent' as const),
-        text: m.text,
-      })),
-    },
-  ]
+/** Root activity tab derived from the persisted transcript. */
+export function activityFromMessages(
+  rows: ConversationMessage[],
+  agent: Author,
+): ActivityTab[] {
+  const items: ActivityItem[] = rows.map((row): ActivityItem => {
+    if (row.kind === 'tool_call' || row.kind === 'tool_result') {
+      const call = toolCallFrom(row)
+      return {
+        kind: 'tool',
+        text: call.preview,
+        toolName: call.name,
+        toolStatus: call.status,
+      }
+    }
+    if (row.kind === 'message' && row.role === 'user') {
+      return { kind: 'you', text: row.bodyText ?? '' }
+    }
+    if (row.kind === 'message') {
+      return { kind: 'agent', text: row.bodyText ?? '' }
+    }
+    return { kind: 'message', text: row.bodyText ?? '' }
+  })
+  return [{ id: 'root', title: agent.name, items }]
 }
