@@ -209,6 +209,12 @@ async function executeTurn(turnId: string) {
       modelMessages = [...priorMessages, ...turnUserMessages]
     }
 
+    console.info('[agent prompt]', {
+      agent: { id: agent.id, name: agent.name },
+      model: config.model,
+      prompt: modelMessages,
+    })
+
     const assistantText = await streamChatCompletion(config, modelMessages, (delta) => {
       active.accumulated += delta
       emit({ type: 'delta', text: delta })
