@@ -5,7 +5,7 @@ import {
 } from '@openbot/db'
 import { createServerFn } from '@tanstack/react-start'
 import * as z from 'zod'
-import { ensureAgentDrain, recoverQueuedTurns } from './turn-runner'
+import { ensureDrainForTurn, recoverQueuedTurns } from './turn-runner'
 
 const messagesQueryInput = z.object({ conversationId: z.string().min(1) })
 
@@ -38,6 +38,6 @@ export const sendConversationMessage = createServerFn({ method: 'POST' })
     })
     // Execution is deliberately not awaited: the send RPC acknowledges the
     // durable accept, and visible output arrives over the turn stream.
-    if (accepted.turn.targetAgentId) void ensureAgentDrain(accepted.turn.targetAgentId)
+    ensureDrainForTurn(accepted.turn)
     return accepted
   })

@@ -1,21 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createFileRoute, useRouter } from '@tanstack/react-router'
-import type { Agent, ConversationMessage } from '@openbot/db'
+import type { Agent, ConversationMessage, Group } from '@openbot/db'
 import { BotIcon, MessageCircle, PanelRight } from 'lucide-react'
 import {
   activityFromMessages,
+  authorForMessage,
   entriesFromMessages,
 } from '@/components/conversation/adapter'
 import { Conversation } from '@/components/conversation/conversation'
+import type { Author } from '@/components/conversation/types'
 import { botFromAgent } from '@/components/openbot/agents'
 import { BotDialog } from '@/components/openbot/bot-dialog'
 import { conversationFromRow } from '@/components/openbot/conversations'
-import { botIn, type Conversation as BotConversation } from '@/components/openbot/data'
+import { botIn, type Bot, type Conversation as BotConversation } from '@/components/openbot/data'
+import { DeleteGroupDialog, GroupDialog } from '@/components/openbot/group-dialog'
+import { botFromGroup, groupMemberIds } from '@/components/openbot/groups'
 import { Inspector } from '@/components/openbot/inspector'
 import {
   ClearConversationDialog,
   DeleteConversationDialog,
-  NewChannelDialog,
   NewConversationDialog,
   RenameConversationDialog,
 } from '@/components/openbot/modals'
@@ -25,6 +28,7 @@ import { Sidebar } from '@/components/openbot/sidebar'
 import { Button } from '@/components/ui/button'
 import { getAgents } from '@/server/agents'
 import { getServerConfig } from '@/server/config'
+import { getGroups } from '@/server/groups'
 import {
   getConversationMessages,
   sendConversationMessage,
@@ -38,23 +42,35 @@ import {
   setConversationUnread,
 } from '@/server/conversations'
 
+function authorFromBot(bot: Bot, kind: 'agent' | 'member' = 'agent'): Author {
+  return {
+    id: bot.id,
+    name: bot.name,
+    color: bot.color,
+    shape: bot.shape,
+    avatarUrl: bot.avatarUrl,
+    kind,
+  }
+}
+
 // Client-local navigation preference, deliberately not server domain state.
 const LAST_CONVERSATION_KEY = 'openbot:last-conversation'
 
 export const Route = createFileRoute('/')({
   loader: async () => {
-    const [agents, conversations, config] = await Promise.all([
+    const [agents, groups, conversations, config] = await Promise.all([
       getAgents(),
+      getGroups(),
       getConversations(),
       getServerConfig(),
     ])
-    return { agents, conversations, config }
+    return { agents, groups, conversations, config }
   },
   component: OpenBot,
 })
 
 function OpenBot() {
-  const { agents, conversations: conversationRows, config } = Route.useLoaderData()
+  const { agents, groups, conversations: conversationRows, config } = Route.useLoaderData()
   const router = useRouter()
 
   const [activeId, setActiveId] = useState(conversationRows[0]?.id ?? '')
@@ -63,18 +79,28 @@ function OpenBot() {
   const [pluginsOpen, setPluginsOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [newConvoOpen, setNewConvoOpen] = useState(false)
-  const [newChannelOpen, setNewChannelOpen] = useState(false)
   const [botDialog, setBotDialog] = useState<{ open: boolean; agent: Agent | null }>({
     open: false,
     agent: null,
   })
+  const [groupDialog, setGroupDialog] = useState<{ open: boolean; group: Group | null }>({
+    open: false,
+    group: null,
+  })
+  const [deleteGroupTarget, setDeleteGroupTarget] = useState<Group | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<BotConversation | null>(null)
   const [renameTarget, setRenameTarget] = useState<BotConversation | null>(null)
   const [clearTarget, setClearTarget] = useState<BotConversation | null>(null)
 
-  const bots = useMemo(
+  const agentBots = useMemo(
     () => agents.map((agent) => botFromAgent(agent, config.model)),
     [agents, config.model],
+  )
+  // One combined view-model list: sidebar rows resolve their owner (agent or
+  // group room) through the same lookup.
+  const bots = useMemo(
+    () => [...agentBots, ...groups.map(botFromGroup)],
+    [agentBots, groups],
   )
   const conversations = useMemo(
     () => conversationRows.map(conversationFromRow),
@@ -109,6 +135,22 @@ function OpenBot() {
   const activeAgent = active
     ? agents.find((a) => a.id === active.botId)
     : undefined
+  const activeGroup = active
+    ? groups.find((g) => g.id === active.botId)
+    : undefined
+  // Group rooms: member identities in membership order, for the composed
+  // header avatar and per-message author attribution.
+  const memberAuthors = useMemo(() => {
+    if (!activeGroup) return undefined
+    return groupMemberIds(activeGroup)
+      .map((id) => agentBots.find((b) => b.id === id))
+      .filter((b): b is Bot => !!b)
+      .map((b) => authorFromBot(b, 'member'))
+  }, [activeGroup, agentBots])
+  const membersById = useMemo(
+    () => memberAuthors && new Map(memberAuthors.map((a) => [a.id, a])),
+    [memberAuthors],
+  )
 
   // The persisted transcript for the selected conversation. Loaded on
   // selection rather than in the route loader because the active id is a
@@ -140,19 +182,12 @@ function OpenBot() {
     if (!active || !bot || !transcript || transcript.conversationId !== active.id) {
       return { entries: [], tabs: [] }
     }
-    const author = {
-      id: bot.id,
-      name: bot.name,
-      color: bot.color,
-      shape: bot.shape,
-      avatarUrl: bot.avatarUrl,
-      kind: 'agent' as const,
-    }
+    const author = authorFromBot(bot)
     return {
-      entries: entriesFromMessages(transcript.rows, author),
+      entries: entriesFromMessages(transcript.rows, author, membersById),
       tabs: activityFromMessages(transcript.rows, author),
     }
-  }, [active, bot, transcript, transcriptReady])
+  }, [active, bot, transcript, transcriptReady, membersById])
 
   async function startConversation(botId: string) {
     const picked = botIn(bots, botId)
@@ -211,6 +246,20 @@ function OpenBot() {
     }
   }
 
+  function openEditGroup(groupId: string) {
+    const target = groups.find((g) => g.id === groupId)
+    if (target) setGroupDialog({ open: true, group: target })
+  }
+
+  async function handleGroupDeleted(result: { conversationId: string | null }) {
+    setDeleteGroupTarget(null)
+    await router.invalidate()
+    if (result.conversationId && result.conversationId === activeId) {
+      const next = conversations.find((c) => c.id !== result.conversationId)
+      setActiveId(next?.id ?? '')
+    }
+  }
+
   return (
     <div className="flex h-svh overflow-hidden">
       <Sidebar
@@ -220,8 +269,12 @@ function OpenBot() {
         onSelect={selectConversation}
         onNewBot={() => setBotDialog({ open: true, agent: null })}
         onNewConversation={() => setNewConvoOpen(true)}
-        onNewChannel={() => setNewChannelOpen(true)}
+        onNewGroup={() => setGroupDialog({ open: true, group: null })}
         onNewConversationWith={startConversation}
+        onEditGroup={openEditGroup}
+        onDeleteGroup={(groupId) =>
+          setDeleteGroupTarget(groups.find((g) => g.id === groupId) ?? null)
+        }
         onOpenPlugins={() => setPluginsOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
         onRenameConversation={(id) => setRenameTarget(findConversation(id))}
@@ -240,16 +293,13 @@ function OpenBot() {
         <Conversation
           key={active.id}
           id={active.id}
-          agent={{
-            id: bot.id,
-            name: bot.name,
-            color: bot.color,
-            shape: bot.shape,
-            avatarUrl: bot.avatarUrl,
-            kind: 'agent',
-          }}
+          agent={authorFromBot(bot)}
           title={active.title}
           model={bot.model}
+          members={memberAuthors}
+          resolveAuthor={(message) =>
+            authorForMessage(message, authorFromBot(bot), membersById)
+          }
           initialEntries={entries}
           activityTabs={tabs}
           pendingTurnId={transcriptReady ? transcript?.pendingTurnId : null}
@@ -274,7 +324,9 @@ function OpenBot() {
           onEditAgent={
             activeAgent
               ? () => setBotDialog({ open: true, agent: activeAgent })
-              : undefined
+              : activeGroup
+                ? () => setGroupDialog({ open: true, group: activeGroup })
+                : undefined
           }
           headerActions={
             <Button
@@ -322,9 +374,27 @@ function OpenBot() {
         open={newConvoOpen}
         onOpenChange={setNewConvoOpen}
         onPick={startConversation}
-        bots={bots}
+        bots={agentBots}
       />
-      <NewChannelDialog open={newChannelOpen} onOpenChange={setNewChannelOpen} bots={bots} />
+      {groupDialog.open && (
+        <GroupDialog
+          open={groupDialog.open}
+          onOpenChange={(open) => setGroupDialog((s) => ({ ...s, open }))}
+          group={groupDialog.group}
+          agents={agentBots}
+          onSaved={async (_saved, sharedConversation) => {
+            await router.invalidate()
+            if (sharedConversation) setActiveId(sharedConversation.id)
+          }}
+        />
+      )}
+      <DeleteGroupDialog
+        group={deleteGroupTarget}
+        onOpenChange={(open) => {
+          if (!open) setDeleteGroupTarget(null)
+        }}
+        onDeleted={handleGroupDeleted}
+      />
       {botDialog.open && (
         <BotDialog
           open={botDialog.open}

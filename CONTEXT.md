@@ -373,11 +373,20 @@ writes the next immutable checkpoint, and marks the turn terminal. Visible
 output reaches clients over a per-turn SSE route; execution never depends on
 a connected client.
 
+Group shared rooms are implemented: group identity, avatar, and versioned
+membership services, one shared conversation created with the group, a
+group-targeted turn queued per user post, and a group orchestrator that
+selects one member (mention match, else first member) and queues one
+agent-targeted child turn with parent/round/position linkage. The member's
+answer carries `sender_agent_id` in the shared transcript only. Selection
+from recent room context, multi-member sequential rounds, and further bounded
+rounds remain future work.
+
 Remaining implementation slices are:
 
 1. Waiting-turn resume (persisted prompts/options) and tool execution.
 2. Transactional direct agent delivery.
-3. Groups and sequential orchestration.
+3. Group selection from room context and bounded multi-member rounds.
 4. Memory operations and prompt assembly.
 5. Managed attachments and file-serving APIs.
 6. MCP server, account, OAuth callback, and safe credential access services.
@@ -389,12 +398,15 @@ Remaining implementation slices are:
 - `packages/db/src/ids.ts`: prefixed server ID generation.
 - `packages/db/src/client.ts`: database startup (pragmas, migrations, turn recovery).
 - `packages/db/src/agents.ts`: agent registry repository, including avatar operations.
+- `packages/db/src/groups.ts`: group registry repository (identity, avatar,
+  validated versioned membership, the one shared conversation).
+- `packages/db/src/avatars.ts`: shared avatar-upload contract and validation.
 - `packages/db/src/conversations.ts`: conversation repository (navigation state,
   atomic sequence allocation, clear-into-fresh-conversation).
 - `packages/db/src/messages.ts`: transcript repository (ordered appends and the
   atomic user-message + queued-turn accept).
 - `packages/db/src/turns.ts`: durable turn queue (claim, execution snapshots,
-  completion).
+  completion, atomic group child-turn delegation).
 - `packages/db/src/checkpoints.ts`: immutable checkpoint repository and
   current-checkpoint pointer.
 - `packages/db/src/files.ts`: managed-file repository and path containment.
@@ -402,12 +414,15 @@ Remaining implementation slices are:
 - `packages/db/src/env.ts`: local database, migration, and managed-file paths.
 - `packages/db/drizzle/`: generated committed migrations and metadata.
 - `apps/app/src/server/agents.ts`: current agent API boundary.
+- `apps/app/src/server/groups.ts`: group API boundary (identity, membership,
+  deletion).
 - `apps/app/src/server/conversations.ts`: conversation API boundary.
 - `apps/app/src/server/messages.ts`: transcript read and durable send API boundary.
 - `apps/app/src/server/ai.ts`: OpenAI-compatible streaming inference client.
-- `apps/app/src/server/turn-runner.ts`: turn executor, per-conversation drain,
-  and in-memory visible-output fan-out.
-- `apps/app/src/routes/api.agents.$agentId.avatar.ts`: avatar file-serving API.
+- `apps/app/src/server/turn-runner.ts`: turn executor, group orchestrator,
+  per-target drains, and in-memory visible-output fan-out.
+- `apps/app/src/routes/api.agents.$agentId.avatar.ts`: agent avatar file-serving API.
+- `apps/app/src/routes/api.groups.$groupId.avatar.ts`: group avatar file-serving API.
 - `apps/app/src/routes/api.turns.$turnId.stream.ts`: per-turn SSE stream of
   visible output.
 - `apps/app/src/routes/index.tsx`: current agent registry UI.

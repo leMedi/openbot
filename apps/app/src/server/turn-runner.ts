@@ -1,18 +1,24 @@
 import {
+  type Agent,
   appendConversationMessage,
   checkpointStateSchema,
   claimQueuedTurn,
   completeTurn,
   type ConversationMessage,
   finalizeTurnSuccess,
+  findChildTurns,
   findNextQueuedTurnForAgent,
+  findNextQueuedTurnForGroup,
   getAgent,
   getConversation,
   getCurrentCheckpoint,
+  getGroup,
   getTurn,
+  type Group,
   listConversationMessages,
   listQueuedTurns,
   type ModelMessage,
+  queueGroupChildTurn,
   recordTurnExecution,
 } from '@openbot/db'
 import { getAiConfig, streamChatCompletion } from './ai'
@@ -32,6 +38,7 @@ type ActiveTurn = {
 
 const activeTurns = new Map<string, ActiveTurn>()
 const agentDrains = new Map<string, Promise<void>>()
+const groupDrains = new Map<string, Promise<void>>()
 
 function systemPromptFor(agent: { name: string; description: string }) {
   const description = agent.description.trim()
@@ -42,6 +49,89 @@ function systemPromptFor(agent: { name: string; description: string }) {
   ]
     .filter(Boolean)
     .join('\n\n')
+}
+
+function groupSystemPromptFor(agent: Agent, group: Group, members: Agent[]) {
+  const description = agent.description.trim()
+  const others = members.filter((m) => m.id !== agent.id).map((m) => m.name)
+  return [
+    `You are ${agent.name}, a helpful long-lived assistant agent.`,
+    description && `Your operator describes you as: ${description}`,
+    `You are speaking in the shared group room "${group.name}"${
+      others.length > 0 ? ` together with ${others.join(', ')}` : ''
+    }. Messages from other members appear as "[name]: …". Reply as yourself, without a name prefix.`,
+    'Answer in Markdown.',
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+/** The group's member agents, resolved and kept in membership order. */
+async function memberAgentsOf(group: Group) {
+  const resolved = await Promise.all(
+    group.membersJson.members
+      .filter((m) => m.type === 'agent')
+      .map((m) => getAgent(m.agentId)),
+  )
+  return resolved.filter((agent): agent is Agent => !!agent)
+}
+
+/**
+ * MVP member selection: the first member mentioned in the posted text (by
+ * `@name` or plain name on word boundaries, earliest occurrence wins),
+ * falling back to the first member in membership order. Selection from
+ * recent room context and multi-member rounds are future work.
+ */
+export function selectGroupMember(members: Agent[], text: string) {
+  let best: { agent: Agent; index: number } | undefined
+  for (const agent of members) {
+    const name = agent.name.trim()
+    if (!name) continue
+    // Word-bounded so "Ann" is not "mentioned" by the word "planning".
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const match = new RegExp(
+      `(?:^|[^\\p{L}\\p{N}_])@?${escaped}(?:$|[^\\p{L}\\p{N}_])`,
+      'iu',
+    ).exec(text)
+    if (match && (!best || match.index < best.index)) {
+      best = { agent, index: match.index }
+    }
+  }
+  return best?.agent ?? members[0]
+}
+
+/**
+ * Model-facing input for a group room: the shared transcript rebuilt with
+ * this member's perspective. There is no per-member checkpoint reuse yet —
+ * each member turn re-reads the room, which keeps identity attribution
+ * correct when different members answer in sequence.
+ */
+function groupModelMessages(
+  rows: ConversationMessage[],
+  agent: Agent,
+  group: Group,
+  members: Agent[],
+): ModelMessage[] {
+  const nameOf = (agentId: string) =>
+    members.find((m) => m.id === agentId)?.name ?? 'Another agent'
+  const history: ModelMessage[] = []
+  for (const row of rows) {
+    if (row.kind !== 'message' || !row.bodyText) continue
+    if (row.role === 'user') {
+      history.push({ role: 'user', content: row.bodyText })
+    } else if (row.senderAgentId === agent.id) {
+      history.push({ role: 'assistant', content: row.bodyText })
+    } else if (row.senderAgentId) {
+      history.push({
+        role: 'user',
+        content: `[${nameOf(row.senderAgentId)}]: ${row.bodyText}`,
+      })
+    }
+  }
+  return [
+    { role: 'system', content: groupSystemPromptFor(agent, group, members) },
+    ...history,
+  ]
 }
 
 async function executeTurn(turnId: string) {
@@ -63,11 +153,23 @@ async function executeTurn(turnId: string) {
 
   try {
     const conversation = await getConversation(claimed.conversationId)
-    if (!conversation?.ownerAgentId) {
-      throw new Error(`Conversation ${claimed.conversationId} has no owner agent`)
+    if (!conversation) {
+      throw new Error(`Conversation ${claimed.conversationId} not found`)
     }
-    const agent = await getAgent(conversation.ownerAgentId)
-    if (!agent) throw new Error(`Agent ${conversation.ownerAgentId} not found`)
+    // The executing identity is the turn's target (group child turns run a
+    // member agent inside a group-owned conversation).
+    const agentId = claimed.targetAgentId ?? conversation.ownerAgentId
+    if (!agentId) {
+      throw new Error(`Turn ${turnId} has no executing agent`)
+    }
+    const agent = await getAgent(agentId)
+    if (!agent) throw new Error(`Agent ${agentId} not found`)
+    const group = conversation.ownerGroupId
+      ? await getGroup(conversation.ownerGroupId)
+      : undefined
+    if (conversation.ownerGroupId && !group) {
+      throw new Error(`Group ${conversation.ownerGroupId} not found`)
+    }
 
     const config = getAiConfig()
     // Historical snapshot of what this execution actually used. No tools are
@@ -85,18 +187,27 @@ async function executeTurn(turnId: string) {
       },
     })
 
-    // Model-facing input: the current checkpoint's frozen history (or a fresh
-    // system prompt on the first turn) plus this turn's user messages.
-    const checkpoint = await getCurrentCheckpoint(conversation.id)
-    const priorMessages: ModelMessage[] = checkpoint
-      ? checkpointStateSchema.parse(checkpoint.stateJson).modelMessages
-      : [{ role: 'system', content: systemPromptFor(agent) }]
-    const turnUserMessages: ModelMessage[] = (
-      await listConversationMessages(conversation.id)
-    )
-      .filter((m) => m.turnId === turnId && m.kind === 'message' && m.role === 'user')
-      .map((m) => ({ role: 'user', content: m.bodyText ?? '' }))
-    const modelMessages = [...priorMessages, ...turnUserMessages]
+    // Model-facing input. Group rooms rebuild the shared transcript from this
+    // member's perspective; private rooms use the current checkpoint's frozen
+    // history (or a fresh system prompt on the first turn) plus this turn's
+    // user messages.
+    let modelMessages: ModelMessage[]
+    if (group) {
+      const rows = await listConversationMessages(conversation.id)
+      const members = await memberAgentsOf(group)
+      modelMessages = groupModelMessages(rows, agent, group, members)
+    } else {
+      const checkpoint = await getCurrentCheckpoint(conversation.id)
+      const priorMessages: ModelMessage[] = checkpoint
+        ? checkpointStateSchema.parse(checkpoint.stateJson).modelMessages
+        : [{ role: 'system', content: systemPromptFor(agent) }]
+      const turnUserMessages: ModelMessage[] = (
+        await listConversationMessages(conversation.id)
+      )
+        .filter((m) => m.turnId === turnId && m.kind === 'message' && m.role === 'user')
+        .map((m) => ({ role: 'user', content: m.bodyText ?? '' }))
+      modelMessages = [...priorMessages, ...turnUserMessages]
+    }
 
     const assistantText = await streamChatCompletion(config, modelMessages, (delta) => {
       active.accumulated += delta
@@ -109,6 +220,9 @@ async function executeTurn(turnId: string) {
       turnId,
       conversationId: conversation.id,
       assistantText,
+      // In a shared group room the transcript must carry the member's
+      // identity; in a private room the owning agent is implied.
+      senderAgentId: group ? agent.id : null,
       checkpointState: {
         version: 1,
         modelMessages: [...modelMessages, { role: 'assistant', content: assistantText }],
@@ -133,6 +247,88 @@ async function executeTurn(turnId: string) {
   } finally {
     activeTurns.delete(turnId)
   }
+}
+
+/**
+ * Executes one group-targeted orchestration turn: select one member from the
+ * posted text and queue the agent-targeted child turn that will answer in
+ * the same shared conversation. The orchestration turn itself produces no
+ * visible output; watchers hand off to the child turn.
+ */
+async function executeGroupTurn(turnId: string) {
+  const claimed = await claimQueuedTurn(turnId)
+  if (!claimed) return
+
+  try {
+    if (!claimed.targetGroupId) {
+      throw new Error(`Turn ${turnId} is not group-targeted`)
+    }
+    const group = await getGroup(claimed.targetGroupId)
+    if (!group) throw new Error(`Group ${claimed.targetGroupId} not found`)
+    const members = await memberAgentsOf(group)
+    if (members.length === 0) {
+      throw new Error(`Group ${group.name} has no members to answer`)
+    }
+
+    const triggeringText = (await listConversationMessages(claimed.conversationId))
+      .filter((m) => m.turnId === turnId && m.kind === 'message' && m.role === 'user')
+      .map((m) => m.bodyText ?? '')
+      .join('\n')
+    const selected = selectGroupMember(members, triggeringText)
+
+    const { childTurn } = await queueGroupChildTurn({
+      groupTurnId: turnId,
+      targetAgentId: selected.id,
+      orchestrationRound: 0,
+      positionInRound: 0,
+    })
+    ensureDrainForTurn(childTurn)
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Group turn orchestration failed'
+    await completeTurn(turnId, {
+      status: 'failed',
+      error: { version: 1, message },
+    }).catch(() => {})
+    await appendConversationMessage({
+      conversationId: claimed.conversationId,
+      kind: 'status',
+      direction: 'internal',
+      bodyText: `Turn failed: ${message}`,
+      payload: { version: 1, event: 'turn_failed', message },
+      turnId,
+    }).catch(() => {})
+  }
+}
+
+/**
+ * Runs one group's queued orchestration turns to exhaustion, one at a time.
+ * At most one drain loop exists per group — "one active turn per target" for
+ * group-targeted turns. Member child turns run on their agents' own drains.
+ */
+export function ensureGroupDrain(groupId: string): Promise<void> {
+  const existing = groupDrains.get(groupId)
+  if (existing) return existing
+  const drain = (async () => {
+    while (true) {
+      const next = await findNextQueuedTurnForGroup(groupId)
+      if (!next) return
+      await executeGroupTurn(next.id)
+    }
+  })().finally(() => {
+    groupDrains.delete(groupId)
+  })
+  groupDrains.set(groupId, drain)
+  return drain
+}
+
+/** Kicks the drain loop for whichever target (agent or group) a turn has. */
+export function ensureDrainForTurn(turn: {
+  targetAgentId: string | null
+  targetGroupId: string | null
+}) {
+  if (turn.targetAgentId) void ensureAgentDrain(turn.targetAgentId)
+  else if (turn.targetGroupId) void ensureGroupDrain(turn.targetGroupId)
 }
 
 /**
@@ -169,6 +365,9 @@ export function watchTurn(
   return new Promise((resolve) => {
     let settled = false
     let detach = () => {}
+    // A group orchestration turn succeeds without visible output; the watch
+    // hands off to its child turn, so this can move past the original id.
+    let currentTurnId = turnId
     const finish = () => {
       if (settled) return
       settled = true
@@ -180,7 +379,7 @@ export function watchTurn(
     // Synchronous attach: no awaits between lookup and subscribe, so the
     // executor cannot emit between the replay and the subscription.
     const tryAttach = () => {
-      const active = activeTurns.get(turnId)
+      const active = activeTurns.get(currentTurnId)
       if (!active) return false
       if (active.accumulated) onEvent({ type: 'delta', text: active.accumulated })
       const subscriber = (event: TurnStreamEvent) => {
@@ -199,24 +398,33 @@ export function watchTurn(
       let orphanedRunningPolls = 0
       while (!settled) {
         if (tryAttach()) return
-        const turn = await getTurn(turnId)
+        const turn = await getTurn(currentTurnId)
         if (settled) return
         if (!turn) {
-          onEvent({ type: 'error', message: `Turn ${turnId} not found` })
+          onEvent({ type: 'error', message: `Turn ${currentTurnId} not found` })
           return finish()
         }
         if (turn.status === 'succeeded') {
           const rows = await listConversationMessages(turn.conversationId)
           const assistant = rows
-            .filter((m) => m.turnId === turnId && m.role === 'assistant')
+            .filter((m) => m.turnId === currentTurnId && m.role === 'assistant')
             .at(-1)
-          if (assistant) onEvent({ type: 'done', message: assistant })
-          else {
-            onEvent({
-              type: 'error',
-              message: 'Turn succeeded without an assistant message',
-            })
+          if (assistant) {
+            onEvent({ type: 'done', message: assistant })
+            return finish()
           }
+          // A group orchestration turn succeeds by delegating: follow the
+          // newest child turn (the selected member's answer) instead.
+          const child = (await findChildTurns(currentTurnId)).at(-1)
+          if (child) {
+            currentTurnId = child.id
+            ensureDrainForTurn(child)
+            continue
+          }
+          onEvent({
+            type: 'error',
+            message: 'Turn succeeded without an assistant message',
+          })
           return finish()
         }
         if (turn.status === 'failed' || turn.status === 'cancelled') {
@@ -240,8 +448,8 @@ export function watchTurn(
         } else {
           orphanedRunningPolls = 0
           // Queued (or recovering) but not executing here yet: kick the
-          // agent's drain and look again shortly.
-          if (turn.targetAgentId) void ensureAgentDrain(turn.targetAgentId)
+          // target's drain and look again shortly.
+          ensureDrainForTurn(turn)
         }
         await new Promise((r) => setTimeout(r, 200))
       }
@@ -263,7 +471,7 @@ export function recoverQueuedTurns() {
   void (async () => {
     try {
       for (const turn of await listQueuedTurns()) {
-        if (turn.targetAgentId) void ensureAgentDrain(turn.targetAgentId)
+        ensureDrainForTurn(turn)
       }
     } catch (error) {
       console.error('Queued-turn recovery failed', error)

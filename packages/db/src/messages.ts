@@ -14,6 +14,8 @@ export type MessageAppendInput = {
   payload?: VersionedObject
   turnId?: string | null
   replyToEntryId?: string | null
+  /** Authoring agent, for rows produced by an agent (e.g. group members). */
+  senderAgentId?: string | null
 }
 
 export function listConversationMessages(conversationId: string) {
@@ -47,6 +49,7 @@ export async function appendConversationMessage(
       direction: input.direction,
       bodyText: input.bodyText ?? null,
       ...(input.payload && { payloadJson: versionedObjectSchema.parse(input.payload) }),
+      senderAgentId: input.senderAgentId ?? null,
       replyToEntryId: input.replyToEntryId ?? null,
       createdAt: now,
       updatedAt: now,
@@ -78,10 +81,8 @@ export async function acceptUserMessage(input: UserMessageInput) {
     if (!conversation) {
       throw new Error(`Conversation ${input.conversationId} not found`)
     }
-    if (!conversation.ownerAgentId) {
-      throw new Error(
-        `Conversation ${input.conversationId} has no owner agent; group turns are not implemented`,
-      )
+    if (!conversation.ownerAgentId && !conversation.ownerGroupId) {
+      throw new Error(`Conversation ${input.conversationId} has no owner`)
     }
 
     // Reply targets must live in the same conversation (composite FK); an
@@ -108,7 +109,11 @@ export async function acceptUserMessage(input: UserMessageInput) {
       .values({
         id: createId('trn'),
         conversationId: conversation.id,
+        // Exactly one of these is set (conversation ownership is XOR): an
+        // agent room queues an agent turn, a group room queues one
+        // group-targeted turn for the orchestrator.
         targetAgentId: conversation.ownerAgentId,
+        targetGroupId: conversation.ownerGroupId,
         lane: 'user',
         source: 'composer',
         status: 'queued',

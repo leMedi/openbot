@@ -1,4 +1,5 @@
 import { eq } from 'drizzle-orm'
+import { assertValidAvatarUpload, type AvatarUpload } from './avatars'
 import { db } from './client'
 import {
   createManagedFile,
@@ -7,15 +8,6 @@ import {
 } from './files'
 import { createId } from './ids'
 import * as schema from './schema'
-
-export const AVATAR_MEDIA_TYPES = [
-  'image/png',
-  'image/jpeg',
-  'image/webp',
-  'image/gif',
-] as const
-
-export const MAX_AVATAR_BYTES = 5 * 1024 * 1024
 
 export type AgentProfileInput = {
   name: string
@@ -27,12 +19,6 @@ export type AgentProfileInput = {
   approvalMode?: string
   notifyOnUpdates?: boolean
   hiddenFromSidebar?: boolean
-}
-
-export type AvatarUpload = {
-  bytes: Uint8Array
-  originalName: string
-  mediaType: string
 }
 
 export function listAgents() {
@@ -96,18 +82,6 @@ export async function updateAgentProfile(
     .where(eq(schema.agents.id, id))
     .returning()
   return updated
-}
-
-function assertValidAvatarUpload(upload: AvatarUpload) {
-  if (!(AVATAR_MEDIA_TYPES as readonly string[]).includes(upload.mediaType)) {
-    throw new Error(`Unsupported avatar media type: ${upload.mediaType}`)
-  }
-  if (upload.bytes.byteLength === 0) {
-    throw new Error('Avatar upload is empty')
-  }
-  if (upload.bytes.byteLength > MAX_AVATAR_BYTES) {
-    throw new Error('Avatar upload exceeds the maximum size')
-  }
 }
 
 export async function setAgentAvatar(agentId: string, upload: AvatarUpload) {

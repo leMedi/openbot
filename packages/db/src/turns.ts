@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { appendCheckpointWithExecutor } from './checkpoints'
 import { db } from './client'
 import type { DbExecutor } from './conversations'
+import { createId } from './ids'
 import {
   type CheckpointState,
   type EffectiveTools,
@@ -58,6 +59,32 @@ export async function findNextQueuedTurnForAgent(agentId: string) {
     .orderBy(asc(lanePriority), asc(schema.turns.createdAt), asc(schema.turns.id))
     .limit(1)
   return turn
+}
+
+/**
+ * The next queued group-targeted turn for one group's shared room, oldest
+ * first. This is the group orchestrator's pick for "one active turn per
+ * target".
+ */
+export async function findNextQueuedTurnForGroup(groupId: string) {
+  const [turn] = await db
+    .select()
+    .from(schema.turns)
+    .where(
+      and(eq(schema.turns.targetGroupId, groupId), eq(schema.turns.status, 'queued')),
+    )
+    .orderBy(asc(lanePriority), asc(schema.turns.createdAt), asc(schema.turns.id))
+    .limit(1)
+  return turn
+}
+
+/** Child turns queued under one parent turn, in creation order. */
+export function findChildTurns(parentTurnId: string) {
+  return db
+    .select()
+    .from(schema.turns)
+    .where(eq(schema.turns.parentTurnId, parentTurnId))
+    .orderBy(asc(schema.turns.createdAt), asc(schema.turns.id))
 }
 
 /** Oldest turn in this conversation that has not reached a terminal state. */
@@ -160,10 +187,66 @@ export async function completeTurn(
   return updated
 }
 
+export type GroupChildTurnInput = {
+  /** The running group-targeted turn being orchestrated. */
+  groupTurnId: string
+  /** The selected member agent. */
+  targetAgentId: string
+  orchestrationRound?: number
+  positionInRound?: number
+}
+
+/**
+ * The group orchestrator's delegation boundary: one transaction queues the
+ * agent-targeted child turn in the group's shared conversation and settles
+ * the parent group turn as succeeded. Either the delegation fully exists
+ * afterwards or the group turn stays running for startup recovery to re-queue.
+ */
+export async function queueGroupChildTurn(input: GroupChildTurnInput) {
+  return db.transaction(async (tx) => {
+    const [parent] = await tx
+      .select()
+      .from(schema.turns)
+      .where(eq(schema.turns.id, input.groupTurnId))
+      .limit(1)
+    if (!parent) throw new Error(`Turn ${input.groupTurnId} not found`)
+    if (!parent.targetGroupId) {
+      throw new Error(`Turn ${input.groupTurnId} is not group-targeted`)
+    }
+    if (parent.status !== 'running') {
+      throw new Error(`Turn ${input.groupTurnId} is not running`)
+    }
+
+    const now = Date.now()
+    const [childTurn] = await tx
+      .insert(schema.turns)
+      .values({
+        id: createId('trn'),
+        conversationId: parent.conversationId,
+        targetAgentId: input.targetAgentId,
+        parentTurnId: parent.id,
+        lane: 'agent',
+        source: 'group-orchestrator',
+        status: 'queued',
+        orchestrationRound: input.orchestrationRound ?? 0,
+        positionInRound: input.positionInRound ?? 0,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning()
+
+    const groupTurn = await completeTurn(parent.id, { status: 'succeeded' }, tx)
+    if (!groupTurn) throw new Error(`Turn ${input.groupTurnId} not found`)
+    return { childTurn, groupTurn }
+  })
+}
+
 export type TurnSuccessInput = {
   turnId: string
   conversationId: string
   assistantText: string
+  /** Authoring agent identity recorded on the transcript row (group rooms). */
+  senderAgentId?: string | null
   checkpointState: CheckpointState
 }
 
@@ -185,6 +268,7 @@ export function finalizeTurnSuccess(input: TurnSuccessInput) {
         direction: 'outbound',
         bodyText: input.assistantText,
         turnId: input.turnId,
+        senderAgentId: input.senderAgentId,
       },
       tx,
     )

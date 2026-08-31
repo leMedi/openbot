@@ -6,7 +6,6 @@ import {
   Copy,
   Eraser,
   FolderPlus,
-  Hash,
   MessageCircle,
   Pencil,
   Pin,
@@ -15,6 +14,7 @@ import {
   Search,
   Settings,
   Trash2,
+  Users,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -50,8 +50,10 @@ type SidebarProps = {
   onSelect: (id: string) => void
   onNewBot: () => void
   onNewConversation: () => void
-  onNewChannel: () => void
+  onNewGroup: () => void
   onNewConversationWith: (botId: string) => void
+  onEditGroup: (groupId: string) => void
+  onDeleteGroup: (groupId: string) => void
   onOpenPlugins: () => void
   onOpenSettings: () => void
   onRenameConversation: (id: string) => void
@@ -67,8 +69,10 @@ export function Sidebar({
   onSelect,
   onNewBot,
   onNewConversation,
-  onNewChannel,
+  onNewGroup,
   onNewConversationWith,
+  onEditGroup,
+  onDeleteGroup,
   onOpenPlugins,
   onOpenSettings,
   onRenameConversation,
@@ -123,8 +127,8 @@ export function Sidebar({
         <DropdownMenuItem onClick={onNewConversation}>
           <MessageCircle /> New Conversation
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={onNewChannel}>
-          <Hash /> New Channel
+        <DropdownMenuItem onClick={onNewGroup}>
+          <Users /> New Group
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -215,6 +219,8 @@ export function Sidebar({
                 active={c.id === activeId}
                 onSelect={() => onSelect(c.id)}
                 onNewConversationWith={onNewConversationWith}
+                onEditGroup={onEditGroup}
+                onDeleteGroup={onDeleteGroup}
                 onRename={() => onRenameConversation(c.id)}
                 onToggleUnread={() => onToggleUnread(c.id)}
                 onClear={() => onClearConversation(c.id)}
@@ -264,6 +270,8 @@ function ConversationRow({
   active,
   onSelect,
   onNewConversationWith,
+  onEditGroup,
+  onDeleteGroup,
   onRename,
   onToggleUnread,
   onClear,
@@ -274,11 +282,14 @@ function ConversationRow({
   active: boolean
   onSelect: () => void
   onNewConversationWith: (botId: string) => void
+  onEditGroup: (groupId: string) => void
+  onDeleteGroup: (groupId: string) => void
   onRename: () => void
   onToggleUnread: () => void
   onClear: () => void
   onDelete: () => void
 }) {
+  const isGroup = bot.kind === 'group'
   const last = conversation.messages[conversation.messages.length - 1]
 
   return (
@@ -344,9 +355,15 @@ function ConversationRow({
           <CheckCircle2 /> Mark as {conversation.unread ? 'read' : 'unread'}
         </ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuItem onClick={() => onNewConversationWith(bot.id)}>
-          <MessageCircle /> New conversation with {bot.name}
-        </ContextMenuItem>
+        {isGroup ? (
+          <ContextMenuItem onClick={() => onEditGroup(bot.id)}>
+            <Users /> Edit group
+          </ContextMenuItem>
+        ) : (
+          <ContextMenuItem onClick={() => onNewConversationWith(bot.id)}>
+            <MessageCircle /> New conversation with {bot.name}
+          </ContextMenuItem>
+        )}
         <ContextMenuItem>
           <FolderPlus /> Add to section…
         </ContextMenuItem>
@@ -360,8 +377,12 @@ function ConversationRow({
         <ContextMenuItem onClick={onClear}>
           <Eraser /> Clear history
         </ContextMenuItem>
-        <ContextMenuItem variant="destructive" onClick={onDelete}>
-          <Trash2 /> Delete
+        {/* A group's room is its only conversation; deleting it deletes the group. */}
+        <ContextMenuItem
+          variant="destructive"
+          onClick={isGroup ? () => onDeleteGroup(bot.id) : onDelete}
+        >
+          <Trash2 /> {isGroup ? 'Delete group' : 'Delete'}
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>

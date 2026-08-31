@@ -63,6 +63,8 @@ export type Bot = {
   grants: [pluginId: string, accountId: string][]
   memory: string
   avatarUrl?: string
+  /** Groups render as shared rooms; absent means a single agent. */
+  kind?: 'agent' | 'group'
 }
 
 export type Conversation = {

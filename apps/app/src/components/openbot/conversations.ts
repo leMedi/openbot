@@ -17,7 +17,9 @@ export function isUnread(row: ConversationRow) {
 export function conversationFromRow(row: ConversationRow): Conversation {
   return {
     id: row.id,
-    botId: row.ownerAgentId ?? '',
+    // The owning identity (XOR): the agent, or the group whose shared room
+    // this is. Both resolve through the same Bot view-model list.
+    botId: row.ownerAgentId ?? row.ownerGroupId ?? '',
     title: row.title ?? 'Untitled',
     time: timeLabel(row.updatedAt),
     unread: isUnread(row),

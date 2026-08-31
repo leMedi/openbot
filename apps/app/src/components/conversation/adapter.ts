@@ -35,11 +35,26 @@ function toolCallFrom(row: ConversationMessage): ToolCall {
   }
 }
 
+/**
+ * The author identity for one persisted row: in group rooms the sender agent
+ * resolves to its member identity, everywhere else the owning `agent`.
+ */
+export function authorForMessage(
+  row: Pick<ConversationMessage, 'senderAgentId'>,
+  agent: Author,
+  membersById?: Map<string, Author>,
+): Author {
+  return (row.senderAgentId && membersById?.get(row.senderAgentId)) || agent
+}
+
 /** Convert persisted transcript rows into renderable entries. */
 export function entriesFromMessages(
   rows: ConversationMessage[],
   agent: Author,
+  /** Group rooms: member identity by sender agent id (falls back to `agent`). */
+  membersById?: Map<string, Author>,
 ): Entry[] {
+  const authorOf = (row: ConversationMessage) => authorForMessage(row, agent, membersById)
   const out: Entry[] = []
   for (const row of rows) {
     const time = timeLabel(row.createdAt)
@@ -56,13 +71,19 @@ export function entriesFromMessages(
       out.push({
         type: 'message',
         id: row.id,
-        author: agent,
+        author: authorOf(row),
         time,
         markdown: row.bodyText ?? '',
         replyTo: row.replyToEntryId ?? undefined,
       })
     } else if (row.kind === 'tool_call' || row.kind === 'tool_result') {
-      out.push({ type: 'tool', id: row.id, author: agent, time, call: toolCallFrom(row) })
+      out.push({
+        type: 'tool',
+        id: row.id,
+        author: authorOf(row),
+        time,
+        call: toolCallFrom(row),
+      })
     } else {
       // status / system / other display events
       out.push({

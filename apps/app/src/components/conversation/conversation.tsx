@@ -56,6 +56,11 @@ export type ConversationProps = {
   onTurnSettled?: () => void
   /** A queued/running turn to reattach to on mount (reload during a turn). */
   pendingTurnId?: string | null
+  /**
+   * Resolves the author identity for a persisted message (group rooms map
+   * sender agents onto member identities). Defaults to `agent`.
+   */
+  resolveAuthor?: (message: ConversationMessage) => Author
 }
 
 export function Conversation({
@@ -72,6 +77,7 @@ export function Conversation({
   onSendMessage,
   onTurnSettled,
   pendingTurnId,
+  resolveAuthor,
 }: ConversationProps) {
   const [entries, setEntries] = useState<Entry[]>(initialEntries)
   const [replyTo, setReplyTo] = useState<string | undefined>()
@@ -233,6 +239,9 @@ export function Conversation({
                 ? {
                     ...m,
                     id: event.message.id,
+                    // In a group room the answering member is only known once
+                    // the persisted message arrives with its sender identity.
+                    author: resolveAuthor?.(event.message) ?? m.author,
                     markdown: event.message.bodyText ?? '',
                     delivery: 'delivered',
                   }
