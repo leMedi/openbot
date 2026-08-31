@@ -364,11 +364,11 @@ behavior is being implemented.
 The schema, generated initial migration, startup migration path, JSON contracts,
 ID helper, agent profile and avatar services, conversation navigation, the
 transcript repository, the durable turn queue with restart recovery and
-persisted waiting-turn resume, the checkpoint repository, and single-agent
-turn execution with streamed visible output are implemented. User message
-acceptance is idempotent by request ID or stable idempotency key. Per-target
-claims enforce one active turn and `user > agent > background` priority. A turn
-is executed by the server-side runner
+persisted waiting-turn resume, the checkpoint repository, durable user and
+agent memory, and single-agent turn execution with streamed visible output are
+implemented. User message acceptance is idempotent by request ID or stable
+idempotency key. Per-target claims enforce one active turn and
+`user > agent > background` priority. A turn is executed by the server-side runner
 (`apps/app/src/server/turn-runner.ts`): it claims the queued turn, snapshots
 the effective model/tools/permissions/runtime context, streams one
 OpenAI-compatible chat completion, appends the assistant transcript row,
@@ -390,9 +390,8 @@ Remaining implementation slices are:
 1. Tool execution that can originate the implemented waiting-turn interaction.
 2. Transactional direct agent delivery.
 3. Group selection from room context and bounded multi-member rounds.
-4. Memory operations and prompt assembly.
-5. Managed attachments and file-serving APIs.
-6. MCP server, account, OAuth callback, and safe credential access services.
+4. Managed attachments and file-serving APIs.
+5. MCP server, account, OAuth callback, and safe credential access services.
 
 ## Source Map
 
@@ -413,6 +412,8 @@ Remaining implementation slices are:
   child-turn delegation).
 - `packages/db/src/checkpoints.ts`: immutable checkpoint repository and
   current-checkpoint pointer.
+- `packages/db/src/memory.ts`: scoped memory CRUD, metadata validation, and
+  prompt-relevant memory selection.
 - `packages/db/src/files.ts`: managed-file repository and path containment.
 - `packages/db/src/index.ts`: package exports.
 - `packages/db/src/env.ts`: local database, migration, and managed-file paths.
@@ -422,6 +423,9 @@ Remaining implementation slices are:
   deletion).
 - `apps/app/src/server/conversations.ts`: conversation API boundary.
 - `apps/app/src/server/messages.ts`: transcript read and durable send API boundary.
+- `apps/app/src/server/memory.ts`: memory inspection and mutation API boundary.
+- `apps/app/src/server/prompt-assembly.ts`: agent-scoped prompt memory assembly
+  and private checkpoint-epoch reuse.
 - `apps/app/src/server/ai.ts`: OpenAI-compatible streaming inference client.
 - `apps/app/src/server/turn-runner.ts`: turn executor, group orchestrator,
   per-target drains, and in-memory visible-output fan-out.
