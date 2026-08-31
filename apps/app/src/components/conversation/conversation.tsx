@@ -415,8 +415,8 @@ export function Conversation({
       </header>
 
       {/* Transcript — the thread view replaces the conversation in place */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 pt-4 pb-8">
           {inThreadView ? (
             <Transcript
               entries={threadEntries}
