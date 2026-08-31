@@ -1,11 +1,10 @@
 // Client consumer for the turn SSE endpoint (routes/api.turns.$turnId.stream).
 
-import type { ConversationMessage } from '@openbot/db'
+// Type-only import: erased at build time, so the server module never reaches
+// the client bundle. The event shape has exactly one definition.
+import type { TurnStreamEvent } from '@/server/turn-runner'
 
-export type TurnStreamEvent =
-  | { type: 'delta'; text: string }
-  | { type: 'done'; message: ConversationMessage }
-  | { type: 'error'; message: string }
+export type { TurnStreamEvent }
 
 /**
  * Consumes one turn's event stream until the server closes it. Resolves after

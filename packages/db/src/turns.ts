@@ -1,7 +1,22 @@
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, sql } from 'drizzle-orm'
+import { appendCheckpointWithExecutor } from './checkpoints'
 import { db } from './client'
-import type { EffectiveTools, VersionedObject } from './json-schemas'
+import type { DbExecutor } from './conversations'
+import {
+  type CheckpointState,
+  type EffectiveTools,
+  effectiveToolsSchema,
+  type VersionedObject,
+  versionedObjectSchema,
+} from './json-schemas'
+import { appendConversationMessage } from './messages'
 import * as schema from './schema'
+
+// The documented lane priority: user > agent > background.
+const lanePriority = sql`CASE ${schema.turns.lane}
+  WHEN 'user' THEN 0
+  WHEN 'agent' THEN 1
+  ELSE 2 END`
 
 export async function getTurn(id: string) {
   const [turn] = await db
@@ -21,6 +36,39 @@ export async function findNextQueuedTurn(conversationId: string) {
       and(
         eq(schema.turns.conversationId, conversationId),
         eq(schema.turns.status, 'queued'),
+      ),
+    )
+    .orderBy(asc(lanePriority), asc(schema.turns.createdAt), asc(schema.turns.id))
+    .limit(1)
+  return turn
+}
+
+/**
+ * The next queued turn for one target agent across all of its conversations,
+ * highest-priority lane first, then oldest. This is the scheduler's pick for
+ * "one active turn per target".
+ */
+export async function findNextQueuedTurnForAgent(agentId: string) {
+  const [turn] = await db
+    .select()
+    .from(schema.turns)
+    .where(
+      and(eq(schema.turns.targetAgentId, agentId), eq(schema.turns.status, 'queued')),
+    )
+    .orderBy(asc(lanePriority), asc(schema.turns.createdAt), asc(schema.turns.id))
+    .limit(1)
+  return turn
+}
+
+/** Oldest turn in this conversation that has not reached a terminal state. */
+export async function findUnsettledTurn(conversationId: string) {
+  const [turn] = await db
+    .select()
+    .from(schema.turns)
+    .where(
+      and(
+        eq(schema.turns.conversationId, conversationId),
+        inArray(schema.turns.status, ['queued', 'running', 'waiting']),
       ),
     )
     .orderBy(asc(schema.turns.createdAt), asc(schema.turns.id))
@@ -76,9 +124,11 @@ export async function recordTurnExecution(id: string, snapshot: TurnExecutionSna
     .set({
       modelProvider: snapshot.modelProvider,
       modelId: snapshot.modelId,
-      effectiveToolsJson: snapshot.effectiveTools,
-      effectivePermissionsJson: snapshot.effectivePermissions,
-      runtimeContextJson: snapshot.runtimeContext,
+      effectiveToolsJson: effectiveToolsSchema.parse(snapshot.effectiveTools),
+      effectivePermissionsJson: versionedObjectSchema.parse(
+        snapshot.effectivePermissions,
+      ),
+      runtimeContextJson: versionedObjectSchema.parse(snapshot.runtimeContext),
       updatedAt: Date.now(),
     })
     .where(eq(schema.turns.id, id))
@@ -91,9 +141,13 @@ export type TurnCompletion = {
   error?: VersionedObject
 }
 
-export async function completeTurn(id: string, completion: TurnCompletion) {
+export async function completeTurn(
+  id: string,
+  completion: TurnCompletion,
+  executor: DbExecutor = db,
+) {
   const now = Date.now()
-  const [updated] = await db
+  const [updated] = await executor
     .update(schema.turns)
     .set({
       status: completion.status,
@@ -104,4 +158,43 @@ export async function completeTurn(id: string, completion: TurnCompletion) {
     .where(eq(schema.turns.id, id))
     .returning()
   return updated
+}
+
+export type TurnSuccessInput = {
+  turnId: string
+  conversationId: string
+  assistantText: string
+  checkpointState: CheckpointState
+}
+
+/**
+ * Commits a successful turn's outcome atomically: the assistant transcript
+ * row, the next immutable checkpoint (with pointer advance), and the
+ * succeeded status. A crash can therefore never leave a visible assistant
+ * message without its checkpoint or a succeeded turn without either —
+ * startup recovery re-queues the still-running turn and re-execution starts
+ * from a clean slate.
+ */
+export function finalizeTurnSuccess(input: TurnSuccessInput) {
+  return db.transaction(async (tx) => {
+    const message = await appendConversationMessage(
+      {
+        conversationId: input.conversationId,
+        kind: 'message',
+        role: 'assistant',
+        direction: 'outbound',
+        bodyText: input.assistantText,
+        turnId: input.turnId,
+      },
+      tx,
+    )
+    const checkpoint = await appendCheckpointWithExecutor(
+      tx,
+      input.conversationId,
+      input.checkpointState,
+    )
+    const turn = await completeTurn(input.turnId, { status: 'succeeded' }, tx)
+    if (!turn) throw new Error(`Turn ${input.turnId} not found`)
+    return { message, checkpoint, turn }
+  })
 }

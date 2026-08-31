@@ -367,6 +367,102 @@ describe('turns', () => {
   })
 })
 
+describe('turn scheduling and finalization', () => {
+  it('orders the agent queue by lane priority then age across conversations', async () => {
+    const { agent } = await dbModule.createAgent({ name: 'Scheduler Agent' })
+    const first = await dbModule.createConversation({ ownerAgentId: agent.id })
+    const second = await dbModule.createConversation({ ownerAgentId: agent.id })
+
+    const a = await dbModule.acceptUserMessage({
+      conversationId: first.id,
+      text: 'older',
+    })
+    const b = await dbModule.acceptUserMessage({
+      conversationId: second.id,
+      text: 'newer',
+    })
+
+    const next = await dbModule.findNextQueuedTurnForAgent(agent.id)
+    expect(next?.id).toBe(a.turn.id)
+
+    await dbModule.claimQueuedTurn(a.turn.id)
+    const after = await dbModule.findNextQueuedTurnForAgent(agent.id)
+    expect(after?.id).toBe(b.turn.id)
+  })
+
+  it('reports the oldest unsettled turn for a conversation', async () => {
+    const { agent } = await dbModule.createAgent({ name: 'Unsettled Agent' })
+    const conversation = await dbModule.createConversation({ ownerAgentId: agent.id })
+    expect(await dbModule.findUnsettledTurn(conversation.id)).toBeUndefined()
+
+    const { turn } = await dbModule.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'pending work',
+    })
+    expect((await dbModule.findUnsettledTurn(conversation.id))?.id).toBe(turn.id)
+
+    await dbModule.claimQueuedTurn(turn.id)
+    expect((await dbModule.findUnsettledTurn(conversation.id))?.id).toBe(turn.id)
+
+    await dbModule.completeTurn(turn.id, { status: 'succeeded' })
+    expect(await dbModule.findUnsettledTurn(conversation.id)).toBeUndefined()
+  })
+
+  it('finalizes a successful turn atomically: message, checkpoint, and status', async () => {
+    const { agent } = await dbModule.createAgent({ name: 'Finalize Agent' })
+    const conversation = await dbModule.createConversation({ ownerAgentId: agent.id })
+    const { turn } = await dbModule.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'question',
+    })
+    await dbModule.claimQueuedTurn(turn.id)
+
+    const result = await dbModule.finalizeTurnSuccess({
+      turnId: turn.id,
+      conversationId: conversation.id,
+      assistantText: 'answer',
+      checkpointState: {
+        version: 1,
+        modelMessages: [
+          { role: 'user', content: 'question' },
+          { role: 'assistant', content: 'answer' },
+        ],
+      },
+    })
+
+    expect(result.message.role).toBe('assistant')
+    expect(result.message.bodyText).toBe('answer')
+    expect(result.message.turnId).toBe(turn.id)
+
+    const after = await dbModule.getConversation(conversation.id)
+    expect(after?.currentCheckpointId).toBe(result.checkpoint.id)
+    expect((await dbModule.getTurn(turn.id))?.status).toBe('succeeded')
+  })
+
+  it('persists a valid reply reference and drops an unknown one', async () => {
+    const { agent } = await dbModule.createAgent({ name: 'Reply Agent' })
+    const conversation = await dbModule.createConversation({ ownerAgentId: agent.id })
+    const { message: target } = await dbModule.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'reply to me',
+    })
+
+    const { message: reply } = await dbModule.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'a reply',
+      replyToEntryId: target.id,
+    })
+    expect(reply.replyToEntryId).toBe(target.id)
+
+    const { message: dangling } = await dbModule.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'reply to nothing',
+      replyToEntryId: 'ent_does_not_exist',
+    })
+    expect(dangling.replyToEntryId).toBeNull()
+  })
+})
+
 describe('conversation checkpoints', () => {
   it('creates immutable versioned checkpoints and advances the pointer', async () => {
     const { agent } = await dbModule.createAgent({ name: 'Checkpoint Agent' })

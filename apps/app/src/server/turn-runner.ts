@@ -4,8 +4,8 @@ import {
   claimQueuedTurn,
   completeTurn,
   type ConversationMessage,
-  createConversationCheckpoint,
-  findNextQueuedTurn,
+  finalizeTurnSuccess,
+  findNextQueuedTurnForAgent,
   getAgent,
   getConversation,
   getCurrentCheckpoint,
@@ -31,7 +31,7 @@ type ActiveTurn = {
 }
 
 const activeTurns = new Map<string, ActiveTurn>()
-const conversationDrains = new Map<string, Promise<void>>()
+const agentDrains = new Map<string, Promise<void>>()
 
 function systemPromptFor(agent: { name: string; description: string }) {
   const description = agent.description.trim()
@@ -103,19 +103,17 @@ async function executeTurn(turnId: string) {
       emit({ type: 'delta', text: delta })
     })
 
-    const assistantMessage = await appendConversationMessage({
-      conversationId: conversation.id,
-      kind: 'message',
-      role: 'assistant',
-      direction: 'outbound',
-      bodyText: assistantText,
+    // One transaction: assistant row, next checkpoint (pointer advance), and
+    // the succeeded status — so a crash never persists a partial outcome.
+    const { message: assistantMessage } = await finalizeTurnSuccess({
       turnId,
+      conversationId: conversation.id,
+      assistantText,
+      checkpointState: {
+        version: 1,
+        modelMessages: [...modelMessages, { role: 'assistant', content: assistantText }],
+      },
     })
-    await createConversationCheckpoint(conversation.id, {
-      version: 1,
-      modelMessages: [...modelMessages, { role: 'assistant', content: assistantText }],
-    })
-    await completeTurn(turnId, { status: 'succeeded' })
     emitTerminal({ type: 'done', message: assistantMessage })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Turn execution failed'
@@ -138,23 +136,23 @@ async function executeTurn(turnId: string) {
 }
 
 /**
- * Runs this conversation's queued turns to exhaustion, one at a time. At most
- * one drain loop exists per conversation, which is what enforces "one active
- * turn per target" in the MVP.
+ * Runs one agent's queued turns to exhaustion, one at a time, across all of
+ * its conversations, highest-priority lane first. At most one drain loop
+ * exists per agent, which is what enforces "one active turn per target".
  */
-export function ensureConversationDrain(conversationId: string): Promise<void> {
-  const existing = conversationDrains.get(conversationId)
+export function ensureAgentDrain(agentId: string): Promise<void> {
+  const existing = agentDrains.get(agentId)
   if (existing) return existing
   const drain = (async () => {
     while (true) {
-      const next = await findNextQueuedTurn(conversationId)
+      const next = await findNextQueuedTurnForAgent(agentId)
       if (!next) return
       await executeTurn(next.id)
     }
   })().finally(() => {
-    conversationDrains.delete(conversationId)
+    agentDrains.delete(agentId)
   })
-  conversationDrains.set(conversationId, drain)
+  agentDrains.set(agentId, drain)
   return drain
 }
 
@@ -195,6 +193,10 @@ export function watchTurn(
     }
 
     const poll = async () => {
+      // A turn can be `running` with no in-process executor only when a
+      // stale claim survived a dev-server module reload; give a real claim a
+      // grace period to register, then stop the watch instead of spinning.
+      let orphanedRunningPolls = 0
       while (!settled) {
         if (tryAttach()) return
         const turn = await getTurn(turnId)
@@ -225,9 +227,22 @@ export function watchTurn(
           onEvent({ type: 'error', message: stored })
           return finish()
         }
-        // Queued (or recovering) but not executing here yet: kick the drain
-        // and look again shortly.
-        void ensureConversationDrain(turn.conversationId)
+        if (turn.status === 'running') {
+          orphanedRunningPolls += 1
+          if (orphanedRunningPolls > 25) {
+            onEvent({
+              type: 'error',
+              message:
+                'This turn is running but unreachable from this server context; reload once it completes.',
+            })
+            return finish()
+          }
+        } else {
+          orphanedRunningPolls = 0
+          // Queued (or recovering) but not executing here yet: kick the
+          // agent's drain and look again shortly.
+          if (turn.targetAgentId) void ensureAgentDrain(turn.targetAgentId)
+        }
         await new Promise((r) => setTimeout(r, 200))
       }
     }
@@ -235,10 +250,12 @@ export function watchTurn(
   })
 }
 
-// Startup recovery: interrupted running turns were already reset to queued by
-// the database startup path; restart their conversation drains so queued work
-// resumes without waiting for a client. Claiming is database-atomic, so a
-// duplicate drain (e.g. after dev-server module reload) cannot double-run.
+// Recovery: interrupted running turns were already reset to queued by the
+// database startup path. This restarts their agents' drains the first time
+// any server code path calls it after a restart — there is no dedicated boot
+// hook yet, so queued work resumes on the first client request rather than at
+// process start. Claiming is database-atomic, so a duplicate drain (e.g.
+// after a dev-server module reload) cannot double-run a turn.
 let recoveryStarted = false
 export function recoverQueuedTurns() {
   if (recoveryStarted) return
@@ -246,7 +263,7 @@ export function recoverQueuedTurns() {
   void (async () => {
     try {
       for (const turn of await listQueuedTurns()) {
-        void ensureConversationDrain(turn.conversationId)
+        if (turn.targetAgentId) void ensureAgentDrain(turn.targetAgentId)
       }
     } catch (error) {
       console.error('Queued-turn recovery failed', error)

@@ -116,16 +116,19 @@ function OpenBot() {
   const [transcript, setTranscript] = useState<{
     conversationId: string
     rows: ConversationMessage[]
+    pendingTurnId: string | null
   } | null>(null)
   useEffect(() => {
     if (!activeId) return
     let cancelled = false
     getConversationMessages({ data: { conversationId: activeId } })
-      .then((rows) => {
-        if (!cancelled) setTranscript({ conversationId: activeId, rows })
+      .then(({ rows, pendingTurnId }) => {
+        if (!cancelled) setTranscript({ conversationId: activeId, rows, pendingTurnId })
       })
       .catch(() => {
-        if (!cancelled) setTranscript({ conversationId: activeId, rows: [] })
+        if (!cancelled) {
+          setTranscript({ conversationId: activeId, rows: [], pendingTurnId: null })
+        }
       })
     return () => {
       cancelled = true
@@ -249,9 +252,16 @@ function OpenBot() {
           model={bot.model}
           initialEntries={entries}
           activityTabs={tabs}
+          pendingTurnId={transcriptReady ? transcript?.pendingTurnId : null}
           onSendMessage={(draft) =>
             sendConversationMessage({
-              data: { conversationId: active.id, text: draft.prompt },
+              data: {
+                conversationId: active.id,
+                text: draft.prompt,
+                // The server drops references it cannot resolve (e.g. an
+                // optimistic local id), degrading to a plain message.
+                replyToEntryId: draft.replyToId ?? null,
+              },
             })
           }
           onTurnSettled={async () => {

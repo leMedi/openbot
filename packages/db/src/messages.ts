@@ -1,8 +1,8 @@
-import { asc, eq } from 'drizzle-orm'
+import { and, asc, eq } from 'drizzle-orm'
 import { db } from './client'
 import { allocateConversationSequence, type DbExecutor } from './conversations'
 import { createId } from './ids'
-import type { VersionedObject } from './json-schemas'
+import { type VersionedObject, versionedObjectSchema } from './json-schemas'
 import * as schema from './schema'
 
 export type MessageAppendInput = {
@@ -13,6 +13,7 @@ export type MessageAppendInput = {
   bodyText?: string | null
   payload?: VersionedObject
   turnId?: string | null
+  replyToEntryId?: string | null
 }
 
 export function listConversationMessages(conversationId: string) {
@@ -45,7 +46,8 @@ export async function appendConversationMessage(
       role: input.role ?? null,
       direction: input.direction,
       bodyText: input.bodyText ?? null,
-      ...(input.payload && { payloadJson: input.payload }),
+      ...(input.payload && { payloadJson: versionedObjectSchema.parse(input.payload) }),
+      replyToEntryId: input.replyToEntryId ?? null,
       createdAt: now,
       updatedAt: now,
     })
@@ -57,6 +59,8 @@ export type UserMessageInput = {
   conversationId: string
   text: string
   payload?: VersionedObject
+  /** Entry this message replies to; silently dropped if it does not exist here. */
+  replyToEntryId?: string | null
 }
 
 /**
@@ -78,6 +82,24 @@ export async function acceptUserMessage(input: UserMessageInput) {
       throw new Error(
         `Conversation ${input.conversationId} has no owner agent; group turns are not implemented`,
       )
+    }
+
+    // Reply targets must live in the same conversation (composite FK); an
+    // unknown or foreign target degrades to a plain message instead of
+    // failing the send.
+    let replyToEntryId: string | null = null
+    if (input.replyToEntryId) {
+      const [target] = await tx
+        .select({ id: schema.conversationMessages.id })
+        .from(schema.conversationMessages)
+        .where(
+          and(
+            eq(schema.conversationMessages.conversationId, conversation.id),
+            eq(schema.conversationMessages.id, input.replyToEntryId),
+          ),
+        )
+        .limit(1)
+      replyToEntryId = target?.id ?? null
     }
 
     const now = Date.now()
@@ -104,6 +126,7 @@ export async function acceptUserMessage(input: UserMessageInput) {
         bodyText: input.text,
         payload: input.payload,
         turnId: turn.id,
+        replyToEntryId,
       },
       tx,
     )

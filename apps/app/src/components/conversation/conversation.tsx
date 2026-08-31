@@ -54,6 +54,8 @@ export type ConversationProps = {
   onSendMessage?: (draft: Draft) => Promise<{ message: ConversationMessage; turn: Turn }>
   /** Called after a turn reaches a terminal state (refresh sidebar state etc.). */
   onTurnSettled?: () => void
+  /** A queued/running turn to reattach to on mount (reload during a turn). */
+  pendingTurnId?: string | null
 }
 
 export function Conversation({
@@ -69,6 +71,7 @@ export function Conversation({
   readOnly,
   onSendMessage,
   onTurnSettled,
+  pendingTurnId,
 }: ConversationProps) {
   const [entries, setEntries] = useState<Entry[]>(initialEntries)
   const [replyTo, setReplyTo] = useState<string | undefined>()
@@ -84,6 +87,18 @@ export function Conversation({
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [entries, threadRootId])
+
+  // Reattach to a turn that was in flight when this conversation mounted
+  // (page reload mid-turn): the stream replays accumulated output, or
+  // resolves immediately with the persisted result if it finished meanwhile.
+  const reattached = useRef(false)
+  useEffect(() => {
+    if (reattached.current || !pendingTurnId || !onSendMessage) return
+    reattached.current = true
+    void consumeTurnStream(pendingTurnId)
+    // Mount-only by design; the component remounts (key) per conversation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const findEntry = useCallback(
     (entryId: string): Entry | undefined => {
@@ -177,8 +192,17 @@ export function Conversation({
         m.id === localId ? { ...m, id: accepted.message.id, delivery: 'delivered' } : m,
       ),
     )
+    await consumeTurnStream(accepted.turn.id)
+  }
 
-    const streamingId = `streaming-${accepted.turn.id}`
+  /**
+   * Renders one turn's visible output: a streaming entry that accumulates
+   * deltas until the persisted assistant message (or a failure notice)
+   * replaces it. Used for freshly sent turns and for reattaching to a turn
+   * that was already in flight when the page loaded.
+   */
+  async function consumeTurnStream(turnId: string) {
+    const streamingId = `streaming-${turnId}`
     setEntries((all) => [
       ...all,
       {
@@ -193,7 +217,7 @@ export function Conversation({
     const replaceStreaming = (entry: Entry) =>
       setEntries((all) => all.map((e) => (e.id === streamingId ? entry : e)))
     try {
-      await streamTurn(accepted.turn.id, (event) => {
+      await streamTurn(turnId, (event) => {
         if (event.type === 'delta') {
           setEntries((all) =>
             mapMessages(all, (m) =>
@@ -267,24 +291,21 @@ export function Conversation({
     }
   }
 
-  const resend = useCallback(
-    (entryId: string) => {
-      const entry = findEntry(entryId)
-      if (onSendMessage && entry?.type === 'message' && entry.text) {
-        setEntries((all) => all.filter((e) => e.id !== entryId))
-        void sendToServer({ prompt: entry.text, attachments: entry.attachments ?? [] })
-        return
-      }
-      setEntries((all) =>
-        mapMessages(all, (m) =>
-          m.id === entryId ? { ...m, delivery: 'delivered', time: nowTime() } : m,
-        ),
-      )
-    },
-    // sendToServer is re-created per render but only captures stable setters/props.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [findEntry, onSendMessage],
-  )
+  // Plain function (not memoized): it must capture the current render's
+  // sendToServer, whose props may change between renders.
+  function resend(entryId: string) {
+    const entry = findEntry(entryId)
+    if (onSendMessage && entry?.type === 'message' && entry.text) {
+      setEntries((all) => all.filter((e) => e.id !== entryId))
+      void sendToServer({ prompt: entry.text, attachments: entry.attachments ?? [] })
+      return
+    }
+    setEntries((all) =>
+      mapMessages(all, (m) =>
+        m.id === entryId ? { ...m, delivery: 'delivered', time: nowTime() } : m,
+      ),
+    )
+  }
 
   const handlers: MessageRowHandlers = {
     onToggleReaction: toggleReaction,
