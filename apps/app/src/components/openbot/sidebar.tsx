@@ -264,6 +264,8 @@ export function Sidebar({
   )
 }
 
+const menuItemCls = 'gap-2 px-2 py-1.5 text-[12.5px]'
+
 function ConversationRow({
   conversation,
   bot,
@@ -345,44 +347,49 @@ function ConversationRow({
         }
       />
       <ContextMenuContent className="w-52">
-        <ContextMenuItem onClick={onRename}>
-          <Pencil /> Rename
+        <ContextMenuItem className={menuItemCls} onClick={onRename}>
+          <Pencil className="size-3" /> Rename
         </ContextMenuItem>
-        <ContextMenuItem>
-          <Pin /> {conversation.pinned ? 'Unpin' : 'Pin'}
+        <ContextMenuItem className={menuItemCls}>
+          <Pin className="size-3" /> {conversation.pinned ? 'Unpin' : 'Pin'}
         </ContextMenuItem>
-        <ContextMenuItem onClick={onToggleUnread}>
-          <CheckCircle2 /> Mark as {conversation.unread ? 'read' : 'unread'}
+        <ContextMenuItem className={menuItemCls} onClick={onToggleUnread}>
+          <CheckCircle2 className="size-3" /> Mark as {conversation.unread ? 'read' : 'unread'}
         </ContextMenuItem>
         <ContextMenuSeparator />
         {isGroup ? (
-          <ContextMenuItem onClick={() => onEditGroup(bot.id)}>
-            <Users /> Edit group
+          <ContextMenuItem className={menuItemCls} onClick={() => onEditGroup(bot.id)}>
+            <Users className="size-3" /> Edit group
           </ContextMenuItem>
         ) : (
-          <ContextMenuItem onClick={() => onNewConversationWith(bot.id)}>
-            <MessageCircle /> New conversation with {bot.name}
+          <ContextMenuItem
+            className={menuItemCls}
+            onClick={() => onNewConversationWith(bot.id)}
+          >
+            <MessageCircle className="size-3" /> New conversation with {bot.name}
           </ContextMenuItem>
         )}
-        <ContextMenuItem>
-          <FolderPlus /> Add to section…
+        <ContextMenuItem className={menuItemCls}>
+          <FolderPlus className="size-3" /> Add to section…
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem
+          className={menuItemCls}
           onClick={() => navigator.clipboard.writeText(conversation.id)}
         >
-          <Copy /> Copy conversation ID
+          <Copy className="size-3" /> Copy conversation ID
         </ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuItem onClick={onClear}>
-          <Eraser /> Clear history
+        <ContextMenuItem className={menuItemCls} onClick={onClear}>
+          <Eraser className="size-3" /> Clear history
         </ContextMenuItem>
         {/* A group's room is its only conversation; deleting it deletes the group. */}
         <ContextMenuItem
+          className={menuItemCls}
           variant="destructive"
           onClick={isGroup ? () => onDeleteGroup(bot.id) : onDelete}
         >
-          <Trash2 /> {isGroup ? 'Delete group' : 'Delete'}
+          <Trash2 className="size-3" /> {isGroup ? 'Delete group' : 'Delete'}
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>

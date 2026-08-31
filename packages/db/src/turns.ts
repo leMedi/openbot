@@ -504,34 +504,20 @@ export async function queueGroupChildTurn(input: GroupChildTurnInput) {
 export type TurnSuccessInput = {
   turnId: string
   conversationId: string
-  assistantText: string
-  /** Authoring agent identity recorded on the transcript row (group rooms). */
-  senderAgentId?: string | null
   checkpointState: CheckpointState
 }
 
 /**
- * Commits a successful turn's outcome atomically: the assistant transcript
- * row, the next immutable checkpoint (with pointer advance), and the
- * succeeded status. A crash can therefore never leave a visible assistant
- * message without its checkpoint or a succeeded turn without either —
- * startup recovery re-queues the still-running turn and re-execution starts
- * from a clean slate.
+ * Commits a successful turn's outcome atomically: the next immutable
+ * checkpoint (with pointer advance) and the succeeded status. A crash can
+ * therefore never persist a succeeded turn without its checkpoint — startup
+ * recovery re-queues the still-running turn. User-visible transcript rows are
+ * appended in-flight by the SendMessage tool as turn side effects, idempotent
+ * on re-execution (keyed by turn + content), so they sit deliberately outside
+ * this transaction.
  */
 export function finalizeTurnSuccess(input: TurnSuccessInput) {
   return db.transaction(async (tx) => {
-    const message = await appendConversationMessage(
-      {
-        conversationId: input.conversationId,
-        kind: 'message',
-        role: 'assistant',
-        direction: 'outbound',
-        bodyText: input.assistantText,
-        turnId: input.turnId,
-        senderAgentId: input.senderAgentId,
-      },
-      tx,
-    )
     const checkpoint = await appendCheckpointWithExecutor(
       tx,
       input.conversationId,
@@ -539,6 +525,6 @@ export function finalizeTurnSuccess(input: TurnSuccessInput) {
     )
     const turn = await completeTurn(input.turnId, { status: 'succeeded' }, tx)
     if (!turn) throw new Error(`Turn ${input.turnId} not found`)
-    return { message, checkpoint, turn }
+    return { checkpoint, turn }
   })
 }

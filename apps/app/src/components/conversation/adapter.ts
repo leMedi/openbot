@@ -5,7 +5,14 @@
 
 import type { ConversationMessage } from '@openbot/db'
 import { YOU } from './data'
-import type { ActivityItem, ActivityTab, Author, Entry, ToolCall } from './types'
+import type {
+  ActivityItem,
+  ActivityTab,
+  Attachment,
+  Author,
+  Entry,
+  ToolCall,
+} from './types'
 
 function timeLabel(epochMs: number) {
   const d = new Date(epochMs)
@@ -35,6 +42,125 @@ function toolCallFrom(row: ConversationMessage): ToolCall {
   }
 }
 
+// Structural view of a SendMessage delivery payload (the zod contract lives
+// in @openbot/db json-schemas; the client parses defensively instead of
+// importing server runtime code).
+type SendMessagePayloadView = {
+  deliveryKind?: unknown
+  type?: unknown
+  widget?: { prompt?: unknown; options?: unknown }
+  alt?: unknown
+}
+
+function formatBytes(byteSize: number) {
+  if (byteSize < 1024) return `${byteSize} B`
+  if (byteSize < 1024 * 1024) return `${Math.round(byteSize / 1024)} KB`
+  return `${(byteSize / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function attachmentsFrom(row: ConversationMessage): Attachment[] {
+  return (row.attachmentsJson?.items ?? []).map((item) => {
+    const metadata = item.metadata as {
+      name?: unknown
+      mediaType?: unknown
+      byteSize?: unknown
+    }
+    const mediaType = typeof metadata.mediaType === 'string' ? metadata.mediaType : ''
+    return {
+      id: item.fileId,
+      name: typeof metadata.name === 'string' ? metadata.name : 'file',
+      size:
+        typeof metadata.byteSize === 'number' ? formatBytes(metadata.byteSize) : undefined,
+      kind: mediaType.startsWith('image/') ? ('image' as const) : ('file' as const),
+      url: `/api/files/${item.fileId}`,
+    }
+  })
+}
+
+/**
+ * One persisted row as a renderable entry, or null for rows the transcript
+ * deliberately hides (the internal turn_waiting status duplicates the widget
+ * card that precedes it). `author` is the already-resolved identity for
+ * agent-authored rows.
+ */
+export function entryFromMessage(row: ConversationMessage, author: Author): Entry | null {
+  const time = timeLabel(row.createdAt)
+  if (row.kind === 'message' && row.role === 'user') {
+    return {
+      type: 'message',
+      id: row.id,
+      author: YOU,
+      time,
+      text: row.bodyText ?? '',
+      replyTo: row.replyToEntryId ?? undefined,
+    }
+  }
+  if (row.kind === 'message') {
+    const payload = (row.payloadJson ?? {}) as SendMessagePayloadView
+    if (payload.deliveryKind === 'send-message' && payload.type === 'widget') {
+      const options = Array.isArray(payload.widget?.options) ? payload.widget.options : []
+      const labels = options
+        .map((option: { label?: unknown }) =>
+          typeof option.label === 'string' ? `- ${option.label}` : undefined,
+        )
+        .filter((line): line is string => !!line)
+      return {
+        type: 'message',
+        id: row.id,
+        author,
+        time,
+        cards: [
+          {
+            kind: 'text',
+            title:
+              typeof payload.widget?.prompt === 'string'
+                ? payload.widget.prompt
+                : (row.bodyText ?? ''),
+            body: labels.join('\n'),
+          },
+        ],
+      }
+    }
+    if (payload.deliveryKind === 'send-message' && payload.type === 'attachment') {
+      return {
+        type: 'message',
+        id: row.id,
+        author,
+        time,
+        attachments: attachmentsFrom(row),
+      }
+    }
+    return {
+      type: 'message',
+      id: row.id,
+      author,
+      time,
+      markdown: row.bodyText ?? '',
+      replyTo: row.replyToEntryId ?? undefined,
+    }
+  }
+  if (row.kind === 'tool_call' || row.kind === 'tool_result') {
+    return {
+      type: 'tool',
+      id: row.id,
+      author,
+      time,
+      call: toolCallFrom(row),
+    }
+  }
+  if (row.kind === 'status' && row.payloadJson.event === 'turn_waiting') {
+    return null
+  }
+  // status / system / other display events
+  return {
+    type: 'timeline',
+    id: row.id,
+    text: row.bodyText ?? 'Event',
+    time,
+    icon: 'notice',
+  }
+}
+
 /**
  * The author identity for one persisted row: in group rooms the sender agent
  * resolves to its member identity, everywhere else the owning `agent`.
@@ -54,46 +180,10 @@ export function entriesFromMessages(
   /** Group rooms: member identity by sender agent id (falls back to `agent`). */
   membersById?: Map<string, Author>,
 ): Entry[] {
-  const authorOf = (row: ConversationMessage) => authorForMessage(row, agent, membersById)
   const out: Entry[] = []
   for (const row of rows) {
-    const time = timeLabel(row.createdAt)
-    if (row.kind === 'message' && row.role === 'user') {
-      out.push({
-        type: 'message',
-        id: row.id,
-        author: YOU,
-        time,
-        text: row.bodyText ?? '',
-        replyTo: row.replyToEntryId ?? undefined,
-      })
-    } else if (row.kind === 'message') {
-      out.push({
-        type: 'message',
-        id: row.id,
-        author: authorOf(row),
-        time,
-        markdown: row.bodyText ?? '',
-        replyTo: row.replyToEntryId ?? undefined,
-      })
-    } else if (row.kind === 'tool_call' || row.kind === 'tool_result') {
-      out.push({
-        type: 'tool',
-        id: row.id,
-        author: authorOf(row),
-        time,
-        call: toolCallFrom(row),
-      })
-    } else {
-      // status / system / other display events
-      out.push({
-        type: 'timeline',
-        id: row.id,
-        text: row.bodyText ?? 'Event',
-        time,
-        icon: 'notice',
-      })
-    }
+    const entry = entryFromMessage(row, authorForMessage(row, agent, membersById))
+    if (entry) out.push(entry)
   }
   return out
 }

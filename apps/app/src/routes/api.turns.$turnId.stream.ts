@@ -5,11 +5,11 @@ import {
   watchTurn,
 } from '@/server/turn-runner'
 
-// Streams one turn's visible output as server-sent events: `delta` chunks
-// while the model responds, then a single `done` (with the persisted
-// assistant message), `waiting` interaction, or `error`. Reconnecting after a
-// reload replays what has accumulated and continues live. Execution does not
-// depend on this connection; closing the tab never cancels the turn.
+// Streams one turn's visible output as server-sent events: one `message` per
+// delivered SendMessage row, then a terminal `done`, `waiting` interaction,
+// or `error`. Reconnecting after a reload replays the rows already delivered
+// and continues live. Execution does not depend on this connection; closing
+// the tab never cancels the turn.
 export const Route = createFileRoute('/api/turns/$turnId/stream')({
   server: {
     handlers: {

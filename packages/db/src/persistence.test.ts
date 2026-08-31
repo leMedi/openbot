@@ -640,7 +640,7 @@ describe('turn scheduling and finalization', () => {
     expect(await dbModule.findUnsettledTurn(conversation.id)).toBeUndefined()
   })
 
-  it('finalizes a successful turn atomically: message, checkpoint, and status', async () => {
+  it('finalizes a successful turn atomically: checkpoint and status', async () => {
     const { agent } = await dbModule.createAgent({ name: 'Finalize Agent' })
     const conversation = await dbModule.createConversation({ ownerAgentId: agent.id })
     const { turn } = await dbModule.acceptUserMessage({
@@ -652,7 +652,6 @@ describe('turn scheduling and finalization', () => {
     const result = await dbModule.finalizeTurnSuccess({
       turnId: turn.id,
       conversationId: conversation.id,
-      assistantText: 'answer',
       checkpointState: {
         version: 1,
         modelMessages: [
@@ -661,10 +660,6 @@ describe('turn scheduling and finalization', () => {
         ],
       },
     })
-
-    expect(result.message.role).toBe('assistant')
-    expect(result.message.bodyText).toBe('answer')
-    expect(result.message.turnId).toBe(turn.id)
 
     const after = await dbModule.getConversation(conversation.id)
     expect(after?.currentCheckpointId).toBe(result.checkpoint.id)

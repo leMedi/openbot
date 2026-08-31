@@ -167,6 +167,8 @@ export function MessageRow({
         'group flex animate-rise gap-2.5 rounded-lg px-1 py-1 transition-colors',
         isUser ? 'justify-end' : 'justify-start',
         groupStart && 'mt-2',
+        // Reaction pills hang below the card edge; keep the next row clear.
+        entry.reactions && entry.reactions.length > 0 && 'mb-3',
       )}
     >
       {showIdentity && (
@@ -226,29 +228,31 @@ export function MessageRow({
 
         {entry.attachments && entry.attachments.length > 0 && (
           <div className={cn('flex flex-wrap gap-1.5', isUser && 'justify-end')}>
-            {entry.attachments.map((a) =>
-              a.kind === 'image' ? (
-                <div
-                  key={a.id}
-                  className="flex h-24 w-36 items-end rounded-lg border bg-[repeating-linear-gradient(115deg,transparent_0_9px,oklch(1_0_0/4%)_9px_18px)] p-1.5"
-                >
-                  <span className="max-w-full truncate rounded bg-black/55 px-1.5 py-0.5 text-[9px] text-muted-foreground">
-                    {a.name}
-                  </span>
-                </div>
+            {entry.attachments.map((a) => {
+              const tile =
+                a.kind === 'image' ? (
+                  <div className="flex h-24 w-36 items-end rounded-lg border bg-[repeating-linear-gradient(115deg,transparent_0_9px,oklch(1_0_0/4%)_9px_18px)] p-1.5">
+                    <span className="max-w-full truncate rounded bg-black/55 px-1.5 py-0.5 text-[9px] text-muted-foreground">
+                      {a.name}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 rounded-lg border bg-card/60 px-2.5 py-1.5">
+                    <FileText className="size-3 text-muted-foreground" />
+                    <span className="text-[11px] font-medium">{a.name}</span>
+                    {a.size && (
+                      <span className="text-[10px] text-muted-foreground/70">{a.size}</span>
+                    )}
+                  </div>
+                )
+              return a.url ? (
+                <a key={a.id} href={a.url} download={a.name} className="hover:opacity-80">
+                  {tile}
+                </a>
               ) : (
-                <div
-                  key={a.id}
-                  className="flex items-center gap-1.5 rounded-lg border bg-card/60 px-2.5 py-1.5"
-                >
-                  <FileText className="size-3 text-muted-foreground" />
-                  <span className="text-[11px] font-medium">{a.name}</span>
-                  {a.size && (
-                    <span className="text-[10px] text-muted-foreground/70">{a.size}</span>
-                  )}
-                </div>
-              ),
-            )}
+                <div key={a.id}>{tile}</div>
+              )
+            })}
           </div>
         )}
 
@@ -260,10 +264,11 @@ export function MessageRow({
           </div>
         )}
 
-        {entry.reactions && (
+        {entry.reactions && entry.reactions.length > 0 && (
           <ReactionPills
             reactions={entry.reactions}
             onToggle={(emoji) => handlers.onToggleReaction(entry.id, emoji)}
+            className={cn('absolute -bottom-3 z-10', isUser ? 'right-1.5' : 'left-1.5')}
           />
         )}
 
@@ -327,7 +332,7 @@ export function MessageRow({
             role="toolbar"
             aria-label={`Message actions for ${entry.author.name} (${entry.id})`}
             className={cn(
-              'absolute top-1/2 z-10 -translate-y-1/2 items-center gap-0.5 rounded-lg border bg-popover px-1 py-0.5 shadow-lg',
+              'absolute top-0 z-10 items-center gap-0.5 rounded-lg border bg-popover px-1 py-0.5 shadow-lg',
               isUser ? 'right-full mr-1.5' : 'left-full ml-1.5',
               'hidden group-focus-within:flex group-hover:flex',
               (pickerOpen || menuOpen) && 'flex',

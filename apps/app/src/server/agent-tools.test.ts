@@ -1,4 +1,5 @@
 import { mkdtempSync } from 'node:fs'
+import { truncate } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -302,5 +303,210 @@ describe('AwaitShell tool', () => {
 
     const invalid = await run(agent, 'AwaitShell', { block_until_ms: 0 })
     expect(invalid.error).toContain('shell_id')
+  })
+})
+
+describe('SendMessage tool', () => {
+  /** An agent with a claimed (running) turn in its own conversation. */
+  async function makeTurnFixture(name: string) {
+    const { agent } = await db.createAgent({ name })
+    const conversation = await db.createConversation({ ownerAgentId: agent.id })
+    const { turn } = await db.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'hello there',
+    })
+    await db.claimQueuedTurn(turn.id)
+    return { agent, conversation, turn }
+  }
+
+  function makeContext(
+    fixture: { conversation: { id: string }; turn: { id: string } },
+    priorDeliveries: import('@openbot/db').ConversationMessage[] = [],
+  ) {
+    const delivered: import('@openbot/db').ConversationMessage[] = []
+    const context: import('./agent-tools').ToolTurnContext = {
+      turnId: fixture.turn.id,
+      conversationId: fixture.conversation.id,
+      senderAgentId: null,
+      priorDeliveries,
+      onDelivered: (message) => delivered.push(message),
+    }
+    return { context, delivered }
+  }
+
+  async function runWith(
+    agent: { id: string; name: string },
+    context: import('./agent-tools').ToolTurnContext,
+    args: unknown,
+  ) {
+    const result = await tools.executeAgentToolCall(
+      agent as never,
+      call('SendMessage', args),
+      context,
+    )
+    return JSON.parse(result)
+  }
+
+  it('delivers a text message as an outbound transcript row', async () => {
+    const fixture = await makeTurnFixture('Send Text')
+    const { context, delivered } = makeContext(fixture)
+
+    const result = await runWith(fixture.agent, context, {
+      type: 'text',
+      content: 'On it — checking now.',
+    })
+    expect(result.ok).toBe(true)
+    expect(result.messageId).toMatch(/^ent_/)
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0]).toMatchObject({
+      id: result.messageId,
+      kind: 'message',
+      role: 'assistant',
+      direction: 'outbound',
+      turnId: fixture.turn.id,
+      bodyText: 'On it — checking now.',
+    })
+    expect(delivered[0].payloadJson).toMatchObject({
+      deliveryKind: 'send-message',
+      type: 'text',
+    })
+  })
+
+  it('is unavailable without a turn context and validates arguments', async () => {
+    const fixture = await makeTurnFixture('Send Guard')
+    const noContext = await run(fixture.agent, 'SendMessage', {
+      type: 'text',
+      content: 'hi',
+    })
+    expect(noContext.error).toMatch(/unavailable/i)
+
+    const { context } = makeContext(fixture)
+    const invalid = await runWith(fixture.agent, context, { type: 'text' })
+    expect(invalid.error).toMatch(/invalid arguments/i)
+  })
+
+  it('degrades an unknown reply target to a plain message', async () => {
+    const fixture = await makeTurnFixture('Send Reply')
+    const { context, delivered } = makeContext(fixture)
+    const result = await runWith(fixture.agent, context, {
+      type: 'text',
+      content: 'replying',
+      reply_to: 'ent_does_not_exist',
+    })
+    expect(result.ok).toBe(true)
+    expect(delivered[0].replyToEntryId).toBeNull()
+
+    const rows = await db.listConversationMessages(fixture.conversation.id)
+    const userRow = rows.find((row) => row.role === 'user')!
+    const replied = await runWith(fixture.agent, context, {
+      type: 'text',
+      content: 'real reply',
+      reply_to: userRow.id,
+    })
+    expect(replied.ok).toBe(true)
+    expect(delivered[1].replyToEntryId).toBe(userRow.id)
+  })
+
+  it('replays an identical prior delivery instead of double-sending', async () => {
+    const fixture = await makeTurnFixture('Send Replay')
+    const first = makeContext(fixture)
+    await runWith(fixture.agent, first.context, { type: 'text', content: 'same text' })
+
+    const second = makeContext(fixture, first.delivered)
+    const replayed = await runWith(fixture.agent, second.context, {
+      type: 'text',
+      content: 'same text',
+    })
+    expect(replayed).toMatchObject({
+      ok: true,
+      messageId: first.delivered[0].id,
+      note: 'already delivered',
+    })
+    expect(second.delivered).toHaveLength(0)
+
+    const rows = await db.listConversationMessages(fixture.conversation.id)
+    expect(rows.filter((row) => row.bodyText === 'same text')).toHaveLength(1)
+  })
+
+  it('delivers a widget, requests suspension, and rejects further sends', async () => {
+    const fixture = await makeTurnFixture('Send Widget')
+    const { context, delivered } = makeContext(fixture)
+    const result = await runWith(fixture.agent, context, {
+      type: 'widget',
+      widget: {
+        prompt: 'Which one?',
+        options: [{ label: 'Formal', value: 'formal' }, { label: 'Casual' }],
+      },
+    })
+    expect(result.ok).toBe(true)
+    expect(result.status).toBe('waiting')
+    expect(context.pendingWaiting).toMatchObject({
+      prompt: 'Which one?',
+      options: [
+        { id: 'formal', label: 'Formal' },
+        { id: 'opt_2', label: 'Casual' },
+      ],
+    })
+    expect(delivered[0].payloadJson).toMatchObject({ type: 'widget' })
+
+    const rejected = await runWith(fixture.agent, context, {
+      type: 'text',
+      content: 'one more thing',
+    })
+    expect(rejected.error).toMatch(/waiting/i)
+  })
+
+  it('delivers a workspace file as a managed attachment', async () => {
+    const fixture = await makeTurnFixture('Send File')
+    await run(fixture.agent, 'runShell', { command: 'echo report-body > report.txt' })
+    const { context, delivered } = makeContext(fixture)
+
+    const result = await runWith(fixture.agent, context, {
+      type: 'attachment',
+      path: 'report.txt',
+      alt: 'The report',
+    })
+    expect(result.ok).toBe(true)
+    expect(result.fileId).toMatch(/^fil_/)
+    expect(result.name).toBe('report.txt')
+
+    expect(delivered[0].bodyText).toBe('The report')
+    expect(delivered[0].attachmentsJson.items).toHaveLength(1)
+    expect(delivered[0].attachmentsJson.items[0]).toMatchObject({
+      fileId: result.fileId,
+      position: 0,
+      metadata: { name: 'report.txt', mediaType: 'text/plain' },
+    })
+
+    const managed = await db.readManagedFile(result.fileId)
+    expect(managed).toBeDefined()
+    expect(Buffer.from(managed!.bytes).toString()).toBe('report-body\n')
+  })
+
+  it('rejects attachment escapes, missing files, and oversized files', async () => {
+    const fixture = await makeTurnFixture('Send File Guard')
+    const { context } = makeContext(fixture)
+
+    const escape = await runWith(fixture.agent, context, {
+      type: 'attachment',
+      path: '../outside.txt',
+    })
+    expect(escape.error).toContain('workspace')
+
+    const missing = await runWith(fixture.agent, context, {
+      type: 'attachment',
+      path: 'nope.bin',
+    })
+    expect(missing.error).toContain('not found')
+
+    // A sparse file over the limit; never actually read.
+    const workspace = path.join(dataDirectory, 'workspaces', fixture.agent.id)
+    await run(fixture.agent, 'runShell', { command: 'touch huge.bin' })
+    await truncate(path.join(workspace, 'huge.bin'), 26 * 1024 * 1024)
+    const oversize = await runWith(fixture.agent, context, {
+      type: 'attachment',
+      path: 'huge.bin',
+    })
+    expect(oversize.error).toContain('too large')
   })
 })

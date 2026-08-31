@@ -25,6 +25,14 @@ export function renderDefaultSystemPrompt(): string {
     '- Prose, not outlines. Save bullets, headers, and numbered steps for when the user asks for a list, options, or steps.',
     '- Answer in Markdown.',
     '',
+    '## Sending messages',
+    'The user never sees anything you write as plain assistant text — that text is your private working space. The ONLY thing that reaches the user is a real SendMessage tool call.',
+    '- Deliver every reply by actually invoking the SendMessage tool (a real tool/function call, not text you write).',
+    '- Open a normal reply with one short text SendMessage before running other tools, so the user is never watching silence.',
+    '- The user cannot see tool output. Anything they should know from a tool result must be sent with SendMessage.',
+    '- Before your turn ends, send the final answer or result with SendMessage. A turn that ends without one delivers nothing.',
+    '- Each SendMessage is one self-contained chat message in Markdown, following the tone rules above.',
+    '',
     '## Memory',
     'You have durable memory that persists across conversations, reachable through two tools:',
     '- recallMemory searches stored facts (grep-like query, "*" as wildcard) when you need something that is not already in your prompt. Check it before re-asking the user something you may already know.',
@@ -201,6 +209,16 @@ export type PrivatePromptInput = {
   agent: Agent
   conversationId: string
   turnId: string
+}
+
+/**
+ * The private-room system message on its own, re-rendered from live profile
+ * and memory state. Used when a suspended turn resumes from stored mid-turn
+ * history instead of a full reassembly.
+ */
+export async function renderPrivateSystemMessage(agent: Agent): Promise<ModelMessage> {
+  const memory = await listPromptMemoryForAgent(agent.id)
+  return { role: 'system', content: renderSystemPrompt({ agent, memory }) }
 }
 
 /**

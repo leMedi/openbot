@@ -333,11 +333,20 @@ describe('group room turns', () => {
     })
     await dbModule.claimQueuedTurn(childTurn.id)
 
-    const { message } = await dbModule.finalizeTurnSuccess({
+    // Delivered rows are appended in-flight (the SendMessage path) with the
+    // member's identity; finalize commits only checkpoint and status.
+    const message = await dbModule.appendConversationMessage({
+      conversationId: conversation.id,
+      kind: 'message',
+      role: 'assistant',
+      direction: 'outbound',
+      bodyText: 'You are talking to Identity Keeper.',
+      turnId: childTurn.id,
+      senderAgentId: alpha.id,
+    })
+    await dbModule.finalizeTurnSuccess({
       turnId: childTurn.id,
       conversationId: conversation.id,
-      assistantText: 'You are talking to Identity Keeper.',
-      senderAgentId: alpha.id,
       checkpointState: { version: 1, modelMessages: [] },
     })
 

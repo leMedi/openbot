@@ -14,13 +14,15 @@ import type { Reaction } from './types'
 export function ReactionPills({
   reactions,
   onToggle,
+  className,
 }: {
   reactions: Reaction[]
   onToggle: (emoji: string) => void
+  className?: string
 }) {
   if (reactions.length === 0) return null
   return (
-    <div className="mt-1 flex flex-wrap items-center gap-1">
+    <div className={cn('flex flex-wrap items-center gap-1', className)}>
       {reactions.map((r) => {
         const mine = r.users.includes('You')
         const label = mine ? `Remove ${r.emoji} reaction` : `React with ${r.emoji}`
@@ -36,8 +38,8 @@ export function ReactionPills({
                   className={cn(
                     'flex h-6 items-center gap-1 rounded-full border px-2 text-xs',
                     mine
-                      ? 'border-primary/60 bg-primary/15'
-                      : 'bg-card/60 hover:border-foreground/25',
+                      ? 'border-primary/60 bg-primary/15 backdrop-blur-sm'
+                      : 'bg-background hover:border-foreground/25',
                   )}
                 >
                   <span>{r.emoji}</span>

@@ -39,8 +39,13 @@ export async function createManagedFile(input: {
   originalName: string
   mediaType: string
   subdirectory: string
+  /** Fallback file extension when the media type has no known mapping. */
+  extension?: string
 }) {
-  const extension = extensionForMediaType(input.mediaType)
+  const fallback = input.extension?.toLowerCase()
+  const extension =
+    extensionForMediaType(input.mediaType) ??
+    (fallback && /^[a-z0-9]{1,10}$/.test(fallback) ? fallback : undefined)
   if (!extension) {
     throw new Error(`Unsupported media type: ${input.mediaType}`)
   }

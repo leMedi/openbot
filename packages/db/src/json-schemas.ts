@@ -144,6 +144,28 @@ export const waitingStateSchema = z.object({
     .nullable(),
 })
 
+// Payload persisted on a transcript row delivered by the SendMessage tool.
+// `deliveryKind` marks the row for recovery/replay filters; `type` drives
+// client rendering. Widget options carry server-generated ids.
+export const sendMessagePayloadSchema = z.object({
+  version: z.literal(1),
+  deliveryKind: z.literal('send-message'),
+  type: z.enum(['text', 'widget', 'attachment']),
+  toolCallId: z.string().min(1),
+  widget: z
+    .object({
+      prompt: z.string().min(1),
+      options: z.array(
+        z.object({
+          id: z.string().min(1),
+          label: z.string().min(1),
+        }),
+      ),
+    })
+    .optional(),
+  alt: z.string().optional(),
+})
+
 export const apiKeyCredentialsSchema = z.object({
   version: z.literal(1),
   apiKey: z.string().min(1),
@@ -167,6 +189,7 @@ export type Attachments = z.infer<typeof attachmentsSchema>
 export type Reactions = z.infer<typeof reactionsSchema>
 export type EffectiveTools = z.infer<typeof effectiveToolsSchema>
 export type WaitingState = z.infer<typeof waitingStateSchema>
+export type SendMessagePayload = z.infer<typeof sendMessagePayloadSchema>
 export type ApiKeyCredentials = z.infer<typeof apiKeyCredentialsSchema>
 export type OauthCredentials = z.infer<typeof oauthCredentialsSchema>
 export type McpCredentials = ApiKeyCredentials | OauthCredentials

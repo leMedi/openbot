@@ -5,6 +5,7 @@ import { BotAvatar } from '@/components/openbot/bot-avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { entryFromMessage } from './adapter'
 import { Composer } from './composer'
 import { YOU } from './data'
 import { FullConversationDialog } from './full-conversation'
@@ -113,7 +114,7 @@ export function Conversation({
   }, [entries, threadRootId])
 
   // Reattach to a turn that was in flight when this conversation mounted
-  // (page reload mid-turn): the stream replays accumulated output, or
+  // (page reload mid-turn): the stream replays the rows already delivered, or
   // resolves immediately with the persisted result if it finished meanwhile.
   const reattached = useRef(false)
   useEffect(() => {
@@ -284,10 +285,11 @@ export function Conversation({
   }
 
   /**
-   * Renders one turn's visible output: a streaming entry that accumulates
-   * deltas until the persisted assistant message (or a failure notice)
-   * replaces it. Used for freshly sent turns and for reattaching to a turn
-   * that was already in flight when the page loaded.
+   * Renders one turn's visible output: an empty streaming entry shows the
+   * working indicator while delivered messages (SendMessage rows) are
+   * inserted ahead of it as they arrive; `done` removes the indicator. Used
+   * for freshly sent turns and for reattaching to a turn that was already in
+   * flight when the page loaded.
    */
   async function consumeTurnStream(turnId: string) {
     setActiveTurnId(turnId)
@@ -308,31 +310,25 @@ export function Conversation({
     let terminal = false
     try {
       await streamTurn(turnId, (event) => {
-        if (event.type === 'delta') {
-          setEntries((all) =>
-            mapMessages(all, (m) =>
-              m.id === streamingId
-                ? { ...m, markdown: (m.markdown ?? '') + event.text }
-                : m,
-            ),
+        if (event.type === 'message') {
+          // In a group room the answering member is only known from the
+          // persisted message's sender identity.
+          const entry = entryFromMessage(
+            event.message,
+            resolveAuthor?.(event.message) ?? agent,
           )
+          if (!entry) return
+          // Reattach replays already-rendered rows; insert before the
+          // working indicator, once.
+          setEntries((all) => {
+            if (all.some((e) => e.id === entry.id)) return all
+            const index = all.findIndex((e) => e.id === streamingId)
+            if (index === -1) return [...all, entry]
+            return [...all.slice(0, index), entry, ...all.slice(index)]
+          })
         } else if (event.type === 'done') {
           terminal = true
-          setEntries((all) =>
-            mapMessages(all, (m) =>
-              m.id === streamingId
-                ? {
-                    ...m,
-                    id: event.message.id,
-                    // In a group room the answering member is only known once
-                    // the persisted message arrives with its sender identity.
-                    author: resolveAuthor?.(event.message) ?? m.author,
-                    markdown: event.message.bodyText ?? '',
-                    delivery: 'delivered',
-                  }
-                : m,
-            ),
-          )
+          setEntries((all) => all.filter((e) => e.id !== streamingId))
         } else if (event.type === 'waiting') {
           setEntries((all) => all.filter((entry) => entry.id !== streamingId))
           setWaiting({ turnId: event.turnId, state: event.state })

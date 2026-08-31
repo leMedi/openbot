@@ -191,6 +191,17 @@ are also versioned JSON columns. Their detailed shapes are validated by Zod in
 `packages/db/src/json-schemas.ts`, while SQLite ensures stored JSON is
 parseable.
 
+Assistant delivery goes through the `SendMessage` agent tool: plain assistant
+text is model-private (it lives only in checkpoints), and each successful
+`SendMessage` call appends one outbound assistant row the moment it executes,
+marked by `payload_json.deliveryKind = "send-message"` with a `type` of
+`text`, `widget`, or `attachment`. Widget sends persist the prompt/options
+payload and suspend the turn through the waiting-turn interaction; attachment
+sends ingest a workspace file into `managed_files` and reference it from
+`attachments_json`. Delivery rows are idempotent turn side effects: a
+re-executed turn is seeded with its prior deliveries and identical text
+resends return the existing row instead of duplicating it.
+
 Reaction state has toggle semantics: applying a missing actor/reaction pair
 adds it, while applying the same pair again removes it. Both actor IDs being
 null identifies the single local user. Reaction read/modify/write operations
@@ -370,11 +381,18 @@ implemented. User message acceptance is idempotent by request ID or stable
 idempotency key. Per-target claims enforce one active turn and
 `user > agent > background` priority. A turn is executed by the server-side runner
 (`apps/app/src/server/turn-runner.ts`): it claims the queued turn, snapshots
-the effective model/tools/permissions/runtime context, streams one
-OpenAI-compatible chat completion, appends the assistant transcript row,
-writes the next immutable checkpoint, and marks the turn terminal. Visible
-output reaches clients over a per-turn SSE route; execution never depends on
-a connected client.
+the effective model/tools/permissions/runtime context, and runs an
+OpenAI-compatible completion/tool loop. User-visible delivery follows the
+SendMessage contract: plain assistant prose is model-private, delivered rows
+are appended in-flight by the tool and streamed to watchers, reminder/nudge
+injections (opening acknowledgement, silent-streak, early-result, final reply
+nudges, closing-send nudge) keep a visible turn from ending undelivered, and
+the tool budget degrades to a SendMessage-only toolset rather than disabling
+tools. Finalize commits the next immutable checkpoint (reminders stripped)
+and the succeeded status atomically. A widget send suspends the turn through
+the persisted waiting-turn interaction and resumes from stored mid-turn
+history. Visible output reaches clients over a per-turn SSE route; execution
+never depends on a connected client.
 
 Group shared rooms are implemented: group identity, avatar, and versioned
 membership services, one shared conversation created with the group, a
@@ -387,11 +405,11 @@ rounds remain future work.
 
 Remaining implementation slices are:
 
-1. Tool execution that can originate the implemented waiting-turn interaction.
-2. Transactional direct agent delivery.
-3. Group selection from room context and bounded multi-member rounds.
-4. Managed attachments and file-serving APIs.
-5. MCP server, account, OAuth callback, and safe credential access services.
+1. Transactional direct agent delivery.
+2. Group selection from room context and bounded multi-member rounds.
+3. User-uploaded attachments (agent-sent attachments and the managed-file
+   serving route are implemented).
+4. MCP server, account, OAuth callback, and safe credential access services.
 
 ## Source Map
 
@@ -427,12 +445,18 @@ Remaining implementation slices are:
 - `apps/app/src/server/prompt-assembly.ts`: agent-scoped prompt memory assembly
   and private checkpoint-epoch reuse.
 - `apps/app/src/server/ai.ts`: OpenAI-compatible streaming inference client.
+- `apps/app/src/server/agent-tools.ts`: agent tool definitions and executor,
+  including the SendMessage delivery tool.
+- `apps/app/src/server/send-message-reminders.ts`: delivery accounting and
+  the reminder/nudge texts enforcing the SendMessage contract.
 - `apps/app/src/server/turn-runner.ts`: turn executor, group orchestrator,
   per-target drains, and in-memory visible-output fan-out.
 - `apps/app/src/routes/api.agents.$agentId.avatar.ts`: agent avatar file-serving API.
 - `apps/app/src/routes/api.groups.$groupId.avatar.ts`: group avatar file-serving API.
 - `apps/app/src/routes/api.turns.$turnId.stream.ts`: per-turn SSE stream of
   visible output.
+- `apps/app/src/routes/api.files.$fileId.ts`: managed-file serving API for
+  transcript attachments.
 - `apps/app/src/routes/index.tsx`: current agent registry UI.
 
 Generated migrations are deployment artifacts. They do not replace

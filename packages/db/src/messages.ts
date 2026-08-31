@@ -4,7 +4,12 @@ import { and, asc, eq, or } from 'drizzle-orm'
 import { db } from './client'
 import { allocateConversationSequence, type DbExecutor } from './conversations'
 import { createId } from './ids'
-import { type VersionedObject, versionedObjectSchema } from './json-schemas'
+import {
+  type Attachments,
+  attachmentsSchema,
+  type VersionedObject,
+  versionedObjectSchema,
+} from './json-schemas'
 import * as schema from './schema'
 
 export type MessageAppendInput = {
@@ -18,6 +23,8 @@ export type MessageAppendInput = {
   replyToEntryId?: string | null
   /** Authoring agent, for rows produced by an agent (e.g. group members). */
   senderAgentId?: string | null
+  /** Managed-file references delivered with the row (agent attachments). */
+  attachments?: Attachments
 }
 
 export function listConversationMessages(conversationId: string) {
@@ -51,6 +58,9 @@ export async function appendConversationMessage(
       direction: input.direction,
       bodyText: input.bodyText ?? null,
       ...(input.payload && { payloadJson: versionedObjectSchema.parse(input.payload) }),
+      ...(input.attachments && {
+        attachmentsJson: attachmentsSchema.parse(input.attachments),
+      }),
       senderAgentId: input.senderAgentId ?? null,
       replyToEntryId: input.replyToEntryId ?? null,
       createdAt: now,

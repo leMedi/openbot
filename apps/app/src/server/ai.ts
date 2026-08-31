@@ -23,6 +23,12 @@ export type ChatCompletion = {
   toolCalls: ModelToolCall[]
 }
 
+/** OpenAI-compatible tool_choice forcing one specific function. */
+export type ToolChoice = {
+  type: 'function'
+  function: { name: string }
+}
+
 export function getAiConfig(): AiConfig {
   const baseUrl = process.env.OPENBOT_AI_BASE_URL
   const apiKey = process.env.OPENBOT_AI_API_KEY
@@ -52,6 +58,7 @@ export async function streamChatCompletion(
   onDelta: (text: string) => void,
   signal?: AbortSignal,
   tools?: ToolDefinition[],
+  toolChoice?: ToolChoice,
 ): Promise<ChatCompletion> {
   const response = await fetch(`${config.baseUrl}/chat/completions`, {
     method: 'POST',
@@ -64,6 +71,7 @@ export async function streamChatCompletion(
       messages,
       stream: true,
       ...(tools && tools.length > 0 && { tools }),
+      ...(tools && tools.length > 0 && toolChoice && { tool_choice: toolChoice }),
     }),
     signal,
   })
