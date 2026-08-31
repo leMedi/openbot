@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Conversation, Group } from '@openbot/db'
-import { ArrowDown, ArrowUp, ImageUp, Plus, Trash2, X } from 'lucide-react'
+import { ImageUp, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command'
 import {
   Dialog,
   DialogContent,
@@ -73,18 +80,6 @@ export function GroupDialog({
     .map((id) => agents.find((a) => a.id === id))
     .filter((a): a is Bot => !!a)
   const available = agents.filter((a) => !memberIds.includes(a.id))
-
-  function moveMember(id: string, delta: -1 | 1) {
-    setMemberIds((ids) => {
-      const index = ids.indexOf(id)
-      const target = index + delta
-      if (index === -1 || target < 0 || target >= ids.length) return ids
-      const next = [...ids]
-      next[index] = next[target]
-      next[target] = id
-      return next
-    })
-  }
 
   async function save() {
     if (saving) return
@@ -238,90 +233,64 @@ export function GroupDialog({
             </div>
           </div>
 
-          {/* Members: ordered list plus the remaining agents to add. */}
+          {/* Members: selected pills plus a searchable list of agents to add. */}
           <div className="flex flex-col gap-1.5">
             <Label className="text-[11px] font-semibold text-muted-foreground">Members</Label>
             {members.length > 0 ? (
-              <div className="rounded-lg border">
-                {members.map((bot, index) => (
-                  <div
+              <div className="flex flex-wrap gap-1.5">
+                {members.map((bot) => (
+                  <span
                     key={bot.id}
-                    className="flex items-center gap-2.5 border-b px-3 py-2 last:border-b-0"
+                    className="flex items-center gap-1.5 rounded-full border py-1 pr-1 pl-1.5 text-xs font-medium"
                   >
-                    <span className="w-4 text-center text-[10px] text-muted-foreground/70">
-                      {index + 1}
-                    </span>
                     <BotAvatar
                       name={bot.name}
                       color={bot.color}
                       shape={bot.shape}
                       src={bot.avatarUrl}
-                      className="size-6 text-[10px]"
+                      className="size-4.5 text-[8px]"
                     />
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                      {bot.name}
-                    </span>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={`Move ${bot.name} up`}
-                      disabled={index === 0}
-                      onClick={() => moveMember(bot.id, -1)}
-                    >
-                      <ArrowUp className="size-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={`Move ${bot.name} down`}
-                      disabled={index === members.length - 1}
-                      onClick={() => moveMember(bot.id, 1)}
-                    >
-                      <ArrowDown className="size-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
+                    <span className="max-w-32 truncate">{bot.name}</span>
+                    <button
+                      type="button"
                       aria-label={`Remove ${bot.name}`}
                       onClick={() => setMemberIds((ids) => ids.filter((x) => x !== bot.id))}
+                      className="flex size-4.5 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
                     >
-                      <X className="size-3.5" />
-                    </Button>
-                  </div>
+                      <X className="size-3" />
+                    </button>
+                  </span>
                 ))}
               </div>
             ) : (
-              <div className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground/70">
+              <p className="text-[11px] leading-normal text-muted-foreground/70">
                 No members yet — add at least one bot so the room can answer.
-              </div>
+              </p>
             )}
             {available.length > 0 && (
-              <div className="max-h-40 overflow-y-auto rounded-lg border">
-                {available.map((bot) => (
-                  <button
-                    key={bot.id}
-                    type="button"
-                    onClick={() => setMemberIds((ids) => [...ids, bot.id])}
-                    className="flex w-full items-center gap-2.5 border-b px-3 py-2 text-left last:border-b-0 hover:bg-muted/50"
-                  >
-                    <BotAvatar
-                      name={bot.name}
-                      color={bot.color}
-                      shape={bot.shape}
-                      src={bot.avatarUrl}
-                      className="size-6 text-[10px]"
-                    />
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                      {bot.name}
-                    </span>
-                    <Plus className="size-3.5 text-muted-foreground" />
-                  </button>
-                ))}
-              </div>
+              <Command className="rounded-lg border bg-transparent">
+                <CommandInput placeholder="Search bots" />
+                <CommandList className="max-h-40 p-1">
+                  <CommandEmpty>No bots match</CommandEmpty>
+                  {available.map((bot) => (
+                    <CommandItem
+                      key={bot.id}
+                      value={bot.name}
+                      onSelect={() => setMemberIds((ids) => [...ids, bot.id])}
+                    >
+                      <BotAvatar
+                        name={bot.name}
+                        color={bot.color}
+                        shape={bot.shape}
+                        src={bot.avatarUrl}
+                        className="size-5.5 text-[9px]"
+                      />
+                      <span className="truncate text-sm">{bot.name}</span>
+                    </CommandItem>
+                  ))}
+                </CommandList>
+              </Command>
             )}
-            <p className="text-[11px] leading-normal text-muted-foreground/70">
-              Members share one room. The order above is the response order.
-            </p>
           </div>
         </div>
 
