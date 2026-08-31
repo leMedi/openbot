@@ -363,9 +363,12 @@ behavior is being implemented.
 
 The schema, generated initial migration, startup migration path, JSON contracts,
 ID helper, agent profile and avatar services, conversation navigation, the
-transcript repository, the durable turn queue with restart recovery, the
-checkpoint repository, and single-agent turn execution with streamed visible
-output are implemented. A turn is executed by the server-side runner
+transcript repository, the durable turn queue with restart recovery and
+persisted waiting-turn resume, the checkpoint repository, and single-agent
+turn execution with streamed visible output are implemented. User message
+acceptance is idempotent by request ID or stable idempotency key. Per-target
+claims enforce one active turn and `user > agent > background` priority. A turn
+is executed by the server-side runner
 (`apps/app/src/server/turn-runner.ts`): it claims the queued turn, snapshots
 the effective model/tools/permissions/runtime context, streams one
 OpenAI-compatible chat completion, appends the assistant transcript row,
@@ -384,7 +387,7 @@ rounds remain future work.
 
 Remaining implementation slices are:
 
-1. Waiting-turn resume (persisted prompts/options) and tool execution.
+1. Tool execution that can originate the implemented waiting-turn interaction.
 2. Transactional direct agent delivery.
 3. Group selection from room context and bounded multi-member rounds.
 4. Memory operations and prompt assembly.
@@ -404,9 +407,10 @@ Remaining implementation slices are:
 - `packages/db/src/conversations.ts`: conversation repository (navigation state,
   atomic sequence allocation, clear-into-fresh-conversation).
 - `packages/db/src/messages.ts`: transcript repository (ordered appends and the
-  atomic user-message + queued-turn accept).
-- `packages/db/src/turns.ts`: durable turn queue (claim, execution snapshots,
-  completion, atomic group child-turn delegation).
+  idempotent atomic user-message + queued-turn accept).
+- `packages/db/src/turns.ts`: durable turn queue (target-safe priority claims,
+  waiting/resume, terminal settlement, execution snapshots, and atomic group
+  child-turn delegation).
 - `packages/db/src/checkpoints.ts`: immutable checkpoint repository and
   current-checkpoint pointer.
 - `packages/db/src/files.ts`: managed-file repository and path containment.

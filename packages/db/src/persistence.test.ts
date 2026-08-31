@@ -283,6 +283,101 @@ describe('conversation transcript', () => {
       dbModule.acceptUserMessage({ conversationId: 'cnv_missing', text: 'nope' }),
     ).rejects.toThrow(/not found/)
   })
+
+  it('returns the original acceptance for request and idempotency retries', async () => {
+    const { agent } = await dbModule.createAgent({ name: 'Retry Agent' })
+    const conversation = await dbModule.createConversation({ ownerAgentId: agent.id })
+
+    const original = await dbModule.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'run once',
+      requestId: 'request-retry-original',
+      idempotencyKey: 'send-retry-stable',
+    })
+    const retriedRequest = await dbModule.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'run once',
+      requestId: 'request-retry-new',
+      idempotencyKey: 'send-retry-stable',
+    })
+    const duplicateRequest = await dbModule.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'run once',
+      requestId: 'request-retry-original',
+      idempotencyKey: 'send-retry-other',
+    })
+
+    expect(retriedRequest).toEqual(original)
+    expect(duplicateRequest).toEqual(original)
+    expect(await dbModule.listConversationMessages(conversation.id)).toHaveLength(1)
+
+    const concurrentConversation = await dbModule.createConversation({
+      ownerAgentId: agent.id,
+    })
+    const concurrent = await Promise.all(
+      Array.from({ length: 5 }, (_, index) =>
+        dbModule.acceptUserMessage({
+          conversationId: concurrentConversation.id,
+          text: 'one concurrent send',
+          requestId: `request-concurrent-${index}`,
+          idempotencyKey: 'send-concurrent-stable',
+        }),
+      ),
+    )
+    expect(new Set(concurrent.map((result) => result.turn.id)).size).toBe(1)
+    expect(await dbModule.listConversationMessages(concurrentConversation.id))
+      .toHaveLength(1)
+
+    await expect(
+      dbModule.acceptUserMessage({
+        conversationId: concurrentConversation.id,
+        text: 'run once',
+        requestId: 'request-retry-cross-conversation',
+        idempotencyKey: 'send-retry-stable',
+      }),
+    ).rejects.toThrow(/different conversation/i)
+    await expect(
+      dbModule.acceptUserMessage({
+        conversationId: conversation.id,
+        text: 'changed retry input',
+        requestId: 'request-retry-changed-input',
+        idempotencyKey: 'send-retry-stable',
+      }),
+    ).rejects.toThrow(/different message input/i)
+
+    const other = await dbModule.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'another logical send',
+      requestId: 'request-conflict-other',
+      idempotencyKey: 'send-conflict-other',
+    })
+    const replied = await dbModule.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'idempotent reply',
+      replyToEntryId: original.message.id,
+      requestId: 'request-reply-original',
+      idempotencyKey: 'send-reply-stable',
+    })
+    expect(replied.message.replyToEntryId).toBe(original.message.id)
+    await expect(
+      dbModule.acceptUserMessage({
+        conversationId: conversation.id,
+        text: 'idempotent reply',
+        replyToEntryId: other.message.id,
+        requestId: 'request-reply-retry',
+        idempotencyKey: 'send-reply-stable',
+      }),
+    ).rejects.toThrow(/different reply target/i)
+
+    await expect(
+      dbModule.acceptUserMessage({
+        conversationId: conversation.id,
+        text: 'ambiguous retry',
+        requestId: original.turn.requestId!,
+        idempotencyKey: other.turn.idempotencyKey!,
+      }),
+    ).rejects.toThrow(/different turns/i)
+  })
 })
 
 describe('turns', () => {
@@ -368,29 +463,166 @@ describe('turns', () => {
 })
 
 describe('turn scheduling and finalization', () => {
-  it('orders the agent queue by lane priority then age across conversations', async () => {
+  it('orders agent lanes and permits only one active turn for the target', async () => {
     const { agent } = await dbModule.createAgent({ name: 'Scheduler Agent' })
     const first = await dbModule.createConversation({ ownerAgentId: agent.id })
     const second = await dbModule.createConversation({ ownerAgentId: agent.id })
 
-    const a = await dbModule.acceptUserMessage({
+    const background = await dbModule.acceptUserMessage({
       conversationId: first.id,
-      text: 'older',
+      text: 'old background work',
     })
-    const b = await dbModule.acceptUserMessage({
+    const delegated = await dbModule.acceptUserMessage({
       conversationId: second.id,
-      text: 'newer',
+      text: 'agent work',
     })
+    const user = await dbModule.acceptUserMessage({
+      conversationId: first.id,
+      text: 'new user work',
+    })
+    await dbModule.db
+      .update(dbModule.turns)
+      .set({ lane: 'background', createdAt: 1 })
+      .where(eq(dbModule.turns.id, background.turn.id))
+    await dbModule.db
+      .update(dbModule.turns)
+      .set({ lane: 'agent', createdAt: 2 })
+      .where(eq(dbModule.turns.id, delegated.turn.id))
+    await dbModule.db
+      .update(dbModule.turns)
+      .set({ createdAt: 3 })
+      .where(eq(dbModule.turns.id, user.turn.id))
 
     const next = await dbModule.findNextQueuedTurnForAgent(agent.id)
-    expect(next?.id).toBe(a.turn.id)
+    expect(next?.id).toBe(user.turn.id)
+    expect(await dbModule.claimQueuedTurn(background.turn.id)).toBeUndefined()
 
-    await dbModule.claimQueuedTurn(a.turn.id)
-    const after = await dbModule.findNextQueuedTurnForAgent(agent.id)
-    expect(after?.id).toBe(b.turn.id)
+    await dbModule.claimQueuedTurn(user.turn.id)
+    expect((await dbModule.findUnsettledTurn(first.id))?.id).toBe(user.turn.id)
+    expect(await dbModule.findNextQueuedTurnForAgent(agent.id)).toBeUndefined()
+    expect(await dbModule.claimQueuedTurn(delegated.turn.id)).toBeUndefined()
+
+    await dbModule.completeTurn(user.turn.id, { status: 'succeeded' })
+    expect((await dbModule.findNextQueuedTurnForAgent(agent.id))?.id).toBe(
+      delegated.turn.id,
+    )
   })
 
-  it('reports the oldest unsettled turn for a conversation', async () => {
+  it('persists a waiting interaction and resumes the same turn after restart', async () => {
+    const { agent } = await dbModule.createAgent({ name: 'Waiting Agent' })
+    const conversation = await dbModule.createConversation({ ownerAgentId: agent.id })
+    const { turn } = await dbModule.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'deploy it',
+    })
+    await dbModule.claimQueuedTurn(turn.id)
+
+    const waitingState = {
+      version: 1 as const,
+      prompt: 'Choose an environment',
+      options: [
+        { id: 'staging', label: 'Staging' },
+        { id: 'production', label: 'Production' },
+      ],
+      originatingToolCall: { id: 'call-deploy', name: 'deploy' },
+      resumeData: { deploymentId: 'dep-123' },
+      response: null,
+    }
+    const waiting = await dbModule.markTurnWaiting(turn.id, waitingState)
+    expect(waiting?.status).toBe('waiting')
+    expect(dbModule.waitingStateSchema.parse(waiting?.waitingStateJson)).toEqual(
+      waitingState,
+    )
+
+    const later = await dbModule.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'this must wait too',
+    })
+    expect(await dbModule.findNextQueuedTurnForAgent(agent.id)).toBeUndefined()
+    expect(await dbModule.claimQueuedTurn(later.turn.id)).toBeUndefined()
+
+    vi.resetModules()
+    const reloaded: DbModule = await import('./index')
+    const persisted = await reloaded.getTurn(turn.id)
+    expect(persisted?.status).toBe('waiting')
+    expect(reloaded.waitingStateSchema.parse(persisted?.waitingStateJson)).toEqual(
+      waitingState,
+    )
+
+    const resumed = await reloaded.respondToWaitingTurn({
+      turnId: turn.id,
+      text: 'Use staging',
+      optionId: 'staging',
+      toolCallId: 'call-deploy',
+      requestId: 'request-waiting-response-original',
+      idempotencyKey: 'waiting-response-stable',
+    })
+    expect(resumed.turn.id).toBe(turn.id)
+    expect(resumed.turn.status).toBe('queued')
+    expect(resumed.message.turnId).toBe(turn.id)
+    expect(resumed.message.bodyText).toBe('Use staging')
+    expect(
+      reloaded.waitingStateSchema.parse(resumed.turn.waitingStateJson).response,
+    ).toMatchObject({ optionId: 'staging', text: 'Use staging' })
+    const retriedResponse = await reloaded.respondToWaitingTurn({
+      turnId: turn.id,
+      text: 'Use staging',
+      optionId: 'staging',
+      toolCallId: 'call-deploy',
+      requestId: 'request-waiting-response-retry',
+      idempotencyKey: 'waiting-response-stable',
+    })
+    expect(retriedResponse).toEqual(resumed)
+    expect(
+      (await reloaded.listConversationMessages(conversation.id)).filter(
+        (message) => message.payloadJson.event === 'turn_response',
+      ),
+    ).toHaveLength(1)
+
+    await reloaded.claimQueuedTurn(turn.id)
+    await reloaded.markTurnWaiting(turn.id, {
+      version: 1,
+      prompt: 'Confirm the rollout',
+      options: [],
+      originatingToolCall: { id: 'call-confirm', name: 'confirm' },
+      resumeData: { deploymentId: 'dep-123' },
+      response: null,
+    })
+    const staleRetry = await reloaded.respondToWaitingTurn({
+      turnId: turn.id,
+      text: 'Use staging',
+      optionId: 'staging',
+      toolCallId: 'call-deploy',
+      requestId: 'request-waiting-response-stale-retry',
+      idempotencyKey: 'waiting-response-stable',
+    })
+    expect(staleRetry.message.id).toBe(resumed.message.id)
+    expect((await reloaded.getTurn(turn.id))?.waitingStateJson).toMatchObject({
+      originatingToolCall: { id: 'call-confirm' },
+      response: null,
+    })
+    const confirmed = await reloaded.respondToWaitingTurn({
+      turnId: turn.id,
+      text: 'Proceed',
+      optionId: null,
+      toolCallId: 'call-confirm',
+      requestId: 'request-confirm-response',
+      idempotencyKey: 'confirm-response-stable',
+    })
+    expect(confirmed.turn.status).toBe('queued')
+    await expect(
+      reloaded.respondToWaitingTurn({
+        turnId: turn.id,
+        text: 'Use staging',
+        optionId: 'staging',
+        toolCallId: 'call-deploy',
+        requestId: 'request-waiting-response-original',
+        idempotencyKey: 'confirm-response-stable',
+      }),
+    ).rejects.toThrow(/different responses/i)
+  })
+
+  it('reports the active or next queued turn for a conversation', async () => {
     const { agent } = await dbModule.createAgent({ name: 'Unsettled Agent' })
     const conversation = await dbModule.createConversation({ ownerAgentId: agent.id })
     expect(await dbModule.findUnsettledTurn(conversation.id)).toBeUndefined()
@@ -437,6 +669,50 @@ describe('turn scheduling and finalization', () => {
     const after = await dbModule.getConversation(conversation.id)
     expect(after?.currentCheckpointId).toBe(result.checkpoint.id)
     expect((await dbModule.getTurn(turn.id))?.status).toBe('succeeded')
+  })
+
+  it('settles failure and cancellation with exactly one visible status', async () => {
+    const { agent } = await dbModule.createAgent({ name: 'Terminal Agent' })
+    const conversation = await dbModule.createConversation({ ownerAgentId: agent.id })
+    const failed = await dbModule.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'fail this',
+    })
+    await dbModule.claimQueuedTurn(failed.turn.id)
+
+    const firstFailure = await dbModule.finalizeTurnTerminal({
+      turnId: failed.turn.id,
+      status: 'failed',
+      message: 'provider unavailable',
+    })
+    const duplicateFailure = await dbModule.finalizeTurnTerminal({
+      turnId: failed.turn.id,
+      status: 'failed',
+      message: 'provider unavailable',
+    })
+    expect(firstFailure.changed).toBe(true)
+    expect(duplicateFailure.changed).toBe(false)
+    expect((await dbModule.getTurn(failed.turn.id))?.status).toBe('failed')
+
+    const cancelled = await dbModule.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'cancel this',
+    })
+    const cancellation = await dbModule.finalizeTurnTerminal({
+      turnId: cancelled.turn.id,
+      status: 'cancelled',
+      message: 'Cancelled by user',
+    })
+    expect(cancellation.changed).toBe(true)
+    expect((await dbModule.getTurn(cancelled.turn.id))?.status).toBe('cancelled')
+
+    const terminalRows = (await dbModule.listConversationMessages(conversation.id))
+      .filter((row) => row.kind === 'status')
+    expect(terminalRows).toHaveLength(2)
+    expect(terminalRows.map((row) => row.payloadJson.event)).toEqual([
+      'turn_failed',
+      'turn_cancelled',
+    ])
   })
 
   it('persists a valid reply reference and drops an unknown one', async () => {

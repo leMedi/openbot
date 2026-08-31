@@ -1,10 +1,9 @@
 import {
   type Agent,
-  appendConversationMessage,
   checkpointStateSchema,
   claimQueuedTurn,
-  completeTurn,
   type ConversationMessage,
+  finalizeTurnTerminal,
   finalizeTurnSuccess,
   findChildTurns,
   findNextQueuedTurnForAgent,
@@ -20,19 +19,23 @@ import {
   type ModelMessage,
   queueGroupChildTurn,
   recordTurnExecution,
+  type WaitingState,
+  waitingStateSchema,
 } from '@openbot/db'
 import { getAiConfig, streamChatCompletion } from './ai'
 
 // In-memory execution state. Durable truth lives in the turns table; these
 // maps only fan visible output out to connected clients and serialize
-// execution per conversation.
+// execution per target.
 export type TurnStreamEvent =
   | { type: 'delta'; text: string }
   | { type: 'done'; message: ConversationMessage }
-  | { type: 'error'; message: string }
+  | { type: 'waiting'; turnId: string; state: WaitingState }
+  | { type: 'error'; message: string; status?: 'failed' | 'cancelled' }
 
 type ActiveTurn = {
   accumulated: string
+  controller: AbortController
   subscribers: Set<(event: TurnStreamEvent) => void>
 }
 
@@ -138,7 +141,11 @@ async function executeTurn(turnId: string) {
   const claimed = await claimQueuedTurn(turnId)
   if (!claimed) return
 
-  const active: ActiveTurn = { accumulated: '', subscribers: new Set() }
+  const active: ActiveTurn = {
+    accumulated: '',
+    controller: new AbortController(),
+    subscribers: new Set(),
+  }
   activeTurns.set(turnId, active)
   const emit = (event: TurnStreamEvent) => {
     for (const subscriber of active.subscribers) subscriber(event)
@@ -172,6 +179,9 @@ async function executeTurn(turnId: string) {
     }
 
     const config = getAiConfig()
+    const waitingState = claimed.waitingStateJson
+      ? waitingStateSchema.parse(claimed.waitingStateJson)
+      : undefined
     // Historical snapshot of what this execution actually used. No tools are
     // wired up yet, so the effective tool list is honestly empty.
     await recordTurnExecution(turnId, {
@@ -184,6 +194,11 @@ async function executeTurn(turnId: string) {
         baseUrl: config.baseUrl,
         lane: claimed.lane,
         mode: claimed.mode,
+        ...(waitingState && {
+          resumeData: waitingState.resumeData,
+          originatingToolCall: waitingState.originatingToolCall,
+          response: waitingState.response,
+        }),
       },
     })
 
@@ -215,10 +230,15 @@ async function executeTurn(turnId: string) {
       prompt: modelMessages,
     })
 
-    const assistantText = await streamChatCompletion(config, modelMessages, (delta) => {
-      active.accumulated += delta
-      emit({ type: 'delta', text: delta })
-    })
+    const assistantText = await streamChatCompletion(
+      config,
+      modelMessages,
+      (delta) => {
+        active.accumulated += delta
+        emit({ type: 'delta', text: delta })
+      },
+      active.controller.signal,
+    )
 
     // One transaction: assistant row, next checkpoint (pointer advance), and
     // the succeeded status — so a crash never persists a partial outcome.
@@ -237,19 +257,20 @@ async function executeTurn(turnId: string) {
     emitTerminal({ type: 'done', message: assistantMessage })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Turn execution failed'
-    await completeTurn(turnId, {
-      status: 'failed',
-      error: { version: 1, message },
-    }).catch(() => {})
-    await appendConversationMessage({
-      conversationId: claimed.conversationId,
-      kind: 'status',
-      direction: 'internal',
-      bodyText: `Turn failed: ${message}`,
-      payload: { version: 1, event: 'turn_failed', message },
+    const settled = await finalizeTurnTerminal({
       turnId,
-    }).catch(() => {})
-    emitTerminal({ type: 'error', message })
+      status: 'failed',
+      message,
+    }).catch(() => undefined)
+    const visibleMessage =
+      settled?.turn.errorJson && typeof settled.turn.errorJson.message === 'string'
+        ? settled.turn.errorJson.message
+        : message
+    emitTerminal({
+      type: 'error',
+      message: visibleMessage,
+      status: settled?.turn.status === 'cancelled' ? 'cancelled' : 'failed',
+    })
   } finally {
     activeTurns.delete(turnId)
   }
@@ -292,19 +313,54 @@ async function executeGroupTurn(turnId: string) {
   } catch (error) {
     const message =
       error instanceof Error ? error.message : 'Group turn orchestration failed'
-    await completeTurn(turnId, {
-      status: 'failed',
-      error: { version: 1, message },
-    }).catch(() => {})
-    await appendConversationMessage({
-      conversationId: claimed.conversationId,
-      kind: 'status',
-      direction: 'internal',
-      bodyText: `Turn failed: ${message}`,
-      payload: { version: 1, event: 'turn_failed', message },
+    await finalizeTurnTerminal({
       turnId,
+      status: 'failed',
+      message,
     }).catch(() => {})
   }
+}
+
+/** Settles a durable turn first, then interrupts an in-flight model request. */
+export async function cancelTurnExecution(turnId: string) {
+  let result = await finalizeTurnTerminal({
+    turnId,
+    status: 'cancelled',
+    message: 'Cancelled by user',
+  })
+  if (!result.changed && result.turn.status === 'succeeded') {
+    const child = (await findChildTurns(turnId)).at(-1)
+    if (child && ['queued', 'running', 'waiting'].includes(child.status)) {
+      result = await finalizeTurnTerminal({
+        turnId: child.id,
+        status: 'cancelled',
+        message: 'Cancelled by user',
+      })
+    }
+  }
+  if (result.changed) activeTurns.get(turnId)?.controller.abort()
+  if (result.changed) activeTurns.get(result.turn.id)?.controller.abort()
+  if (result.changed) ensureDrainAfterCurrent(result.turn)
+  return result.turn
+}
+
+function ensureDrainAfterCurrent(turn: {
+  targetAgentId: string | null
+  targetGroupId: string | null
+}) {
+  const current = turn.targetAgentId
+    ? agentDrains.get(turn.targetAgentId)
+    : turn.targetGroupId
+      ? groupDrains.get(turn.targetGroupId)
+      : undefined
+  if (!current) {
+    ensureDrainForTurn(turn)
+    return
+  }
+  void current.then(
+    () => ensureDrainForTurn(turn),
+    () => ensureDrainForTurn(turn),
+  )
 }
 
 /**
@@ -438,7 +494,19 @@ export function watchTurn(
             turn.errorJson && typeof turn.errorJson.message === 'string'
               ? turn.errorJson.message
               : `Turn ${turn.status}`
-          onEvent({ type: 'error', message: stored })
+          onEvent({ type: 'error', message: stored, status: turn.status })
+          return finish()
+        }
+        if (turn.status === 'waiting') {
+          if (!turn.waitingStateJson) {
+            onEvent({ type: 'error', message: 'Turn is waiting without interaction state' })
+          } else {
+            onEvent({
+              type: 'waiting',
+              turnId: turn.id,
+              state: waitingStateSchema.parse(turn.waitingStateJson),
+            })
+          }
           return finish()
         }
         if (turn.status === 'running') {

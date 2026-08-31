@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { appendCheckpointWithExecutor } from './checkpoints'
 import { db } from './client'
@@ -7,6 +8,8 @@ import {
   type CheckpointState,
   type EffectiveTools,
   effectiveToolsSchema,
+  type WaitingState,
+  waitingStateSchema,
   type VersionedObject,
   versionedObjectSchema,
 } from './json-schemas'
@@ -18,6 +21,11 @@ const lanePriority = sql`CASE ${schema.turns.lane}
   WHEN 'user' THEN 0
   WHEN 'agent' THEN 1
   ELSE 2 END`
+
+const unsettledPriority = sql`CASE ${schema.turns.status}
+  WHEN 'waiting' THEN 0
+  WHEN 'running' THEN 0
+  ELSE 1 END`
 
 export async function getTurn(id: string) {
   const [turn] = await db
@@ -54,7 +62,15 @@ export async function findNextQueuedTurnForAgent(agentId: string) {
     .select()
     .from(schema.turns)
     .where(
-      and(eq(schema.turns.targetAgentId, agentId), eq(schema.turns.status, 'queued')),
+      and(
+        eq(schema.turns.targetAgentId, agentId),
+        eq(schema.turns.status, 'queued'),
+        sql`NOT EXISTS (
+          SELECT 1 FROM turns AS active
+          WHERE active.target_agent_id = ${agentId}
+            AND active.status IN ('running', 'waiting')
+        )`,
+      ),
     )
     .orderBy(asc(lanePriority), asc(schema.turns.createdAt), asc(schema.turns.id))
     .limit(1)
@@ -71,7 +87,15 @@ export async function findNextQueuedTurnForGroup(groupId: string) {
     .select()
     .from(schema.turns)
     .where(
-      and(eq(schema.turns.targetGroupId, groupId), eq(schema.turns.status, 'queued')),
+      and(
+        eq(schema.turns.targetGroupId, groupId),
+        eq(schema.turns.status, 'queued'),
+        sql`NOT EXISTS (
+          SELECT 1 FROM turns AS active
+          WHERE active.target_group_id = ${groupId}
+            AND active.status IN ('running', 'waiting')
+        )`,
+      ),
     )
     .orderBy(asc(lanePriority), asc(schema.turns.createdAt), asc(schema.turns.id))
     .limit(1)
@@ -87,7 +111,7 @@ export function findChildTurns(parentTurnId: string) {
     .orderBy(asc(schema.turns.createdAt), asc(schema.turns.id))
 }
 
-/** Oldest turn in this conversation that has not reached a terminal state. */
+/** Active turn, or next queued turn, for one conversation. */
 export async function findUnsettledTurn(conversationId: string) {
   const [turn] = await db
     .select()
@@ -98,7 +122,12 @@ export async function findUnsettledTurn(conversationId: string) {
         inArray(schema.turns.status, ['queued', 'running', 'waiting']),
       ),
     )
-    .orderBy(asc(schema.turns.createdAt), asc(schema.turns.id))
+    .orderBy(
+      asc(unsettledPriority),
+      asc(lanePriority),
+      asc(schema.turns.createdAt),
+      asc(schema.turns.id),
+    )
     .limit(1)
   return turn
 }
@@ -127,7 +156,40 @@ export async function claimQueuedTurn(id: string) {
       startedAt: now,
       updatedAt: now,
     })
-    .where(and(eq(schema.turns.id, id), eq(schema.turns.status, 'queued')))
+    .where(
+      and(
+        eq(schema.turns.id, id),
+        eq(schema.turns.status, 'queued'),
+        sql`${schema.turns.id} = (
+          SELECT candidate.id FROM turns AS candidate
+          WHERE candidate.status = 'queued'
+            AND (
+              (${schema.turns.targetAgentId} IS NOT NULL
+                AND candidate.target_agent_id = ${schema.turns.targetAgentId})
+              OR (${schema.turns.targetGroupId} IS NOT NULL
+                AND candidate.target_group_id = ${schema.turns.targetGroupId})
+            )
+          ORDER BY CASE candidate.lane
+            WHEN 'user' THEN 0
+            WHEN 'agent' THEN 1
+            ELSE 2 END,
+            candidate.created_at,
+            candidate.id
+          LIMIT 1
+        )`,
+        sql`NOT EXISTS (
+          SELECT 1 FROM turns AS active
+          WHERE active.id <> ${id}
+            AND active.status IN ('running', 'waiting')
+            AND (
+              (${schema.turns.targetAgentId} IS NOT NULL
+                AND active.target_agent_id = ${schema.turns.targetAgentId})
+              OR (${schema.turns.targetGroupId} IS NOT NULL
+                AND active.target_group_id = ${schema.turns.targetGroupId})
+            )
+        )`,
+      ),
+    )
     .returning()
   return claimed
 }
@@ -182,9 +244,207 @@ export async function completeTurn(
       completedAt: now,
       updatedAt: now,
     })
-    .where(eq(schema.turns.id, id))
+    .where(and(eq(schema.turns.id, id), eq(schema.turns.status, 'running')))
     .returning()
   return updated
+}
+
+export async function markTurnWaiting(id: string, state: WaitingState) {
+  const parsed = waitingStateSchema.parse(state)
+  const now = Date.now()
+  return db.transaction(async (tx) => {
+    const [turn] = await tx
+      .update(schema.turns)
+      .set({ status: 'waiting', waitingStateJson: parsed, updatedAt: now })
+      .where(and(eq(schema.turns.id, id), eq(schema.turns.status, 'running')))
+      .returning()
+    if (!turn) return undefined
+    await appendConversationMessage(
+      {
+        conversationId: turn.conversationId,
+        kind: 'status',
+        direction: 'internal',
+        bodyText: parsed.prompt,
+        payload: {
+          version: 1,
+          event: 'turn_waiting',
+          prompt: parsed.prompt,
+          options: parsed.options,
+          toolCallId: parsed.originatingToolCall.id,
+        },
+        turnId: turn.id,
+      },
+      tx,
+    )
+    return turn
+  })
+}
+
+export type WaitingTurnResponseInput = {
+  turnId: string
+  text: string
+  optionId?: string | null
+  toolCallId: string
+  requestId?: string
+  idempotencyKey?: string
+}
+
+export async function respondToWaitingTurn(input: WaitingTurnResponseInput) {
+  const text = input.text.trim()
+  if (!text) throw new Error('A waiting-turn response cannot be empty')
+  const requestId = input.requestId ?? `req_${randomUUID()}`
+  const idempotencyKey = input.idempotencyKey ?? `idem_${randomUUID()}`
+  return db.transaction(async (tx) => {
+    const [current] = await tx
+      .select()
+      .from(schema.turns)
+      .where(eq(schema.turns.id, input.turnId))
+      .limit(1)
+    if (!current) throw new Error(`Turn ${input.turnId} not found`)
+    if (!current.waitingStateJson) {
+      throw new Error(`Turn ${input.turnId} has no waiting interaction state`)
+    }
+    const waiting = waitingStateSchema.parse(current.waitingStateJson)
+    const optionId = input.optionId ?? null
+    const responseRows = await tx
+      .select()
+      .from(schema.conversationMessages)
+      .where(
+        and(
+          eq(schema.conversationMessages.conversationId, current.conversationId),
+          eq(schema.conversationMessages.turnId, current.id),
+          eq(schema.conversationMessages.kind, 'message'),
+          eq(schema.conversationMessages.role, 'user'),
+        ),
+      )
+      .orderBy(asc(schema.conversationMessages.sequenceNo))
+    const requestMatch = responseRows.find(
+      (row) =>
+        row.payloadJson.event === 'turn_response' &&
+        row.payloadJson.requestId === requestId,
+    )
+    const idempotencyMatch = responseRows.find(
+      (row) =>
+        row.payloadJson.event === 'turn_response' &&
+        row.payloadJson.idempotencyKey === idempotencyKey,
+    )
+    if (requestMatch && idempotencyMatch && requestMatch.id !== idempotencyMatch.id) {
+      throw new Error(
+        'Waiting-response request ID and idempotency key resolve to different responses',
+      )
+    }
+    const persistedResponse = requestMatch ?? idempotencyMatch
+    if (persistedResponse) {
+      if (
+        persistedResponse.bodyText !== text ||
+        persistedResponse.payloadJson.optionId !== optionId ||
+        persistedResponse.payloadJson.toolCallId !== input.toolCallId
+      ) {
+        throw new Error(
+          'A waiting-response idempotency token cannot be reused with different input',
+        )
+      }
+      return { message: persistedResponse, turn: current }
+    }
+    if (current.status !== 'waiting') {
+      throw new Error(`Turn ${input.turnId} is not waiting for input`)
+    }
+    if (waiting.originatingToolCall.id !== input.toolCallId) {
+      throw new Error(`Turn ${input.turnId} is waiting on a different interaction`)
+    }
+    if (optionId && !waiting.options.some((option) => option.id === optionId)) {
+      throw new Error(`Waiting turn ${input.turnId} has no option ${optionId}`)
+    }
+
+    const nextState = waitingStateSchema.parse({
+      ...waiting,
+      response: { optionId, text, requestId, idempotencyKey, respondedAt: Date.now() },
+    })
+    const now = Date.now()
+    const [turn] = await tx
+      .update(schema.turns)
+      .set({
+        status: 'queued',
+        waitingStateJson: nextState,
+        startedAt: null,
+        updatedAt: now,
+      })
+      .where(and(eq(schema.turns.id, input.turnId), eq(schema.turns.status, 'waiting')))
+      .returning()
+    if (!turn) throw new Error(`Turn ${input.turnId} is no longer waiting for input`)
+
+    const message = await appendConversationMessage(
+      {
+        conversationId: turn.conversationId,
+        kind: 'message',
+        role: 'user',
+        direction: 'inbound',
+        bodyText: text,
+        payload: {
+          version: 1,
+          event: 'turn_response',
+          optionId,
+          toolCallId: input.toolCallId,
+          requestId,
+          idempotencyKey,
+        },
+        turnId: turn.id,
+      },
+      tx,
+    )
+    return { message, turn }
+  })
+}
+
+export type TurnTerminalInput = {
+  turnId: string
+  status: 'failed' | 'cancelled'
+  message: string
+}
+
+export function finalizeTurnTerminal(input: TurnTerminalInput) {
+  return db.transaction(async (tx) => {
+    const now = Date.now()
+    const [turn] = await tx
+      .update(schema.turns)
+      .set({
+        status: input.status,
+        errorJson: { version: 1, message: input.message },
+        completedAt: now,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(schema.turns.id, input.turnId),
+          inArray(schema.turns.status, ['queued', 'running', 'waiting']),
+        ),
+      )
+      .returning()
+    if (!turn) {
+      const [existing] = await tx
+        .select()
+        .from(schema.turns)
+        .where(eq(schema.turns.id, input.turnId))
+        .limit(1)
+      if (!existing) throw new Error(`Turn ${input.turnId} not found`)
+      return { turn: existing, message: undefined, changed: false as const }
+    }
+
+    const event = input.status === 'failed' ? 'turn_failed' : 'turn_cancelled'
+    const label = input.status === 'failed' ? 'failed' : 'cancelled'
+    const message = await appendConversationMessage(
+      {
+        conversationId: turn.conversationId,
+        kind: 'status',
+        direction: 'internal',
+        bodyText: `Turn ${label}: ${input.message}`,
+        payload: { version: 1, event, message: input.message },
+        turnId: turn.id,
+      },
+      tx,
+    )
+    return { turn, message, changed: true as const }
+  })
 }
 
 export type GroupChildTurnInput = {

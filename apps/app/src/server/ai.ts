@@ -29,6 +29,7 @@ export async function streamChatCompletion(
   config: AiConfig,
   messages: ModelMessage[],
   onDelta: (text: string) => void,
+  signal?: AbortSignal,
 ): Promise<string> {
   const response = await fetch(`${config.baseUrl}/chat/completions`, {
     method: 'POST',
@@ -37,6 +38,7 @@ export async function streamChatCompletion(
       authorization: `Bearer ${config.apiKey}`,
     },
     body: JSON.stringify({ model: config.model, messages, stream: true }),
+    signal,
   })
   if (!response.ok || !response.body) {
     const detail = await response.text().catch(() => '')

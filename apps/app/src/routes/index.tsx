@@ -30,7 +30,9 @@ import { getAgents } from '@/server/agents'
 import { getServerConfig } from '@/server/config'
 import { getGroups } from '@/server/groups'
 import {
+  cancelConversationTurn,
   getConversationMessages,
+  respondToConversationTurn,
   sendConversationMessage,
 } from '@/server/messages'
 import {
@@ -311,9 +313,31 @@ function OpenBot() {
                 // The server drops references it cannot resolve (e.g. an
                 // optimistic local id), degrading to a plain message.
                 replyToEntryId: draft.replyToId ?? null,
+                requestId: crypto.randomUUID(),
+                idempotencyKey: draft.idempotencyKey ?? crypto.randomUUID(),
               },
             })
           }
+          onRespondToTurn={({
+            turnId,
+            text,
+            optionId,
+            toolCallId,
+            requestId,
+            idempotencyKey,
+          }) =>
+            respondToConversationTurn({
+              data: {
+                turnId,
+                text,
+                optionId,
+                toolCallId,
+                requestId,
+                idempotencyKey,
+              },
+            })
+          }
+          onCancelTurn={(turnId) => cancelConversationTurn({ data: { turnId } })}
           onTurnSettled={async () => {
             // The assistant message advanced the sequence counter; the user
             // is looking at it, so move the read horizon and refresh the

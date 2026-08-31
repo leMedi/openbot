@@ -17,6 +17,7 @@ import type {
   McpCredentials,
   Reactions,
   VersionedObject,
+  WaitingState,
 } from './json-schemas'
 
 const emptyVersionedObject = sql`'{"version":1}'`
@@ -178,7 +179,7 @@ export const turns = sqliteTable('turns', {
     .$type<VersionedObject>()
     .notNull()
     .default(emptyVersionedObject),
-  waitingStateJson: text('waiting_state_json', { mode: 'json' }).$type<VersionedObject>(),
+  waitingStateJson: text('waiting_state_json', { mode: 'json' }).$type<WaitingState>(),
   errorJson: text('error_json', { mode: 'json' }).$type<VersionedObject>(),
   attemptCount: integer('attempt_count').notNull().default(0),
   orchestrationRound: integer('orchestration_round'),

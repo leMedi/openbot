@@ -104,6 +104,31 @@ export const effectiveToolsSchema = z.object({
   tools: z.array(z.string().min(1)),
 })
 
+export const waitingStateSchema = z.object({
+  version: z.literal(1),
+  prompt: z.string().min(1),
+  options: z.array(
+    z.object({
+      id: z.string().min(1),
+      label: z.string().min(1),
+    }),
+  ),
+  originatingToolCall: z.object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+  }),
+  resumeData: jsonValueSchema,
+  response: z
+    .object({
+      optionId: z.string().min(1).nullable(),
+      text: z.string().min(1),
+      requestId: z.string().min(1),
+      idempotencyKey: z.string().min(1),
+      respondedAt: z.number().int().nonnegative(),
+    })
+    .nullable(),
+})
+
 export const apiKeyCredentialsSchema = z.object({
   version: z.literal(1),
   apiKey: z.string().min(1),
@@ -125,6 +150,7 @@ export type GroupMembers = z.infer<typeof groupMembersSchema>
 export type Attachments = z.infer<typeof attachmentsSchema>
 export type Reactions = z.infer<typeof reactionsSchema>
 export type EffectiveTools = z.infer<typeof effectiveToolsSchema>
+export type WaitingState = z.infer<typeof waitingStateSchema>
 export type ApiKeyCredentials = z.infer<typeof apiKeyCredentialsSchema>
 export type OauthCredentials = z.infer<typeof oauthCredentialsSchema>
 export type McpCredentials = ApiKeyCredentials | OauthCredentials

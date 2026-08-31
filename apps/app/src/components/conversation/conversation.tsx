@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ConversationMessage, Turn } from '@openbot/db'
-import { ArrowLeft, PanelRightOpen, Pencil } from 'lucide-react'
+import type { ConversationMessage, Turn, WaitingState } from '@openbot/db'
+import { ArrowLeft, PanelRightOpen, Pencil, Square } from 'lucide-react'
 import { BotAvatar } from '@/components/openbot/bot-avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -52,6 +52,15 @@ export type ConversationProps = {
    * agent turn. When absent, sends stay client-local (mock/demo usage).
    */
   onSendMessage?: (draft: Draft) => Promise<{ message: ConversationMessage; turn: Turn }>
+  onRespondToTurn?: (input: {
+    turnId: string
+    text: string
+    optionId: string | null
+    toolCallId: string
+    requestId: string
+    idempotencyKey: string
+  }) => Promise<{ message: ConversationMessage; turn: Turn }>
+  onCancelTurn?: (turnId: string) => Promise<Turn>
   /** Called after a turn reaches a terminal state (refresh sidebar state etc.). */
   onTurnSettled?: () => void
   /** A queued/running turn to reattach to on mount (reload during a turn). */
@@ -75,6 +84,8 @@ export function Conversation({
   headerActions,
   readOnly,
   onSendMessage,
+  onRespondToTurn,
+  onCancelTurn,
   onTurnSettled,
   pendingTurnId,
   resolveAuthor,
@@ -84,7 +95,14 @@ export function Conversation({
   const [threadRootId, setThreadRootId] = useState<string | null>(null)
   const [threadReplyTo, setThreadReplyTo] = useState<string | undefined>()
   const [fullOpen, setFullOpen] = useState(false)
+  const [activeTurnId, setActiveTurnId] = useState<string | null>(pendingTurnId ?? null)
+  const [waiting, setWaiting] = useState<{
+    turnId: string
+    state: WaitingState
+    responseIdempotencyKey?: string
+  } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const cancellingTurns = useRef(new Set<string>())
 
   const working = entries.some((e) => e.type === 'message' && e.delivery === 'streaming')
   const oneToOne = !members || members.length === 0
@@ -169,6 +187,8 @@ export function Conversation({
    */
   async function sendToServer(draft: Draft) {
     const localId = nextId()
+    const idempotencyKey = draft.idempotencyKey ?? crypto.randomUUID()
+    const durableDraft = { ...draft, idempotencyKey }
     setEntries((all) => [
       ...all,
       {
@@ -180,13 +200,14 @@ export function Conversation({
         attachments: draft.attachments.length > 0 ? draft.attachments : undefined,
         replyTo: draft.replyToId,
         delivery: 'queued',
+        idempotencyKey,
       },
     ])
     setReplyTo(undefined)
 
     let accepted: { message: ConversationMessage; turn: Turn }
     try {
-      accepted = await onSendMessage!(draft)
+      accepted = await onSendMessage!(durableDraft)
     } catch {
       setEntries((all) =>
         mapMessages(all, (m) => (m.id === localId ? { ...m, delivery: 'failed' } : m)),
@@ -201,6 +222,67 @@ export function Conversation({
     await consumeTurnStream(accepted.turn.id)
   }
 
+  async function respondToServer(
+    draft: Draft,
+    optionId: string | null = null,
+    retryIdempotencyKey?: string,
+  ) {
+    if (!waiting || !onRespondToTurn) return
+    const interaction = waiting
+    const localId = nextId()
+    const requestId = crypto.randomUUID()
+    const idempotencyKey =
+      retryIdempotencyKey ?? interaction.responseIdempotencyKey ?? crypto.randomUUID()
+    setEntries((all) => [
+      ...all.filter(
+        (entry) =>
+          entry.type !== 'message' ||
+          entry.waitingResponse?.turnId !== interaction.turnId ||
+          entry.delivery !== 'failed',
+      ),
+      {
+        type: 'message',
+        id: localId,
+        author: YOU,
+        time: nowTime(),
+        text: draft.prompt,
+        delivery: 'queued',
+        waitingResponse: {
+          turnId: interaction.turnId,
+          toolCallId: interaction.state.originatingToolCall.id,
+          optionId,
+          idempotencyKey,
+        },
+      },
+    ])
+    setWaiting(null)
+    try {
+      const resumed = await onRespondToTurn({
+        turnId: interaction.turnId,
+        text: draft.prompt,
+        optionId,
+        toolCallId: interaction.state.originatingToolCall.id,
+        requestId,
+        idempotencyKey,
+      })
+      setEntries((all) =>
+        mapMessages(all, (message) =>
+          message.id === localId
+            ? { ...message, id: resumed.message.id, delivery: 'delivered' }
+            : message,
+        ),
+      )
+      await consumeTurnStream(resumed.turn.id)
+    } catch {
+      setWaiting({ ...interaction, responseIdempotencyKey: idempotencyKey })
+      setEntries((all) =>
+        mapMessages(all, (message) =>
+          message.id === localId ? { ...message, delivery: 'failed' } : message,
+        ),
+      )
+    }
+  }
+
   /**
    * Renders one turn's visible output: a streaming entry that accumulates
    * deltas until the persisted assistant message (or a failure notice)
@@ -208,6 +290,7 @@ export function Conversation({
    * that was already in flight when the page loaded.
    */
   async function consumeTurnStream(turnId: string) {
+    setActiveTurnId(turnId)
     const streamingId = `streaming-${turnId}`
     setEntries((all) => [
       ...all,
@@ -222,6 +305,7 @@ export function Conversation({
     ])
     const replaceStreaming = (entry: Entry) =>
       setEntries((all) => all.map((e) => (e.id === streamingId ? entry : e)))
+    let terminal = false
     try {
       await streamTurn(turnId, (event) => {
         if (event.type === 'delta') {
@@ -233,6 +317,7 @@ export function Conversation({
             ),
           )
         } else if (event.type === 'done') {
+          terminal = true
           setEntries((all) =>
             mapMessages(all, (m) =>
               m.id === streamingId
@@ -248,11 +333,18 @@ export function Conversation({
                 : m,
             ),
           )
+        } else if (event.type === 'waiting') {
+          setEntries((all) => all.filter((entry) => entry.id !== streamingId))
+          setWaiting({ turnId: event.turnId, state: event.state })
         } else {
+          terminal = true
           replaceStreaming({
             type: 'timeline',
             id: streamingId,
-            text: `Turn failed: ${event.message}`,
+            text:
+              event.status === 'cancelled'
+                ? `Turn cancelled: ${event.message}`
+                : `Turn failed: ${event.message}`,
             time: nowTime(),
             icon: 'notice',
           })
@@ -267,11 +359,16 @@ export function Conversation({
         icon: 'notice',
       })
     }
-    onTurnSettled?.()
+    setActiveTurnId((current) => (current === turnId ? null : current))
+    if (terminal) onTurnSettled?.()
   }
 
   function send(draft: Draft, toThread?: string) {
     // Threads are not persisted yet; thread sends stay client-local.
+    if (!toThread && waiting && onRespondToTurn) {
+      void respondToServer(draft)
+      return
+    }
     if (!toThread && onSendMessage) {
       void sendToServer(draft)
       return
@@ -304,9 +401,28 @@ export function Conversation({
   // sendToServer, whose props may change between renders.
   function resend(entryId: string) {
     const entry = findEntry(entryId)
+    if (entry?.type === 'message' && entry.text && entry.waitingResponse) {
+      if (
+        waiting &&
+        entry.waitingResponse.turnId === waiting.turnId &&
+        entry.waitingResponse.toolCallId === waiting.state.originatingToolCall.id &&
+        onRespondToTurn
+      ) {
+        void respondToServer(
+          { prompt: entry.text, attachments: entry.attachments ?? [] },
+          entry.waitingResponse.optionId,
+          entry.waitingResponse.idempotencyKey,
+        )
+      }
+      return
+    }
     if (onSendMessage && entry?.type === 'message' && entry.text) {
       setEntries((all) => all.filter((e) => e.id !== entryId))
-      void sendToServer({ prompt: entry.text, attachments: entry.attachments ?? [] })
+      void sendToServer({
+        prompt: entry.text,
+        attachments: entry.attachments ?? [],
+        idempotencyKey: entry.idempotencyKey,
+      })
       return
     }
     setEntries((all) =>
@@ -346,6 +462,21 @@ export function Conversation({
   function closeThread() {
     setThreadRootId(null)
     setThreadReplyTo(undefined)
+  }
+
+  async function cancelTurn(turnId: string) {
+    if (!onCancelTurn || cancellingTurns.current.has(turnId)) return
+    cancellingTurns.current.add(turnId)
+    const interaction = waiting?.turnId === turnId ? waiting : null
+    if (interaction) setWaiting(null)
+    try {
+      await onCancelTurn(turnId)
+      if (interaction) await consumeTurnStream(turnId)
+    } catch {
+      if (interaction) setWaiting(interaction)
+    } finally {
+      cancellingTurns.current.delete(turnId)
+    }
   }
 
   return (
@@ -411,6 +542,16 @@ export function Conversation({
             <span className="size-1.5 animate-pulse rounded-full bg-warning" />
           </span>
         )}
+        {activeTurnId && onCancelTurn && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Cancel turn"
+            onClick={() => void cancelTurn(activeTurnId)}
+          >
+            <Square className="size-3" />
+          </Button>
+        )}
         <span className="flex-1" />
         <Button
           variant="ghost"
@@ -447,6 +588,37 @@ export function Conversation({
             />
           )}
         </div>
+        {waiting && (
+          <div className="mx-4 mb-2 rounded-xl border border-warning/40 bg-warning/5 p-3">
+            <div className="text-xs font-semibold">{waiting.state.prompt}</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {waiting.state.options.map((option) => (
+                <Button
+                  key={option.id}
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    void respondToServer(
+                      { prompt: option.label, attachments: [] },
+                      option.id,
+                    )
+                  }
+                >
+                  {option.label}
+                </Button>
+              ))}
+              {onCancelTurn && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void cancelTurn(waiting.turnId)}
+                >
+                  Cancel
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
         {readOnly ? (
           <div className="mx-4 mb-4 flex items-center justify-center rounded-xl border border-dashed px-3 py-3 text-xs text-muted-foreground/70">
             This conversation is read-only.

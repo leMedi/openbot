@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { eq } from 'drizzle-orm'
 
 // A fresh temporary data directory must be configured before the package is
 // imported: opening the database, enabling foreign keys, requesting WAL, and
@@ -210,6 +211,51 @@ describe('group room turns', () => {
 
     const queued = await dbModule.findNextQueuedTurnForGroup(group.id)
     expect(queued?.id).toBe(turn.id)
+  })
+
+  it('orders group lanes and permits only one active turn for the target', async () => {
+    const [alpha] = await makeAgents('Group Scheduler')
+    const { group, conversation } = await dbModule.createGroup({
+      name: 'Scheduled Room',
+      members: [{ type: 'agent', agentId: alpha.id }],
+    })
+    const background = await dbModule.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'old background work',
+    })
+    const delegated = await dbModule.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'agent work',
+    })
+    const user = await dbModule.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'new user work',
+    })
+    await dbModule.db
+      .update(dbModule.turns)
+      .set({ lane: 'background', createdAt: 1 })
+      .where(eq(dbModule.turns.id, background.turn.id))
+    await dbModule.db
+      .update(dbModule.turns)
+      .set({ lane: 'agent', createdAt: 2 })
+      .where(eq(dbModule.turns.id, delegated.turn.id))
+    await dbModule.db
+      .update(dbModule.turns)
+      .set({ createdAt: 3 })
+      .where(eq(dbModule.turns.id, user.turn.id))
+
+    expect((await dbModule.findNextQueuedTurnForGroup(group.id))?.id).toBe(
+      user.turn.id,
+    )
+    expect(await dbModule.claimQueuedTurn(background.turn.id)).toBeUndefined()
+    await dbModule.claimQueuedTurn(user.turn.id)
+    expect(await dbModule.findNextQueuedTurnForGroup(group.id)).toBeUndefined()
+    expect(await dbModule.claimQueuedTurn(delegated.turn.id)).toBeUndefined()
+
+    await dbModule.completeTurn(user.turn.id, { status: 'succeeded' })
+    expect((await dbModule.findNextQueuedTurnForGroup(group.id))?.id).toBe(
+      delegated.turn.id,
+    )
   })
 
   it('queues an agent-targeted child turn linked to the running group turn', async () => {

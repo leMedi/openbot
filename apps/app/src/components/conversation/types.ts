@@ -101,6 +101,14 @@ export type MessageEntry = {
   replyTo?: string
   thread?: MessageEntry[]
   delivery?: DeliveryState
+  /** Stable across a retry of the same logical send. */
+  idempotencyKey?: string
+  waitingResponse?: {
+    turnId: string
+    toolCallId: string
+    optionId: string | null
+    idempotencyKey: string
+  }
 }
 
 export type TimelineEntry = {
@@ -155,4 +163,5 @@ export type Draft = {
   attachments: Attachment[]
   replyToId?: string
   isFork?: boolean
+  idempotencyKey?: string
 }
