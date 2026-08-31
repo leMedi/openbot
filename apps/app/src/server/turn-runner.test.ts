@@ -18,9 +18,13 @@ type RecordedRequest = {
   toolChoice?: { type: string; function: { name: string } }
 }
 
-const { scripted, requests } = vi.hoisted(() => ({
+const { scripted, requests, mcpDefinitions, mcpDiscoveries, mcpExecutions, mcpCloses } = vi.hoisted(() => ({
   scripted: [] as ScriptedCompletion[],
   requests: [] as RecordedRequest[],
+  mcpDefinitions: [] as { type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } }[],
+  mcpDiscoveries: [] as string[],
+  mcpExecutions: [] as string[],
+  mcpCloses: [] as string[],
 }))
 
 vi.mock('./ai', () => ({
@@ -44,6 +48,24 @@ vi.mock('./ai', () => ({
   },
 }))
 
+vi.mock('./mcp-tools', () => ({
+  discoverMcpToolsForTurn: async (agentId: string) => {
+    mcpDiscoveries.push(agentId)
+    const names = new Set(mcpDefinitions.map((definition) => definition.function.name))
+    return {
+      definitions: [...mcpDefinitions],
+      has: (name: string) => names.has(name),
+      execute: async (call: ModelToolCall) => {
+        mcpExecutions.push(call.function.name)
+        return JSON.stringify({ ok: true })
+      },
+      close: async () => {
+        mcpCloses.push(agentId)
+      },
+    }
+  },
+}))
+
 let db: DbModule
 let runner: RunnerModule
 
@@ -54,6 +76,10 @@ beforeAll(async () => {
 beforeEach(() => {
   scripted.length = 0
   requests.length = 0
+  mcpDefinitions.length = 0
+  mcpDiscoveries.length = 0
+  mcpExecutions.length = 0
+  mcpCloses.length = 0
 })
 
 let callSeq = 0
@@ -87,6 +113,47 @@ function deliveriesOf(rows: import('@openbot/db').ConversationMessage[], turnId:
 }
 
 describe('turn runner with SendMessage delivery', () => {
+  it('discovers current MCP tools for every turn and snapshots the names used', async () => {
+    const { agent, conversation, turn } = await makeQueuedTurn('Runner MCP')
+    const mcpName = 'mcp_example_deadbeef_search'
+    mcpDefinitions.push({
+      type: 'function',
+      function: {
+        name: mcpName,
+        description: 'Search external tasks',
+        parameters: { type: 'object' },
+      },
+    })
+    scripted.push(
+      { text: '', toolCalls: [toolCall(mcpName, { query: 'open' })] },
+      { text: '', toolCalls: [sendText('Found it.')] },
+      { text: '', toolCalls: [] },
+    )
+    await drain(agent.id)
+
+    expect(requests[0].tools).toContain(mcpName)
+    expect(mcpExecutions).toEqual([mcpName])
+    expect((await db.getTurn(turn.id))?.effectiveToolsJson).toMatchObject({
+      tools: expect.arrayContaining([mcpName]),
+    })
+    expect(mcpCloses).toEqual([agent.id])
+
+    const { turn: nextTurn } = await db.acceptUserMessage({
+      conversationId: conversation.id,
+      text: 'again',
+    })
+    mcpDefinitions.length = 0
+    scripted.push(
+      { text: '', toolCalls: [sendText('Fresh tools checked.')] },
+      { text: '', toolCalls: [] },
+    )
+    await drain(agent.id)
+    expect(mcpDiscoveries).toEqual([agent.id, agent.id])
+    expect((await db.getTurn(nextTurn.id))?.effectiveToolsJson).not.toMatchObject({
+      tools: expect.arrayContaining([mcpName]),
+    })
+  })
+
   it('persists deliveries in-flight, strips reminders from the checkpoint, and settles', async () => {
     const { agent, conversation, turn } = await makeQueuedTurn('Runner Happy')
     scripted.push(

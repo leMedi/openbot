@@ -52,6 +52,7 @@ import {
   TOOL_BUDGET_EXHAUSTED_REMINDER,
   wrapSystemReminder,
 } from './send-message-reminders'
+import { discoverMcpToolsForTurn, type McpToolRegistry } from './mcp-tools'
 
 // A turn may interleave tool calls and completions; after this many rounds
 // the toolset degrades to SendMessage only, so delivery stays possible.
@@ -135,6 +136,7 @@ async function executeTurn(turnId: string) {
     activeTurns.delete(turnId)
     for (const subscriber of subscribers) subscriber(event)
   }
+  let mcpRegistry: McpToolRegistry | undefined
 
   try {
     const conversation = await getConversation(claimed.conversationId)
@@ -163,9 +165,15 @@ async function executeTurn(turnId: string) {
     // Visible turns carry the delivery contract (SendMessage + reminders);
     // hidden background work has no user to talk to and is exempt.
     const remindersApply = claimed.lane !== 'background'
-    const toolDefinitions = remindersApply
+    const builtInToolDefinitions = remindersApply
       ? agentToolDefinitions
       : backgroundToolDefinitions
+    const currentMcpRegistry = await discoverMcpToolsForTurn(
+      agent.id,
+      active.controller.signal,
+    )
+    mcpRegistry = currentMcpRegistry
+    const toolDefinitions = [...builtInToolDefinitions, ...currentMcpRegistry.definitions]
     // Historical snapshot of what this execution actually used.
     await recordTurnExecution(turnId, {
       modelProvider: 'openai-compatible',
@@ -294,7 +302,9 @@ async function executeTurn(turnId: string) {
         messages.push({
           role: 'tool',
           tool_call_id: toolCall.id,
-          content: await executeAgentToolCall(agent, toolCall, toolContext),
+          content: currentMcpRegistry.has(toolCall.function.name)
+            ? await currentMcpRegistry.execute(toolCall, active.controller.signal)
+            : await executeAgentToolCall(agent, toolCall, toolContext),
         })
         state.totalToolCalls += 1
         if (toolCall.function.name !== SEND_MESSAGE_TOOL_NAME) {
@@ -415,6 +425,7 @@ async function executeTurn(turnId: string) {
       status: settled?.turn.status === 'cancelled' ? 'cancelled' : 'failed',
     })
   } finally {
+    await mcpRegistry?.close().catch(() => {})
     activeTurns.delete(turnId)
   }
 }

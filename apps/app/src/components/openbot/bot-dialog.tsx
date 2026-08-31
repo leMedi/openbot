@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Agent, Conversation } from '@openbot/db'
+import type { Agent, Conversation, SafeMcpAccount, SafeMcpServer } from '@openbot/db'
 import { ImageUp, Lock, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -20,7 +20,7 @@ import { cn } from '@/lib/utils'
 import { addAgent, updateAgent } from '@/server/agents'
 import { agentAvatarUrl } from './agents'
 import { BotAvatar } from './bot-avatar'
-import { AVATAR_COLORS, AVATAR_SHAPES, PLUGINS } from './data'
+import { AVATAR_COLORS, AVATAR_SHAPES } from './data'
 
 const ACCEPTED_AVATAR_TYPES = 'image/png,image/jpeg,image/webp,image/gif'
 
@@ -29,6 +29,10 @@ export function BotDialog({
   onOpenChange,
   agent,
   serverModel,
+  mcpServers,
+  mcpAccounts,
+  grantedAccountIds,
+  onOpenPlugins,
   onSaved,
 }: {
   open: boolean
@@ -37,6 +41,10 @@ export function BotDialog({
   agent: Agent | null
   /** Server-configured model (OPENBOT_AI_MODEL); read-only until model providers land. */
   serverModel: string
+  mcpServers: SafeMcpServer[]
+  mcpAccounts: SafeMcpAccount[]
+  grantedAccountIds: string[]
+  onOpenPlugins: () => void
   /** On create, `firstConversation` is the persisted conversation named after the agent. */
   onSaved: (saved: Agent, firstConversation: Conversation | null) => void
 }) {
@@ -55,8 +63,9 @@ export function BotDialog({
   const [avatarRemoved, setAvatarRemoved] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [grants, setGrants] = useState<string[]>([])
+  const [grants, setGrants] = useState<string[]>(grantedAccountIds)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const createdRef = useRef<{ agent: Agent; conversation: Conversation } | null>(null)
 
   const pendingAvatarUrl = useMemo(
     () => (avatarFile ? URL.createObjectURL(avatarFile) : undefined),
@@ -67,12 +76,17 @@ export function BotDialog({
       if (pendingAvatarUrl) URL.revokeObjectURL(pendingAvatarUrl)
     }
   }, [pendingAvatarUrl])
+  useEffect(() => {
+    const available = new Set(mcpAccounts.map((account) => account.id))
+    setGrants((current) => current.filter((accountId) => available.has(accountId)))
+  }, [mcpAccounts])
   const savedAvatarUrl = agent && !avatarRemoved ? agentAvatarUrl(agent) : undefined
   const previewUrl = pendingAvatarUrl ?? savedAvatarUrl
 
-  const accounts = PLUGINS.filter((p) => p.installed).flatMap((p) =>
-    p.accounts.map((a) => ({ plugin: p, account: a, key: `${p.id}:${a.id}` })),
-  )
+  const accounts = mcpAccounts.map((account) => ({
+    account,
+    server: mcpServers.find((server) => server.id === account.serverId),
+  }))
 
   function pickAvatar(file: File | null) {
     setAvatarFile(file)
@@ -101,10 +115,15 @@ export function BotDialog({
       }
       let saved: Agent
       let firstConversation: Conversation | null = null
-      if (editing) {
-        saved = await updateAgent({ data: { id: agent.id, patch: profile } })
+      const existing = editing ? agent : createdRef.current?.agent
+      if (existing) {
+        saved = await updateAgent({
+          data: { id: existing.id, patch: profile, mcpAccountIds: grants },
+        })
+        firstConversation = createdRef.current?.conversation ?? null
       } else {
-        const created = await addAgent({ data: profile })
+        const created = await addAgent({ data: { ...profile, mcpAccountIds: grants } })
+        createdRef.current = created
         saved = created.agent
         firstConversation = created.conversation
       }
@@ -329,33 +348,46 @@ export function BotDialog({
               <Label className="flex-1 text-[11px] font-semibold text-muted-foreground">
                 Plugin Accounts
               </Label>
-              <span className="text-xs font-medium text-info">Browse Catalog</span>
+              <button
+                type="button"
+                onClick={onOpenPlugins}
+                className="text-xs font-medium text-info hover:opacity-80"
+              >
+                Manage MCPs
+              </button>
             </div>
             <div className="max-h-48 overflow-y-auto rounded-lg border">
-              {accounts.map(({ plugin, account, key }) => (
+              {accounts.map(({ server, account }) => (
                 <label
-                  key={key}
+                  key={account.id}
                   className="flex cursor-pointer items-center gap-2.5 border-b px-3 py-2 last:border-b-0 hover:bg-muted/50"
                 >
                   <BotAvatar
-                    name={plugin.name}
-                    color={plugin.hue}
+                    name={server?.name ?? account.label}
+                    color="#3b82f6"
                     className="size-5.5 text-[9px]"
                   />
                   <span className="flex min-w-0 flex-1 items-baseline gap-2">
-                    <span className="text-sm font-medium">{plugin.name}</span>
-                    <span className="text-[10px] text-muted-foreground">{account.name}</span>
+                    <span className="text-sm font-medium">{server?.name ?? 'MCP'}</span>
+                    <span className="text-[10px] text-muted-foreground">{account.label}</span>
                   </span>
                   <Checkbox
-                    checked={grants.includes(key)}
+                    checked={grants.includes(account.id)}
                     onCheckedChange={() =>
                       setGrants((g) =>
-                        g.includes(key) ? g.filter((x) => x !== key) : [...g, key],
+                        g.includes(account.id)
+                          ? g.filter((x) => x !== account.id)
+                          : [...g, account.id],
                       )
                     }
                   />
                 </label>
               ))}
+              {accounts.length === 0 && (
+                <p className="px-3 py-3 text-xs text-muted-foreground">
+                  Add an MCP account before granting access.
+                </p>
+              )}
             </div>
           </div>
         </div>

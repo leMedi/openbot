@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { MemoryItem, MemoryKind } from '@openbot/db'
+import type { MemoryItem, MemoryKind, SafeMcpAccount, SafeMcpServer } from '@openbot/db'
 import { FileText, Pencil, Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -17,18 +17,24 @@ import {
   updateMemory,
 } from '@/server/memory'
 import { BotAvatar } from './bot-avatar'
-import { pluginById, type Bot, type Conversation } from './data'
+import type { Bot, Conversation } from './data'
 
 export function Inspector({
   conversation,
   bot,
   activeAgentId,
   onOpenPlugins,
+  mcpServers,
+  mcpAccounts,
+  mcpGrants,
 }: {
   conversation: Conversation
   bot: Bot
   activeAgentId?: string
   onOpenPlugins: () => void
+  mcpServers: SafeMcpServer[]
+  mcpAccounts: SafeMcpAccount[]
+  mcpGrants: { agentId: string; accountId: string; enabledAt: number }[]
 }) {
   const [memoryOpen, setMemoryOpen] = useState(false)
   const [memoryItems, setMemoryItems] = useState<MemoryItem[]>([])
@@ -156,11 +162,12 @@ export function Inspector({
     }
   }
 
-  const accounts = bot.grants
-    .map(([pluginId, accountId]) => {
-      const plugin = pluginById(pluginId)
-      const account = plugin?.accounts.find((a) => a.id === accountId)
-      return plugin && account ? { plugin, account } : null
+  const accounts = mcpGrants
+    .filter((grant) => grant.agentId === activeAgentId)
+    .map(({ accountId }) => {
+      const account = mcpAccounts.find((candidate) => candidate.id === accountId)
+      const server = mcpServers.find((candidate) => candidate.id === account?.serverId)
+      return server && account ? { server, account } : null
     })
     .filter((x) => x !== null)
 
@@ -194,18 +201,18 @@ export function Inspector({
         </div>
         {accounts.length > 0 ? (
           <div className="overflow-hidden rounded-lg border">
-            {accounts.map(({ plugin, account }) => (
+            {accounts.map(({ server, account }) => (
               <div
-                key={plugin.id + account.id}
+                key={account.id}
                 className="flex items-center gap-2 border-b bg-card px-2.5 py-2 last:border-b-0"
               >
                 <BotAvatar
-                  name={plugin.name}
-                  color={plugin.hue}
+                  name={server.name}
+                  color="#3b82f6"
                   className="size-5 rounded-sm text-[9px]"
                 />
-                <span className="min-w-0 flex-1 truncate text-xs">{plugin.name}</span>
-                <span className="text-[11px] text-muted-foreground">{account.name}</span>
+                <span className="min-w-0 flex-1 truncate text-xs">{server.name}</span>
+                <span className="text-[11px] text-muted-foreground">{account.label}</span>
               </div>
             ))}
           </div>

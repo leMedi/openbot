@@ -1,4 +1,10 @@
-import { createAgent, getAgent, listAgents, updateAgentProfile } from '@openbot/db'
+import {
+  createAgent,
+  getAgent,
+  listAgents,
+  updateAgentProfile,
+  updateAgentProfileAndMcpAccounts,
+} from '@openbot/db'
 import { createServerFn } from '@tanstack/react-start'
 import * as z from 'zod'
 import { AVATAR_COLORS, AVATAR_SHAPES } from '@/components/openbot/data'
@@ -23,11 +29,13 @@ const agentProfileFields = z.object({
 
 const agentCreateInput = agentProfileFields.partial().extend({
   name: agentProfileFields.shape.name,
+  mcpAccountIds: z.array(z.string().min(1)).optional(),
 })
 
 const agentUpdateInput = z.object({
   id: z.string().min(1),
   patch: agentProfileFields.partial(),
+  mcpAccountIds: z.array(z.string().min(1)).optional(),
 })
 
 export const getAgents = createServerFn({ method: 'GET' }).handler(() =>
@@ -44,12 +52,21 @@ export const getAgentById = createServerFn({ method: 'GET' })
 
 export const addAgent = createServerFn({ method: 'POST' })
   .validator((input: unknown) => agentCreateInput.parse(input))
-  .handler(({ data }) => createAgent(data))
+  .handler(({ data }) => {
+    const { mcpAccountIds, ...profile } = data
+    return createAgent(profile, mcpAccountIds)
+  })
 
 export const updateAgent = createServerFn({ method: 'POST' })
   .validator((input: unknown) => agentUpdateInput.parse(input))
   .handler(async ({ data }) => {
-    const updated = await updateAgentProfile(data.id, data.patch)
+    const updated = data.mcpAccountIds
+      ? await updateAgentProfileAndMcpAccounts(
+          data.id,
+          data.patch,
+          data.mcpAccountIds,
+        )
+      : await updateAgentProfile(data.id, data.patch)
     if (!updated) throw new Error(`Agent ${data.id} not found`)
     return updated
   })

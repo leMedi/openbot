@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import { ChevronDown, FileText, Link2, Lock, Plus, RefreshCw, Search } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import type { SafeMcpAccount, SafeMcpServer } from '@openbot/db'
+import { FileText, Link2, Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
@@ -8,15 +9,28 @@ import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import {
+  addMcpApiKeyAccount,
+  addMcpServer,
+  changeMcpServer,
+  removeMcpAccount,
+  removeMcpServer,
+} from '@/server/mcp'
 import { BotAvatar } from './bot-avatar'
-import { PLUGINS, SKILLS, type Skill } from './data'
+import { SKILLS, type Skill } from './data'
 
 export function PluginsDialog({
   open,
   onOpenChange,
+  servers,
+  accounts,
+  onChanged,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  servers: SafeMcpServer[]
+  accounts: SafeMcpAccount[]
+  onChanged: () => Promise<unknown>
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -34,7 +48,7 @@ export function PluginsDialog({
             </TabsList>
           </div>
           <TabsContent value="plugins" className="min-h-0 flex-1">
-            <PluginsTab />
+            <PluginsTab servers={servers} accounts={accounts} onChanged={onChanged} />
           </TabsContent>
           <TabsContent value="skills" className="min-h-0 flex-1 overflow-y-auto">
             <SkillsTab />
@@ -45,16 +59,155 @@ export function PluginsDialog({
   )
 }
 
-function PluginsTab() {
-  const [query, setQuery] = useState('')
-  const [detailId, setDetailId] = useState('clickup')
-  const [installed, setInstalled] = useState<Record<string, boolean>>(
-    Object.fromEntries(PLUGINS.map((p) => [p.id, p.installed])),
-  )
+type McpDraft = {
+  name: string
+  serverKey: string
+  url: string
+  apiKeyHeader: string
+  apiKeyPrefix: 'Bearer' | ''
+}
 
-  const rail = PLUGINS.filter((p) => p.name.toLowerCase().includes(query.toLowerCase()))
-  const detail = PLUGINS.find((p) => p.id === detailId) ?? PLUGINS[0]
-  const isInstalled = installed[detail.id]
+function configurationOf(server: SafeMcpServer) {
+  const value = server.configurationJson as Record<string, unknown>
+  return {
+    url: typeof value.url === 'string' ? value.url : '',
+    apiKeyHeader:
+      typeof value.apiKeyHeader === 'string' ? value.apiKeyHeader : 'Authorization',
+    apiKeyPrefix: (value.apiKeyPrefix === '' ? '' : 'Bearer') as 'Bearer' | '',
+  }
+}
+
+function draftOf(server?: SafeMcpServer): McpDraft {
+  const configuration = server ? configurationOf(server) : undefined
+  return {
+    name: server?.name ?? '',
+    serverKey: server?.serverKey ?? '',
+    url: configuration?.url ?? '',
+    apiKeyHeader: configuration?.apiKeyHeader ?? 'Authorization',
+    apiKeyPrefix: configuration?.apiKeyPrefix ?? 'Bearer',
+  }
+}
+
+function PluginsTab({
+  servers,
+  accounts,
+  onChanged,
+}: {
+  servers: SafeMcpServer[]
+  accounts: SafeMcpAccount[]
+  onChanged: () => Promise<unknown>
+}) {
+  const [query, setQuery] = useState('')
+  const [detailId, setDetailId] = useState(servers[0]?.id ?? '')
+  const [creatingServer, setCreatingServer] = useState(servers.length === 0)
+  const [draft, setDraft] = useState<McpDraft | null>(servers.length === 0 ? draftOf() : null)
+  const [accountDraft, setAccountDraft] = useState({ label: '', apiKey: '' })
+  const [addingAccount, setAddingAccount] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  const detail = creatingServer
+    ? undefined
+    : servers.find((server) => server.id === detailId)
+  const rail = servers.filter((server) =>
+    server.name.toLowerCase().includes(query.toLowerCase()),
+  )
+  const detailAccounts = accounts.filter((account) => account.serverId === detail?.id)
+
+  useEffect(() => {
+    if (creatingServer) return
+    if (!detailId && servers[0]) setDetailId(servers[0].id)
+    if (detailId && !servers.some((server) => server.id === detailId)) {
+      setDetailId(servers[0]?.id ?? '')
+    }
+  }, [creatingServer, detailId, servers])
+
+  async function saveServer() {
+    if (!draft || saving) return
+    setSaving(true)
+    setError('')
+    try {
+      const input = {
+        serverKey: draft.serverKey,
+        name: draft.name,
+        transport: 'streamable_http' as const,
+        configuration: {
+          version: 1 as const,
+          url: draft.url,
+          apiKeyHeader: draft.apiKeyHeader,
+          apiKeyPrefix: draft.apiKeyPrefix,
+        },
+      }
+      const saved = detail && !creatingServer
+        ? await changeMcpServer({ data: { id: detail.id, patch: input } })
+        : await addMcpServer({ data: input })
+      await onChanged()
+      setDetailId(saved.id)
+      setCreatingServer(false)
+      setDraft(null)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not save the MCP server')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function deleteServer(server: SafeMcpServer) {
+    if (
+      !window.confirm(
+        `Remove ${server.name}? Its accounts and every agent grant will also be removed.`,
+      )
+    ) {
+      return
+    }
+    setSaving(true)
+    setError('')
+    try {
+      await removeMcpServer({ data: { id: server.id } })
+      setDetailId('')
+      await onChanged()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not remove the MCP server')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function addAccount() {
+    if (!detail || saving) return
+    setSaving(true)
+    setError('')
+    try {
+      await addMcpApiKeyAccount({
+        data: {
+          serverId: detail.id,
+          label: accountDraft.label,
+          apiKey: accountDraft.apiKey,
+        },
+      })
+      setAccountDraft({ label: '', apiKey: '' })
+      setAddingAccount(false)
+      await onChanged()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not add the MCP account')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function deleteAccount(account: SafeMcpAccount) {
+    if (!window.confirm(`Remove account ${account.label}? Agent access will be revoked.`)) return
+    setSaving(true)
+    setError('')
+    try {
+      await removeMcpAccount({ data: { id: account.id } })
+      await onChanged()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not remove the MCP account')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <div className="flex h-full min-h-0">
@@ -72,128 +225,139 @@ function PluginsTab() {
           </div>
         </div>
         <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-3">
-          {rail.map((p) => (
+          {rail.map((server) => (
             <button
-              key={p.id}
+              key={server.id}
               type="button"
-              onClick={() => setDetailId(p.id)}
+              onClick={() => {
+                setDetailId(server.id)
+                setCreatingServer(false)
+                setDraft(null)
+              }}
               className={cn(
                 'flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left',
-                p.id === detailId ? 'bg-primary text-white' : 'hover:bg-muted',
+                server.id === detailId ? 'bg-primary text-white' : 'hover:bg-muted',
               )}
             >
-              <BotAvatar name={p.name} color={p.hue} className="size-6 text-[10px]" />
+              <BotAvatar name={server.name} color="#3b82f6" className="size-6 text-[10px]" />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">{p.name}</span>
+                <span className="block truncate text-sm font-medium">{server.name}</span>
                 <span
                   className={cn(
                     'block text-[10px]',
-                    p.id === detailId ? 'text-white/70' : 'text-muted-foreground',
+                    server.id === detailId ? 'text-white/70' : 'text-muted-foreground',
                   )}
                 >
-                  {installed[p.id]
-                    ? `${p.accounts.length} account${p.accounts.length === 1 ? '' : 's'}`
-                    : p.cat}
+                  {accounts.filter((account) => account.serverId === server.id).length} accounts
                 </span>
               </span>
-              {installed[p.id] && <span className="size-1.5 shrink-0 rounded-full bg-success" />}
+              <span
+                className={cn(
+                  'size-1.5 shrink-0 rounded-full',
+                  server.enabled ? 'bg-success' : 'bg-muted-foreground/40',
+                )}
+              />
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => {
+              setDetailId('')
+              setCreatingServer(true)
+              setDraft(draftOf())
+            }}
+            className="mt-1 flex items-center gap-2 rounded-lg px-2 py-2 text-sm font-medium text-info hover:bg-muted"
+          >
+            <Plus className="size-3.5" /> Add MCP server
+          </button>
         </div>
       </div>
 
       {/* Detail */}
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="max-w-xl px-7 py-6">
-          <div className="flex items-start gap-3.5">
-            <BotAvatar name={detail.name} color={detail.hue} className="size-13 rounded-lg text-xl" />
-            <div className="min-w-0 flex-1">
-              <h2 className="text-xl font-bold tracking-tight">{detail.name}</h2>
-              <div className="mt-0.5 text-xs text-muted-foreground">MCP · {detail.cat}</div>
-            </div>
-            <Button
-              size="sm"
-              variant={isInstalled ? 'outline' : 'default'}
-              onClick={() => setInstalled((s) => ({ ...s, [detail.id]: !s[detail.id] }))}
-            >
-              {isInstalled ? 'Installed ✓' : 'Install'}
-            </Button>
-          </div>
-          <p className="mt-4 text-sm leading-relaxed text-muted-foreground">{detail.blurb}</p>
-
-          <h3 className="mt-6 mb-2 text-[11px] font-semibold text-muted-foreground">Accounts</h3>
-          <div className="overflow-hidden rounded-lg border">
-            {detail.accounts.map((a) => (
-              <div
-                key={a.id}
-                className="flex items-center gap-2.5 border-b bg-card px-3 py-2.5"
-              >
-                <span className="flex-1 text-sm">{a.name}</span>
-                <span
-                  className={cn(
-                    'text-[11px] font-medium',
-                    a.status === 'connected' ? 'text-success' : 'text-warning',
-                  )}
-                >
-                  {a.status}
-                </span>
-                <button
-                  type="button"
-                  className="text-xs text-muted-foreground hover:text-destructive"
-                >
-                  Disconnect
-                </button>
-              </div>
-            ))}
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 bg-card px-3 py-2.5 text-sm font-medium text-info hover:opacity-80"
-            >
-              <Plus className="size-3.5" />
-              Add Another Account
-            </button>
-          </div>
-
-          <h3 className="mt-6 mb-2 text-[11px] font-semibold text-muted-foreground">
-            Capabilities
-          </h3>
-          <div className="overflow-hidden rounded-lg border">
-            <div className="flex items-center border-b bg-card px-3 py-2.5">
-              <span className="flex-1 text-sm">{detail.tools} tools</span>
-              <ChevronDown className="size-3.5 text-muted-foreground/70" />
-            </div>
-            <div className="flex items-center bg-card px-3 py-2.5">
-              <span className="flex-1 text-sm">
-                {detail.connectors} connector{detail.connectors === 1 ? '' : 's'}
-              </span>
-              <ChevronDown className="size-3.5 text-muted-foreground/70" />
-            </div>
-          </div>
-
-          {detail.bundled.length > 0 && (
-            <>
-              <h3 className="mt-6 mb-2 text-[11px] font-semibold text-muted-foreground">
-                Bundled Skills
-              </h3>
-              <div className="overflow-hidden rounded-lg border">
-                {detail.bundled.map((name) => (
-                  <div
-                    key={name}
-                    className="flex items-center gap-2.5 border-b bg-card px-3 py-2.5 last:border-b-0"
+          {draft ? (
+            <div>
+              <h2 className="text-xl font-bold tracking-tight">
+                {detail ? `Edit ${detail.name}` : 'Add MCP server'}
+              </h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Streamable HTTP configuration is visible to the app. Put secrets only in accounts.
+              </p>
+              <div className="mt-5 grid gap-3">
+                <Input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Server name" />
+                <Input value={draft.serverKey} onChange={(e) => setDraft({ ...draft, serverKey: e.target.value })} placeholder="Stable key, e.g. clickup" />
+                <Input value={draft.url} onChange={(e) => setDraft({ ...draft, url: e.target.value })} placeholder="https://example.com/mcp" />
+                <div className="grid grid-cols-2 gap-3">
+                  <Input value={draft.apiKeyHeader} onChange={(e) => setDraft({ ...draft, apiKeyHeader: e.target.value })} placeholder="Authorization" />
+                  <select
+                    value={draft.apiKeyPrefix}
+                    onChange={(e) => setDraft({ ...draft, apiKeyPrefix: e.target.value as 'Bearer' | '' })}
+                    className="h-8 rounded-lg border border-input bg-background px-2.5 text-sm"
                   >
-                    <span className="flex size-6 items-center justify-center rounded-md bg-[#7a68d8]/80">
-                      <FileText className="size-3 text-white" />
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium">{name}</span>
-                    <Lock className="size-3 text-muted-foreground/70" />
+                    <option value="Bearer">Bearer prefix</option>
+                    <option value="">No prefix</option>
+                  </select>
+                </div>
+              </div>
+              <div className="mt-4 flex justify-end gap-2">
+                {detail && <Button variant="ghost" size="sm" onClick={() => setDraft(null)}>Cancel</Button>}
+                <Button size="sm" disabled={saving || !draft.name.trim() || !draft.serverKey.trim() || !draft.url.trim()} onClick={() => void saveServer()}>
+                  {saving ? 'Saving…' : 'Save Server'}
+                </Button>
+              </div>
+            </div>
+          ) : detail ? (
+            <div>
+              <div className="flex items-start gap-3.5">
+                <BotAvatar name={detail.name} color="#3b82f6" className="size-13 rounded-lg text-xl" />
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-xl font-bold tracking-tight">{detail.name}</h2>
+                  <div className="mt-0.5 text-xs text-muted-foreground">{detail.serverKey} · Streamable HTTP</div>
+                </div>
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  {detail.enabled ? 'Enabled' : 'Disabled'}
+                  <Switch checked={detail.enabled} disabled={saving} onCheckedChange={(enabled) => void changeMcpServer({ data: { id: detail.id, patch: { enabled } } }).then(onChanged).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Could not update server'))} />
+                </label>
+              </div>
+              <div className="mt-4 rounded-lg border bg-card px-3 py-2.5 text-xs text-muted-foreground">
+                {configurationOf(detail).url}
+              </div>
+              <div className="mt-3 flex gap-2">
+                <Button size="sm" variant="outline" onClick={() => setDraft(draftOf(detail))}>Edit Server</Button>
+                <Button size="sm" variant="destructive-outline" disabled={saving} onClick={() => void deleteServer(detail)}><Trash2 /> Remove</Button>
+              </div>
+
+              <h3 className="mt-6 mb-2 text-[11px] font-semibold text-muted-foreground">API-key Accounts</h3>
+              <div className="overflow-hidden rounded-lg border">
+                {detailAccounts.map((account) => (
+                  <div key={account.id} className="flex items-center gap-2.5 border-b bg-card px-3 py-2.5 last:border-b-0">
+                    <span className="flex-1 text-sm">{account.label}</span>
+                    <span className="text-[11px] font-medium text-success">{account.status}</span>
+                    <Button variant="ghost" size="icon-xs" aria-label={`Remove ${account.label}`} disabled={saving} onClick={() => void deleteAccount(account)}><Trash2 /></Button>
                   </div>
                 ))}
+                {detailAccounts.length === 0 && !addingAccount && <p className="bg-card px-3 py-3 text-xs text-muted-foreground">No accounts configured.</p>}
+                {addingAccount ? (
+                  <div className="space-y-2 bg-card p-3">
+                    <Input value={accountDraft.label} onChange={(e) => setAccountDraft({ ...accountDraft, label: e.target.value })} placeholder="Account label" />
+                    <Input type="password" autoComplete="new-password" value={accountDraft.apiKey} onChange={(e) => setAccountDraft({ ...accountDraft, apiKey: e.target.value })} placeholder="API key" />
+                    <div className="flex justify-end gap-2">
+                      <Button size="sm" variant="ghost" onClick={() => { setAddingAccount(false); setAccountDraft({ label: '', apiKey: '' }) }}>Cancel</Button>
+                      <Button size="sm" disabled={saving || !accountDraft.label.trim() || !accountDraft.apiKey} onClick={() => void addAccount()}>Add Account</Button>
+                    </div>
+                  </div>
+                ) : (
+                  <button type="button" onClick={() => setAddingAccount(true)} className="flex w-full items-center gap-2 bg-card px-3 py-2.5 text-sm font-medium text-info hover:opacity-80">
+                    <Plus className="size-3.5" /> Add account
+                  </button>
+                )}
               </div>
-              <p className="mt-1.5 text-[11px] text-muted-foreground/70">
-                Included with this plugin to teach bots how to use it.
-              </p>
-            </>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">Add an MCP server to get started.</p>
           )}
+          {error && <p className="mt-4 text-xs text-destructive">{error}</p>}
         </div>
       </div>
     </div>

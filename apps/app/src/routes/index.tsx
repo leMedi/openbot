@@ -29,6 +29,7 @@ import { Button } from '@/components/ui/button'
 import { getAgents } from '@/server/agents'
 import { getServerConfig } from '@/server/config'
 import { getGroups } from '@/server/groups'
+import { getMcpConfiguration } from '@/server/mcp'
 import {
   cancelConversationTurn,
   getConversationMessages,
@@ -60,19 +61,20 @@ const LAST_CONVERSATION_KEY = 'openbot:last-conversation'
 
 export const Route = createFileRoute('/')({
   loader: async () => {
-    const [agents, groups, conversations, config] = await Promise.all([
+    const [agents, groups, conversations, config, mcp] = await Promise.all([
       getAgents(),
       getGroups(),
       getConversations(),
       getServerConfig(),
+      getMcpConfiguration(),
     ])
-    return { agents, groups, conversations, config }
+    return { agents, groups, conversations, config, mcp }
   },
   component: OpenBot,
 })
 
 function OpenBot() {
-  const { agents, groups, conversations: conversationRows, config } = Route.useLoaderData()
+  const { agents, groups, conversations: conversationRows, config, mcp } = Route.useLoaderData()
   const router = useRouter()
 
   const [activeId, setActiveId] = useState(conversationRows[0]?.id ?? '')
@@ -394,10 +396,19 @@ function OpenBot() {
           bot={bot}
           activeAgentId={activeAgent?.id}
           onOpenPlugins={() => setPluginsOpen(true)}
+          mcpServers={mcp.servers}
+          mcpAccounts={mcp.accounts}
+          mcpGrants={mcp.grants}
         />
       )}
 
-      <PluginsDialog open={pluginsOpen} onOpenChange={setPluginsOpen} />
+      <PluginsDialog
+        open={pluginsOpen}
+        onOpenChange={setPluginsOpen}
+        servers={mcp.servers}
+        accounts={mcp.accounts}
+        onChanged={() => router.invalidate()}
+      />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
       <NewConversationDialog
         open={newConvoOpen}
@@ -430,6 +441,12 @@ function OpenBot() {
           onOpenChange={(open) => setBotDialog((s) => ({ ...s, open }))}
           agent={botDialog.agent}
           serverModel={config.model}
+          mcpServers={mcp.servers}
+          mcpAccounts={mcp.accounts}
+          grantedAccountIds={mcp.grants
+            .filter((grant) => grant.agentId === botDialog.agent?.id)
+            .map((grant) => grant.accountId)}
+          onOpenPlugins={() => setPluginsOpen(true)}
           onSaved={async (_saved, firstConversation) => {
             await router.invalidate()
             if (firstConversation) setActiveId(firstConversation.id)

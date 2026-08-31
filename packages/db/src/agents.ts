@@ -1,6 +1,7 @@
-import { eq } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import { assertValidAvatarUpload, type AvatarUpload } from './avatars'
 import { db } from './client'
+import type { DbExecutor } from './conversations'
 import {
   createManagedFile,
   deleteManagedFileIfUnreferenced,
@@ -21,6 +22,20 @@ export type AgentProfileInput = {
   hiddenFromSidebar?: boolean
 }
 
+async function validateMcpAccountIds(executor: DbExecutor, accountIds: string[]) {
+  if (new Set(accountIds).size !== accountIds.length) {
+    throw new Error('MCP account grants contain a duplicate account')
+  }
+  if (accountIds.length === 0) return
+  const found = await executor
+    .select({ id: schema.mcpAccounts.id })
+    .from(schema.mcpAccounts)
+    .where(inArray(schema.mcpAccounts.id, accountIds))
+  const known = new Set(found.map((account) => account.id))
+  const missing = accountIds.filter((id) => !known.has(id))
+  if (missing.length > 0) throw new Error(`Unknown MCP accounts: ${missing.join(', ')}`)
+}
+
 export function listAgents() {
   return db.select().from(schema.agents).orderBy(schema.agents.createdAt)
 }
@@ -38,9 +53,10 @@ export async function getAgent(id: string) {
  * Creates the agent together with its first conversation (titled after the
  * agent) in one transaction, so a new agent never exists without a room.
  */
-export async function createAgent(input: AgentProfileInput) {
+export async function createAgent(input: AgentProfileInput, mcpAccountIds: string[] = []) {
   const now = Date.now()
   return db.transaction(async (tx) => {
+    await validateMcpAccountIds(tx, mcpAccountIds)
     const [agent] = await tx
       .insert(schema.agents)
       .values({
@@ -68,6 +84,15 @@ export async function createAgent(input: AgentProfileInput) {
         updatedAt: now,
       })
       .returning()
+    if (mcpAccountIds.length > 0) {
+      await tx.insert(schema.agentMcpAccounts).values(
+        mcpAccountIds.map((accountId) => ({
+          agentId: agent.id,
+          accountId,
+          enabledAt: now,
+        })),
+      )
+    }
     return { agent, conversation }
   })
 }
@@ -82,6 +107,31 @@ export async function updateAgentProfile(
     .where(eq(schema.agents.id, id))
     .returning()
   return updated
+}
+
+export async function updateAgentProfileAndMcpAccounts(
+  id: string,
+  patch: Partial<AgentProfileInput>,
+  accountIds: string[],
+) {
+  return db.transaction(async (tx) => {
+    await validateMcpAccountIds(tx, accountIds)
+    const [updated] = await tx
+      .update(schema.agents)
+      .set({ ...patch, updatedAt: Date.now() })
+      .where(eq(schema.agents.id, id))
+      .returning()
+    if (!updated) return undefined
+
+    await tx.delete(schema.agentMcpAccounts).where(eq(schema.agentMcpAccounts.agentId, id))
+    if (accountIds.length > 0) {
+      const enabledAt = Date.now()
+      await tx.insert(schema.agentMcpAccounts).values(
+        accountIds.map((accountId) => ({ agentId: id, accountId, enabledAt })),
+      )
+    }
+    return updated
+  })
 }
 
 export async function setAgentAvatar(agentId: string, upload: AvatarUpload) {

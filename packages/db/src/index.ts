@@ -11,6 +11,7 @@ export * from './turns'
 export * from './checkpoints'
 export * from './files'
 export * from './memory'
+export * from './mcp'
 export {
   agents,
   groups,
@@ -20,6 +21,9 @@ export {
   managedFiles,
   memoryItems,
   turns,
+  mcpServers,
+  mcpAccounts,
+  agentMcpAccounts,
 } from './schema'
 export type {
   Agent,
@@ -38,4 +42,8 @@ export type {
   NewMemoryItem,
   Turn,
   NewTurn,
+  McpServer,
+  NewMcpServer,
+  McpAccount,
+  NewMcpAccount,
 } from './schema'
