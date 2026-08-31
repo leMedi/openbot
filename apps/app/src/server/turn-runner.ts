@@ -1,7 +1,6 @@
 import {
   type Agent,
   appendConversationMessage,
-  checkpointStateSchema,
   claimQueuedTurn,
   completeTurn,
   type ConversationMessage,
@@ -11,17 +10,19 @@ import {
   findNextQueuedTurnForGroup,
   getAgent,
   getConversation,
-  getCurrentCheckpoint,
   getGroup,
   getTurn,
   type Group,
   listConversationMessages,
   listQueuedTurns,
-  type ModelMessage,
   queueGroupChildTurn,
   recordTurnExecution,
 } from '@openbot/db'
 import { getAiConfig, streamChatCompletion } from './ai'
+import {
+  assembleGroupModelMessages,
+  assemblePrivateModelMessages,
+} from './prompt-assembly'
 
 // In-memory execution state. Durable truth lives in the turns table; these
 // maps only fan visible output out to connected clients and serialize
@@ -39,32 +40,6 @@ type ActiveTurn = {
 const activeTurns = new Map<string, ActiveTurn>()
 const agentDrains = new Map<string, Promise<void>>()
 const groupDrains = new Map<string, Promise<void>>()
-
-function systemPromptFor(agent: { name: string; description: string }) {
-  const description = agent.description.trim()
-  return [
-    `You are ${agent.name}, a helpful long-lived assistant agent.`,
-    description && `Your operator describes you as: ${description}`,
-    'Answer in Markdown.',
-  ]
-    .filter(Boolean)
-    .join('\n\n')
-}
-
-function groupSystemPromptFor(agent: Agent, group: Group, members: Agent[]) {
-  const description = agent.description.trim()
-  const others = members.filter((m) => m.id !== agent.id).map((m) => m.name)
-  return [
-    `You are ${agent.name}, a helpful long-lived assistant agent.`,
-    description && `Your operator describes you as: ${description}`,
-    `You are speaking in the shared group room "${group.name}"${
-      others.length > 0 ? ` together with ${others.join(', ')}` : ''
-    }. Messages from other members appear as "[name]: …". Reply as yourself, without a name prefix.`,
-    'Answer in Markdown.',
-  ]
-    .filter(Boolean)
-    .join('\n\n')
-}
 
 /** The group's member agents, resolved and kept in membership order. */
 async function memberAgentsOf(group: Group) {
@@ -98,40 +73,6 @@ export function selectGroupMember(members: Agent[], text: string) {
     }
   }
   return best?.agent ?? members[0]
-}
-
-/**
- * Model-facing input for a group room: the shared transcript rebuilt with
- * this member's perspective. There is no per-member checkpoint reuse yet —
- * each member turn re-reads the room, which keeps identity attribution
- * correct when different members answer in sequence.
- */
-function groupModelMessages(
-  rows: ConversationMessage[],
-  agent: Agent,
-  group: Group,
-  members: Agent[],
-): ModelMessage[] {
-  const nameOf = (agentId: string) =>
-    members.find((m) => m.id === agentId)?.name ?? 'Another agent'
-  const history: ModelMessage[] = []
-  for (const row of rows) {
-    if (row.kind !== 'message' || !row.bodyText) continue
-    if (row.role === 'user') {
-      history.push({ role: 'user', content: row.bodyText })
-    } else if (row.senderAgentId === agent.id) {
-      history.push({ role: 'assistant', content: row.bodyText })
-    } else if (row.senderAgentId) {
-      history.push({
-        role: 'user',
-        content: `[${nameOf(row.senderAgentId)}]: ${row.bodyText}`,
-      })
-    }
-  }
-  return [
-    { role: 'system', content: groupSystemPromptFor(agent, group, members) },
-    ...history,
-  ]
 }
 
 async function executeTurn(turnId: string) {
@@ -191,22 +132,24 @@ async function executeTurn(turnId: string) {
     // member's perspective; private rooms use the current checkpoint's frozen
     // history (or a fresh system prompt on the first turn) plus this turn's
     // user messages.
-    let modelMessages: ModelMessage[]
+    let modelMessages
+    let memoryPrompt: { agentId: string; prompt: string } | undefined
     if (group) {
-      const rows = await listConversationMessages(conversation.id)
       const members = await memberAgentsOf(group)
-      modelMessages = groupModelMessages(rows, agent, group, members)
+      const prompt = await assembleGroupModelMessages({
+        agent,
+        group,
+        members,
+        conversationId: conversation.id,
+      })
+      modelMessages = prompt.modelMessages
+      memoryPrompt = { agentId: agent.id, prompt: prompt.memoryPrompt }
     } else {
-      const checkpoint = await getCurrentCheckpoint(conversation.id)
-      const priorMessages: ModelMessage[] = checkpoint
-        ? checkpointStateSchema.parse(checkpoint.stateJson).modelMessages
-        : [{ role: 'system', content: systemPromptFor(agent) }]
-      const turnUserMessages: ModelMessage[] = (
-        await listConversationMessages(conversation.id)
-      )
-        .filter((m) => m.turnId === turnId && m.kind === 'message' && m.role === 'user')
-        .map((m) => ({ role: 'user', content: m.bodyText ?? '' }))
-      modelMessages = [...priorMessages, ...turnUserMessages]
+      modelMessages = await assemblePrivateModelMessages({
+        agent,
+        conversationId: conversation.id,
+        turnId,
+      })
     }
 
     console.info('[agent prompt]', {
@@ -233,6 +176,7 @@ async function executeTurn(turnId: string) {
         version: 1,
         modelMessages: [...modelMessages, { role: 'assistant', content: assistantText }],
       },
+      memoryPrompt,
     })
     emitTerminal({ type: 'done', message: assistantMessage })
   } catch (error) {

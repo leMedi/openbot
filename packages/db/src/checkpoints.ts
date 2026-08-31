@@ -70,14 +70,21 @@ export function createConversationCheckpoint(
 
 /** The checkpoint the conversation currently points at, or undefined. */
 export async function getCurrentCheckpoint(conversationId: string) {
-  const [conversation] = await db
+  return getCurrentCheckpointWithExecutor(conversationId, db)
+}
+
+export async function getCurrentCheckpointWithExecutor(
+  conversationId: string,
+  executor: DbExecutor,
+) {
+  const [conversation] = await executor
     .select()
     .from(schema.conversations)
     .where(eq(schema.conversations.id, conversationId))
     .limit(1)
   if (!conversation?.currentCheckpointId) return undefined
 
-  const [checkpoint] = await db
+  const [checkpoint] = await executor
     .select()
     .from(schema.conversationCheckpoints)
     .where(eq(schema.conversationCheckpoints.id, conversation.currentCheckpointId))

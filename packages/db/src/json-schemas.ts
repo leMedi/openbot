@@ -97,6 +97,7 @@ export const modelMessageSchema = z.object({
 export const checkpointStateSchema = z.object({
   version: z.literal(1),
   modelMessages: z.array(modelMessageSchema),
+  memoryPromptsByAgent: z.record(z.string(), z.string()).optional(),
 })
 
 export const effectiveToolsSchema = z.object({

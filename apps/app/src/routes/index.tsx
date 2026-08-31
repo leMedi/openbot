@@ -365,7 +365,12 @@ function OpenBot() {
       )}
 
       {inspectorOpen && active && bot && (
-        <Inspector conversation={active} bot={bot} onOpenPlugins={() => setPluginsOpen(true)} />
+        <Inspector
+          conversation={active}
+          bot={bot}
+          activeAgentId={activeAgent?.id}
+          onOpenPlugins={() => setPluginsOpen(true)}
+        />
       )}
 
       <PluginsDialog open={pluginsOpen} onOpenChange={setPluginsOpen} />

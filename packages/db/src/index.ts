@@ -9,6 +9,7 @@ export * from './messages'
 export * from './turns'
 export * from './checkpoints'
 export * from './files'
+export * from './memory'
 export {
   agents,
   groups,
@@ -16,6 +17,7 @@ export {
   conversationCheckpoints,
   conversationMessages,
   managedFiles,
+  memoryItems,
   turns,
 } from './schema'
 export type {
@@ -31,6 +33,8 @@ export type {
   NewConversationMessage,
   ManagedFile,
   NewManagedFile,
+  MemoryItem,
+  NewMemoryItem,
   Turn,
   NewTurn,
 } from './schema'
