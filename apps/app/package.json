@@ -37,6 +37,7 @@
     "katex": "^0.18.4",
     "lucide-react": "^1.35.0",
     "mermaid": "^11.17.2",
+    "re2js": "^2.8.6",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-hotkeys-hook": "^5.3.3",
@@ -57,7 +58,7 @@
     "dotenv-cli": "11.0.0",
     "shadcn": "4.19.0",
     "typescript": "7.0.2",
-    "vitest": "^4.1.11",
-    "vite": "8.2.2"
+    "vite": "8.2.2",
+    "vitest": "^4.1.11"
   }
 }

@@ -161,3 +161,146 @@ describe('recallMemory tool', () => {
     expect(limited.items[0].content).toBe('The user deploys on Fridays only.')
   })
 })
+
+describe('runShell tool', () => {
+  it('runs a command in the agent workspace and reports exit status', async () => {
+    const { agent } = await db.createAgent({ name: 'Shell Alpha' })
+
+    const ok = await run(agent, 'runShell', { command: 'echo hello && pwd' })
+    expect(ok.status).toBe('complete')
+    expect(ok.exitCode).toBe(0)
+    expect(ok.shell_id).toBeTruthy()
+    expect(ok.output).toContain('hello')
+    expect(ok.output).toContain(path.join('workspaces', agent.id))
+
+    const failing = await run(agent, 'runShell', { command: 'echo oops >&2; exit 3' })
+    expect(failing.exitCode).toBe(3)
+    expect(failing.output).toContain('oops')
+  })
+
+  it('persists workspace files across calls and confines cwd', async () => {
+    const { agent } = await db.createAgent({ name: 'Shell Beta' })
+
+    await run(agent, 'runShell', { command: 'mkdir -p sub && echo data > sub/file.txt' })
+    const readBack = await run(agent, 'runShell', { command: 'cat file.txt', cwd: 'sub' })
+    expect(readBack.output.trim()).toBe('data')
+
+    const escape = await run(agent, 'runShell', { command: 'pwd', cwd: '../..' })
+    expect(escape.error).toContain('workspace')
+  })
+
+  it('hands back a still-running shell when the timeout elapses', async () => {
+    const { agent } = await db.createAgent({ name: 'Shell Gamma' })
+
+    const result = await run(agent, 'runShell', {
+      command: 'echo started; sleep 5; echo finished',
+      timeoutSeconds: 1,
+    })
+    expect(result.status).toBe('running')
+    expect(result.output).toContain('started')
+    expect(result.output).not.toContain('finished')
+
+    // The command was not killed: it can still be awaited to completion.
+    const done = await run(agent, 'AwaitShell', {
+      shell_id: result.shell_id,
+      block_until_ms: 10_000,
+    })
+    expect(done.status).toBe('complete')
+    expect(done.exitCode).toBe(0)
+  }, 20_000)
+})
+
+describe('Read tool', () => {
+  it('reads whole files and line ranges with optional line numbers', async () => {
+    const { agent } = await db.createAgent({ name: 'Read Alpha' })
+    await run(agent, 'runShell', { command: 'printf "one\\ntwo\\nthree\\nfour\\n" > lines.txt' })
+
+    const whole = await run(agent, 'Read', { path: 'lines.txt' })
+    expect(whole.content).toBe('one\ntwo\nthree\nfour')
+    expect(whole).toMatchObject({ totalLines: 4, startLine: 1, endLine: 4 })
+
+    const range = await run(agent, 'Read', { path: 'lines.txt', offset: 2, limit: 2 })
+    expect(range.content).toBe('two\nthree')
+    expect(range).toMatchObject({ startLine: 2, endLine: 3 })
+
+    const tail = await run(agent, 'Read', { path: 'lines.txt', offset: -2 })
+    expect(tail.content).toBe('three\nfour')
+
+    const numbered = await run(agent, 'Read', {
+      path: 'lines.txt',
+      offset: 3,
+      limit: 1,
+      include_line_numbers: true,
+    })
+    expect(numbered.content).toBe('3\tthree')
+  })
+
+  it('rejects escapes, missing files, and out-of-range offsets', async () => {
+    const { agent } = await db.createAgent({ name: 'Read Beta' })
+
+    const escape = await run(agent, 'Read', { path: '../other/secrets.txt' })
+    expect(escape.error).toContain('workspace')
+
+    const missing = await run(agent, 'Read', { path: 'nope.txt' })
+    expect(missing.error).toContain('not found')
+
+    await run(agent, 'runShell', { command: 'echo only-line > short.txt' })
+    const beyond = await run(agent, 'Read', { path: 'short.txt', offset: 5 })
+    expect(beyond.error).toContain('beyond')
+  })
+})
+
+describe('AwaitShell tool', () => {
+  it('tracks a background shell from running to complete', async () => {
+    const { agent } = await db.createAgent({ name: 'Await Alpha' })
+
+    const started = await run(agent, 'runShell', {
+      command: 'echo ready; sleep 0.5; echo finished',
+      background: true,
+    })
+    expect(started.status).toBe('running')
+    expect(started.shell_id).toBeTruthy()
+
+    const check = await run(agent, 'AwaitShell', { shell_id: started.shell_id, block_until_ms: 0 })
+    expect(check.status).toBe('running')
+
+    const done = await run(agent, 'AwaitShell', {
+      shell_id: started.shell_id,
+      block_until_ms: 10_000,
+    })
+    expect(done.status).toBe('complete')
+    expect(done.exitCode).toBe(0)
+
+    const output = await run(agent, 'Read', { path: done.outputPath })
+    expect(output.content).toBe('ready\nfinished')
+  }, 15_000)
+
+  it('returns early on a pattern match while still running', async () => {
+    const { agent } = await db.createAgent({ name: 'Await Beta' })
+
+    const started = await run(agent, 'runShell', {
+      command: 'echo server listening on 3000; sleep 5',
+      background: true,
+    })
+    const matched = await run(agent, 'AwaitShell', {
+      shell_id: started.shell_id,
+      block_until_ms: 10_000,
+      pattern: 'listening on \\d+',
+    })
+    expect(matched.status).toBe('running')
+    expect(matched.patternMatch).toBe('listening on 3000')
+  }, 15_000)
+
+  it('sleeps without a shell id and rejects unknown ids', async () => {
+    const { agent } = await db.createAgent({ name: 'Await Gamma' })
+
+    const slept = await run(agent, 'AwaitShell', { block_until_ms: 100 })
+    expect(slept.slept_ms).toBe(100)
+
+    const unknown = await run(agent, 'AwaitShell', { shell_id: '999', block_until_ms: 0 })
+    expect(unknown.error).toContain('No shell found')
+
+    const invalid = await run(agent, 'AwaitShell', { block_until_ms: 0 })
+    expect(invalid.error).toContain('shell_id')
+  })
+})

@@ -1,4 +1,5 @@
 export { db } from './client'
+export { dataDirectory } from './env'
 export * from './ids'
 export * from './json-schemas'
 export * from './agents'
