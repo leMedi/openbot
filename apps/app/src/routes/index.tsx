@@ -96,6 +96,14 @@ function OpenBot() {
   const [renameTarget, setRenameTarget] = useState<BotConversation | null>(null)
   const [clearTarget, setClearTarget] = useState<BotConversation | null>(null)
 
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    if (!url.searchParams.has('mcpOAuth')) return
+    setPluginsOpen(true)
+    url.searchParams.delete('mcpOAuth')
+    window.history.replaceState(null, '', url)
+  }, [])
+
   const agentBots = useMemo(
     () => agents.map((agent) => botFromAgent(agent, config.model)),
     [agents, config.model],

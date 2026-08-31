@@ -102,7 +102,7 @@ function PluginsTab({
   const [creatingServer, setCreatingServer] = useState(servers.length === 0)
   const [draft, setDraft] = useState<McpDraft | null>(servers.length === 0 ? draftOf() : null)
   const [accountDraft, setAccountDraft] = useState({ label: '', apiKey: '' })
-  const [addingAccount, setAddingAccount] = useState(false)
+  const [addingAccount, setAddingAccount] = useState<'api_key' | 'oauth' | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -186,13 +186,22 @@ function PluginsTab({
         },
       })
       setAccountDraft({ label: '', apiKey: '' })
-      setAddingAccount(false)
+      setAddingAccount(null)
       await onChanged()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not add the MCP account')
     } finally {
       setSaving(false)
     }
+  }
+
+  function connectOauthAccount() {
+    if (!detail || saving || !accountDraft.label.trim()) return
+    setSaving(true)
+    const authorization = new URL('/api/mcp/oauth/start', window.location.origin)
+    authorization.searchParams.set('serverId', detail.id)
+    authorization.searchParams.set('label', accountDraft.label)
+    window.location.assign(authorization)
   }
 
   async function deleteAccount(account: SafeMcpAccount) {
@@ -328,11 +337,14 @@ function PluginsTab({
                 <Button size="sm" variant="destructive-outline" disabled={saving} onClick={() => void deleteServer(detail)}><Trash2 /> Remove</Button>
               </div>
 
-              <h3 className="mt-6 mb-2 text-[11px] font-semibold text-muted-foreground">API-key Accounts</h3>
+              <h3 className="mt-6 mb-2 text-[11px] font-semibold text-muted-foreground">Accounts</h3>
               <div className="overflow-hidden rounded-lg border">
                 {detailAccounts.map((account) => (
                   <div key={account.id} className="flex items-center gap-2.5 border-b bg-card px-3 py-2.5 last:border-b-0">
                     <span className="flex-1 text-sm">{account.label}</span>
+                    <Badge variant="secondary" className="text-[10px]">
+                      {account.authType === 'oauth' ? 'OAuth' : 'API key'}
+                    </Badge>
                     <span className="text-[11px] font-medium text-success">{account.status}</span>
                     <Button variant="ghost" size="icon-xs" aria-label={`Remove ${account.label}`} disabled={saving} onClick={() => void deleteAccount(account)}><Trash2 /></Button>
                   </div>
@@ -341,16 +353,26 @@ function PluginsTab({
                 {addingAccount ? (
                   <div className="space-y-2 bg-card p-3">
                     <Input value={accountDraft.label} onChange={(e) => setAccountDraft({ ...accountDraft, label: e.target.value })} placeholder="Account label" />
-                    <Input type="password" autoComplete="new-password" value={accountDraft.apiKey} onChange={(e) => setAccountDraft({ ...accountDraft, apiKey: e.target.value })} placeholder="API key" />
+                    {addingAccount === 'api_key' && <Input type="password" autoComplete="new-password" value={accountDraft.apiKey} onChange={(e) => setAccountDraft({ ...accountDraft, apiKey: e.target.value })} placeholder="API key" />}
+                    {addingAccount === 'oauth' && <p className="text-xs text-muted-foreground">You will continue to the provider to authorize this account.</p>}
                     <div className="flex justify-end gap-2">
-                      <Button size="sm" variant="ghost" onClick={() => { setAddingAccount(false); setAccountDraft({ label: '', apiKey: '' }) }}>Cancel</Button>
-                      <Button size="sm" disabled={saving || !accountDraft.label.trim() || !accountDraft.apiKey} onClick={() => void addAccount()}>Add Account</Button>
+                      <Button size="sm" variant="ghost" onClick={() => { setAddingAccount(null); setAccountDraft({ label: '', apiKey: '' }) }}>Cancel</Button>
+                      {addingAccount === 'api_key' ? (
+                        <Button size="sm" disabled={saving || !accountDraft.label.trim() || !accountDraft.apiKey} onClick={() => void addAccount()}>Add Account</Button>
+                      ) : (
+                        <Button size="sm" disabled={saving || !accountDraft.label.trim()} onClick={connectOauthAccount}>Connect OAuth</Button>
+                      )}
                     </div>
                   </div>
                 ) : (
-                  <button type="button" onClick={() => setAddingAccount(true)} className="flex w-full items-center gap-2 bg-card px-3 py-2.5 text-sm font-medium text-info hover:opacity-80">
-                    <Plus className="size-3.5" /> Add account
-                  </button>
+                  <div className="grid grid-cols-2 divide-x border-t bg-card">
+                    <button type="button" onClick={() => setAddingAccount('api_key')} className="flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium text-info hover:bg-muted/50">
+                      <Plus className="size-3.5" /> Add API key
+                    </button>
+                    <button type="button" onClick={() => setAddingAccount('oauth')} className="flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium text-info hover:bg-muted/50">
+                      <Link2 className="size-3.5" /> Connect OAuth
+                    </button>
+                  </div>
                 )}
               </div>
             </div>

@@ -2,7 +2,7 @@ import { and, asc, eq, inArray } from 'drizzle-orm'
 import * as z from 'zod'
 import { db } from './client'
 import { createId } from './ids'
-import { apiKeyCredentialsSchema } from './json-schemas'
+import { apiKeyCredentialsSchema, oauthCredentialsSchema } from './json-schemas'
 import * as schema from './schema'
 
 export const mcpTransportSchema = z.literal('streamable_http')
@@ -57,6 +57,12 @@ export const mcpApiKeyAccountCreateSchema = z.object({
     .refine((value) => !/[\0\r\n]/.test(value), 'API key contains invalid characters'),
 })
 
+export const mcpOauthAccountCreateSchema = z.object({
+  serverId: z.string().min(1),
+  label: mcpApiKeyAccountCreateSchema.shape.label,
+  credentials: oauthCredentialsSchema,
+})
+
 export const mcpAccountUpdateSchema = z
   .object({
     label: mcpApiKeyAccountCreateSchema.shape.label.optional(),
@@ -67,11 +73,12 @@ export const mcpAccountUpdateSchema = z
 export type McpServerCreateInput = z.input<typeof mcpServerCreateSchema>
 export type McpServerUpdate = z.input<typeof mcpServerUpdateSchema>
 export type McpApiKeyAccountCreateInput = z.input<typeof mcpApiKeyAccountCreateSchema>
+export type McpOauthAccountCreateInput = z.input<typeof mcpOauthAccountCreateSchema>
 export type McpAccountUpdate = z.input<typeof mcpAccountUpdateSchema>
 export type McpStreamableHttpConfiguration = z.infer<
   typeof mcpStreamableHttpConfigurationSchema
 >
-export type RuntimeMcpAccount = {
+type RuntimeMcpAccountBase = {
   accountId: string
   accountLabel: string
   serverId: string
@@ -79,8 +86,19 @@ export type RuntimeMcpAccount = {
   serverName: string
   transport: 'streamable_http'
   configuration: McpStreamableHttpConfiguration
-  credentials: z.infer<typeof apiKeyCredentialsSchema>
 }
+
+export type RuntimeMcpAccount = RuntimeMcpAccountBase &
+  (
+    | {
+        authType: 'api_key'
+        credentials: z.infer<typeof apiKeyCredentialsSchema>
+      }
+    | {
+        authType: 'oauth'
+        credentials: z.infer<typeof oauthCredentialsSchema>
+      }
+  )
 
 const safeAccountSelection = {
   id: schema.mcpAccounts.id,
@@ -233,6 +251,54 @@ export async function createMcpApiKeyAccount(input: McpApiKeyAccountCreateInput)
   }
 }
 
+export async function createMcpOauthAccount(input: McpOauthAccountCreateInput) {
+  const validated = mcpOauthAccountCreateSchema.parse(input)
+  const now = Date.now()
+  try {
+    const [created] = await db
+      .insert(schema.mcpAccounts)
+      .values({
+        id: createId('acc'),
+        serverId: validated.serverId,
+        label: validated.label,
+        authType: 'oauth',
+        credentialsJson: validated.credentials,
+        tokenExpiresAt: validated.credentials.expiresAt,
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning({ id: schema.mcpAccounts.id })
+    const account = await getMcpAccount(created.id)
+    if (!account) throw new Error('Created MCP account could not be read')
+    return account
+  } catch {
+    throw new Error('Could not create MCP account')
+  }
+}
+
+export async function updateMcpOauthCredentials(
+  id: string,
+  credentials: z.input<typeof oauthCredentialsSchema>,
+) {
+  const validated = oauthCredentialsSchema.parse(credentials)
+  try {
+    const [updated] = await db
+      .update(schema.mcpAccounts)
+      .set({
+        credentialsJson: validated,
+        tokenExpiresAt: validated.expiresAt,
+        status: 'active',
+        updatedAt: Date.now(),
+      })
+      .where(and(eq(schema.mcpAccounts.id, id), eq(schema.mcpAccounts.authType, 'oauth')))
+      .returning({ id: schema.mcpAccounts.id })
+    return updated ? getMcpAccount(updated.id) : undefined
+  } catch {
+    throw new Error('Could not update MCP account credentials')
+  }
+}
+
 export async function updateMcpAccount(id: string, patch: McpAccountUpdate) {
   const validated = mcpAccountUpdateSchema.parse(patch)
   try {
@@ -337,19 +403,30 @@ export async function listRuntimeMcpAccountsForAgent(
         eq(schema.agentMcpAccounts.agentId, agentId),
         eq(schema.mcpServers.enabled, true),
         eq(schema.mcpAccounts.status, 'active'),
-        eq(schema.mcpAccounts.authType, 'api_key'),
       ),
     )
     .orderBy(asc(schema.agentMcpAccounts.enabledAt), asc(schema.mcpAccounts.id))
 
-  return rows.map((row) => ({
-    accountId: row.accountId,
-    accountLabel: row.accountLabel,
-    serverId: row.serverId,
-    serverKey: row.serverKey,
-    serverName: row.serverName,
-    transport: mcpTransportSchema.parse(row.transport),
-    configuration: mcpStreamableHttpConfigurationSchema.parse(row.configurationJson),
-    credentials: apiKeyCredentialsSchema.parse(row.credentialsJson),
-  }))
+  return rows.map((row): RuntimeMcpAccount => {
+    const base = {
+      accountId: row.accountId,
+      accountLabel: row.accountLabel,
+      serverId: row.serverId,
+      serverKey: row.serverKey,
+      serverName: row.serverName,
+      transport: mcpTransportSchema.parse(row.transport),
+      configuration: mcpStreamableHttpConfigurationSchema.parse(row.configurationJson),
+    }
+    return row.authType === 'api_key'
+      ? {
+          ...base,
+          authType: 'api_key',
+          credentials: apiKeyCredentialsSchema.parse(row.credentialsJson),
+        }
+      : {
+          ...base,
+          authType: 'oauth',
+          credentials: oauthCredentialsSchema.parse(row.credentialsJson),
+        }
+  })
 }

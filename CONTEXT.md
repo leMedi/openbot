@@ -322,8 +322,9 @@ Accounts use either API-key or OAuth authentication.
 
 Credential JSON is versioned and validated according to authentication type.
 OAuth credentials can include access token, refresh token, token type, scopes,
-and expiry. OAuth state and PKCE verifier are kept only in memory; an in-flight
-authorization fails if the server restarts.
+expiry, and the dynamically registered client information needed to refresh
+tokens after restart. OAuth state and PKCE verifier are kept only in memory; an
+in-flight authorization fails if the server restarts.
 
 MCP credentials are plaintext in the MVP database. This is a consciously
 accepted temporary security limitation. Credential rows must never be
@@ -403,13 +404,20 @@ answer carries `sender_agent_id` in the shared transcript only. Selection
 from recent room context, multi-member sequential rounds, and further bounded
 rounds remain future work.
 
+MCP configuration is implemented for Streamable HTTP servers, multiple labeled
+API-key and OAuth accounts, explicit per-agent grants, and per-turn tool
+discovery. OAuth uses server-side discovery, dynamic client registration, PKCE,
+an in-memory authorization flow, persisted versioned tokens and client
+information, and automatic refresh of expired access tokens. Normal APIs expose
+only safe account metadata; credential-bearing values are restricted to the
+runtime connection path and redacted from model-visible tool surfaces.
+
 Remaining implementation slices are:
 
 1. Transactional direct agent delivery.
 2. Group selection from room context and bounded multi-member rounds.
 3. User-uploaded attachments (agent-sent attachments and the managed-file
    serving route are implemented).
-4. MCP server, account, OAuth callback, and safe credential access services.
 
 ## Source Map
 
@@ -447,6 +455,8 @@ Remaining implementation slices are:
 - `apps/app/src/server/ai.ts`: OpenAI-compatible streaming inference client.
 - `apps/app/src/server/agent-tools.ts`: agent tool definitions and executor,
   including the SendMessage delivery tool.
+- `apps/app/src/server/mcp-oauth.server.ts`: runtime-held OAuth authorization
+  flows, PKCE callback exchange, credential persistence, and token refresh.
 - `apps/app/src/server/send-message-reminders.ts`: delivery accounting and
   the reminder/nudge texts enforcing the SendMessage contract.
 - `apps/app/src/server/turn-runner.ts`: turn executor, group orchestrator,
@@ -457,6 +467,9 @@ Remaining implementation slices are:
   visible output.
 - `apps/app/src/routes/api.files.$fileId.ts`: managed-file serving API for
   transcript attachments.
+- `apps/app/src/routes/api.mcp.oauth.start.ts` and
+  `api.mcp.oauth.callback.ts`: browser redirect and callback boundary for MCP
+  OAuth accounts.
 - `apps/app/src/routes/index.tsx`: current agent registry UI.
 
 Generated migrations are deployment artifacts. They do not replace

@@ -55,6 +55,68 @@ describe('MCP configuration', () => {
     expect(await database.deleteMcpServer(server.id)).toBe(true)
   })
 
+  it('persists OAuth accounts behind the safe account boundary', async () => {
+    const server = await database.createMcpServer({
+      serverKey: 'oauth-storage',
+      name: 'OAuth Storage MCP',
+      transport: 'streamable_http',
+      configuration,
+    })
+    const accessToken = 'oauth-access-secret'
+    const refreshToken = 'oauth-refresh-secret'
+    const expiresAt = Date.now() + 60_000
+    const account = await database.createMcpOauthAccount({
+      serverId: server.id,
+      label: 'OAuth Production',
+      credentials: {
+        version: 1,
+        accessToken,
+        refreshToken,
+        tokenType: 'Bearer',
+        scope: ['mcp:tools', 'offline_access'],
+        expiresAt,
+        clientId: 'dynamic-client',
+        clientSecret: 'oauth-client-secret',
+        tokenEndpointAuthMethod: 'client_secret_post',
+        resourceServerUrl: configuration.url,
+        authorizationServerUrl: 'https://auth.example.test/',
+        tokenEndpoint: 'https://auth.example.test/token',
+        resource: configuration.url,
+        issuer: 'https://auth.example.test/',
+      },
+    })
+
+    expect(account).toMatchObject({
+      serverId: server.id,
+      label: 'OAuth Production',
+      authType: 'oauth',
+      tokenExpiresAt: expiresAt,
+    })
+    expect(account).not.toHaveProperty('credentialsJson')
+    expect(JSON.stringify(await database.listMcpAccounts(server.id))).not.toContain(accessToken)
+    expect(JSON.stringify(await database.listMcpAccounts(server.id))).not.toContain(refreshToken)
+
+    const replacedAccessToken = 'replacement-oauth-access-secret'
+    const replaced = await database.updateMcpOauthCredentials(account.id, {
+      version: 1,
+      accessToken: replacedAccessToken,
+      refreshToken,
+      tokenType: 'Bearer',
+      scope: ['mcp:tools'],
+      expiresAt: expiresAt + 60_000,
+      clientId: 'dynamic-client',
+      clientSecret: 'oauth-client-secret',
+      tokenEndpointAuthMethod: 'client_secret_post',
+      resourceServerUrl: configuration.url,
+      authorizationServerUrl: 'https://auth.example.test/',
+      tokenEndpoint: 'https://auth.example.test/token',
+      resource: configuration.url,
+      issuer: 'https://auth.example.test/',
+    })
+    expect(replaced?.tokenExpiresAt).toBe(expiresAt + 60_000)
+    expect(JSON.stringify(replaced)).not.toContain(replacedAccessToken)
+  })
+
   it('validates API-key credentials and non-secret transport configuration', async () => {
     await expect(
       database.createMcpServer({
@@ -118,16 +180,44 @@ describe('MCP configuration', () => {
       label: 'Second',
       apiKey: 'second-runtime-secret',
     })
+    const oauth = await database.createMcpOauthAccount({
+      serverId: server.id,
+      label: 'OAuth',
+      credentials: {
+        version: 1,
+        accessToken: 'oauth-runtime-secret',
+        refreshToken: null,
+        tokenType: 'Bearer',
+        scope: ['mcp:tools'],
+        expiresAt: null,
+        clientId: 'runtime-client',
+        clientSecret: null,
+        tokenEndpointAuthMethod: 'none',
+        resourceServerUrl: configuration.url,
+        authorizationServerUrl: 'https://auth.example.test/',
+        tokenEndpoint: 'https://auth.example.test/token',
+        resource: configuration.url,
+        issuer: 'https://auth.example.test/',
+      },
+    })
 
-    await database.setAgentMcpAccounts(alpha.id, [first.id, second.id])
+    await database.setAgentMcpAccounts(alpha.id, [first.id, second.id, oauth.id])
     expect((await database.listAgentMcpAccounts(alpha.id)).map((item) => item.id)).toEqual(
       expect.arrayContaining([first.id, second.id]),
     )
     expect(await database.listAgentMcpAccounts(beta.id)).toEqual([])
 
     const runtime = await database.listRuntimeMcpAccountsForAgent(alpha.id)
-    expect(runtime.map((item) => item.credentials.apiKey)).toEqual(
-      expect.arrayContaining(['first-runtime-secret', 'second-runtime-secret']),
+    expect(
+      runtime.map((item) =>
+        item.authType === 'api_key' ? item.credentials.apiKey : item.credentials.accessToken,
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        'first-runtime-secret',
+        'second-runtime-secret',
+        'oauth-runtime-secret',
+      ]),
     )
     expect(await database.listRuntimeMcpAccountsForAgent(beta.id)).toEqual([])
 

@@ -19,6 +19,7 @@ const account: RuntimeMcpAccount = {
   serverId: 'mcp_server',
   serverKey: 'example',
   serverName: 'Example MCP',
+  authType: 'api_key',
   transport: 'streamable_http',
   configuration: {
     version: 1,
@@ -90,5 +91,57 @@ describe('per-turn MCP tools', () => {
       }
     })
     expect(registry.definitions.map((definition) => definition.function.name)).toHaveLength(1)
+  })
+
+  it('redacts OAuth access, refresh, and client secrets from tool surfaces', async () => {
+    const oauthAccount: RuntimeMcpAccount = {
+      ...account,
+      accountId: 'acc_oauth',
+      accountLabel: 'OAuth',
+      authType: 'oauth',
+      credentials: {
+        version: 1,
+        accessToken: 'oauth-access-secret',
+        refreshToken: 'oauth-refresh-secret',
+        tokenType: 'Bearer',
+        scope: ['mcp:tools'],
+        expiresAt: null,
+        clientId: 'oauth-client',
+        clientSecret: 'oauth-client-secret',
+        tokenEndpointAuthMethod: 'client_secret_post',
+        resourceServerUrl: 'https://mcp.example.test/mcp',
+        authorizationServerUrl: 'https://auth.example.test/',
+        tokenEndpoint: 'https://auth.example.test/token',
+        resource: 'https://mcp.example.test/mcp',
+        issuer: 'https://auth.example.test/',
+      },
+    }
+    const connection: McpClientConnection = {
+      listTools: async () => ({
+        tools: [
+          {
+            name: 'oauth-access-secret-tool',
+            description: 'oauth-refresh-secret and oauth-client-secret',
+            inputSchema: { type: 'object' },
+          },
+        ],
+      }),
+      callTool: async () => ({
+        content: [{ type: 'text', text: 'oauth-access-secret oauth-refresh-secret' }],
+      }),
+      close: async () => {},
+    }
+    const registry = await createMcpToolRegistry([oauthAccount], async () => connection)
+    expect(JSON.stringify(registry.definitions)).not.toContain('oauth-access-secret')
+    expect(JSON.stringify(registry.definitions)).not.toContain('oauth-refresh-secret')
+    expect(JSON.stringify(registry.definitions)).not.toContain('oauth-client-secret')
+
+    const result = await registry.execute({
+      id: 'oauth-call',
+      type: 'function',
+      function: { name: registry.definitions[0].function.name, arguments: '{}' },
+    })
+    expect(result).not.toContain('oauth-access-secret')
+    expect(result).not.toContain('oauth-refresh-secret')
   })
 })

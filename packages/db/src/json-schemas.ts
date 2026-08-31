@@ -171,13 +171,40 @@ export const apiKeyCredentialsSchema = z.object({
   apiKey: z.string().min(1),
 })
 
+const oauthCredentialValueSchema = z
+  .string()
+  .min(1)
+  .max(20_000)
+  .refine((value) => !/[\0\r\n]/.test(value), 'OAuth credential contains invalid characters')
+
+const oauthUrlSchema = z.url().refine((value) => {
+  const url = new URL(value)
+  return (
+    (url.protocol === 'http:' || url.protocol === 'https:') &&
+    !url.username &&
+    !url.password
+  )
+}, 'OAuth URL must be HTTP(S) and cannot contain credentials')
+
 export const oauthCredentialsSchema = z.object({
   version: z.literal(1),
-  accessToken: z.string().min(1),
-  refreshToken: z.string().min(1).nullable(),
-  tokenType: z.string().min(1),
-  scope: z.array(z.string()),
+  accessToken: oauthCredentialValueSchema,
+  refreshToken: oauthCredentialValueSchema.nullable(),
+  tokenType: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/),
+  scope: z.array(z.string().min(1).max(1_000)),
   expiresAt: z.number().int().nonnegative().nullable(),
+  clientId: oauthCredentialValueSchema,
+  clientSecret: oauthCredentialValueSchema.nullable(),
+  tokenEndpointAuthMethod: z.string().min(1).nullable(),
+  resourceServerUrl: oauthUrlSchema,
+  authorizationServerUrl: oauthUrlSchema,
+  tokenEndpoint: oauthUrlSchema,
+  resource: oauthUrlSchema.nullable(),
+  issuer: oauthUrlSchema,
 })
 
 export type VersionedObject = z.infer<typeof versionedObjectSchema>

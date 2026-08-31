@@ -7,6 +7,7 @@ import {
   type RuntimeMcpAccount,
 } from '@openbot/db'
 import type { ToolDefinition } from './ai'
+import { refreshExpiredMcpOauthAccounts } from './mcp-oauth.server'
 
 const MAX_TOOL_RESULT_LENGTH = 50_000
 const MCP_DISCOVERY_TIMEOUT_MS = 10_000
@@ -49,8 +50,26 @@ export type McpToolRegistry = {
 }
 
 function credentialHeader(account: RuntimeMcpAccount) {
+  if (account.authType === 'oauth') {
+    return `${account.credentials.tokenType} ${account.credentials.accessToken}`
+  }
   const prefix = account.configuration.apiKeyPrefix.trim()
   return prefix ? `${prefix} ${account.credentials.apiKey}` : account.credentials.apiKey
+}
+
+function credentialHeaderName(account: RuntimeMcpAccount) {
+  return account.authType === 'oauth'
+    ? 'Authorization'
+    : account.configuration.apiKeyHeader
+}
+
+function accountSecrets(account: RuntimeMcpAccount) {
+  if (account.authType === 'api_key') return [account.credentials.apiKey]
+  return [
+    account.credentials.accessToken,
+    account.credentials.refreshToken,
+    account.credentials.clientSecret,
+  ].filter((value): value is string => Boolean(value))
 }
 
 async function connectMcpAccount(
@@ -61,7 +80,7 @@ async function connectMcpAccount(
   const transport = new StreamableHTTPClientTransport(new URL(account.configuration.url), {
     requestInit: {
       headers: {
-        [account.configuration.apiKeyHeader]: credentialHeader(account),
+        [credentialHeaderName(account)]: credentialHeader(account),
       },
     },
   })
@@ -134,7 +153,7 @@ export async function createMcpToolRegistry(
   const definitions: ToolDefinition[] = []
   const tools = new Map<string, RegisteredTool>()
   const connections = new Set<McpClientConnection>()
-  const secrets = accounts.map((account) => account.credentials.apiKey).filter(Boolean)
+  const secrets = accounts.flatMap(accountSecrets)
 
   const discoveredAccounts = await Promise.all(
     accounts.map(async (account) => {
@@ -168,12 +187,14 @@ export async function createMcpToolRegistry(
           if (tools.has(name)) continue
           const safeDescription = redactValue(tool.description ?? '', secrets)
           const safeSchema = redactValue(tool.inputSchema, secrets)
+          const safeServerName = redactValue(account.serverName, secrets)
+          const safeAccountLabel = redactValue(account.accountLabel, secrets)
           definitions.push({
             type: 'function',
             function: {
               name,
               description:
-                `[${account.serverName} / ${account.accountLabel}] ${
+                `[${safeServerName} / ${safeAccountLabel}] ${
                   typeof safeDescription === 'string' ? safeDescription : 'MCP tool'
                 }`,
               parameters:
@@ -223,7 +244,7 @@ export async function createMcpToolRegistry(
 
 export async function discoverMcpToolsForTurn(agentId: string, signal?: AbortSignal) {
   return createMcpToolRegistry(
-    await listRuntimeMcpAccountsForAgent(agentId),
+    await refreshExpiredMcpOauthAccounts(await listRuntimeMcpAccountsForAgent(agentId)),
     connectMcpAccount,
     signal,
   )
