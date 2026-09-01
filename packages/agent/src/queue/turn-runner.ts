@@ -13,59 +13,35 @@ import {
   getTurn,
   type Group,
   listConversationMessages,
+  listPromptMemoryForAgent,
   listQueuedTurns,
-  markTurnWaiting,
-  type ModelMessage,
-  modelMessageSchema,
-  queueGroupChildTurn,
+  queueGroupChildTurns,
   recordTurnExecution,
   type WaitingState,
   waitingStateSchema,
 } from '@openbot/db'
-import * as z from 'zod'
-import { getAiConfig, streamChatCompletion, type ToolChoice, type ToolDefinition } from '../ai'
+import {
+  createAgentSession,
+  DefaultResourceLoader,
+  SessionManager,
+  SettingsManager,
+} from '@earendil-works/pi-coding-agent'
+import { discoverMcpToolsForTurn, type McpToolRegistry } from '@openbot/plugins'
+import { getAiConfig, getOpenbotModel, piAgentDirectory, piSessionDirectory } from '../ai'
+import { renderGroupTurnPrompt, renderPrivateTurnPrompt } from '../prompt/assembly'
+import { renderSystemPrompt } from '../prompt/system'
 import {
   agentToolDefinitions,
   backgroundToolDefinitions,
-  executeAgentToolCall,
-  SEND_MESSAGE_TOOL_NAME,
-  sendMessageOnlyToolDefinitions,
   type ToolTurnContext,
 } from '../tools'
-import {
-  assembleGroupModelMessages,
-  assemblePrivateModelMessages,
-  renderPrivateSystemMessage,
-} from '../prompt/assembly'
-import { discoverMcpToolsForTurn, type McpToolRegistry } from '@openbot/plugins'
-import {
-  CLOSING_NUDGE_ROUNDS,
-  CLOSING_SEND_NUDGE,
-  FINAL_REPLY_NUDGE,
-  initialDeliveryState,
-  isSystemReminder,
-  MAX_FINAL_REPLY_NUDGES,
-  MAX_SEND_ONLY_ROUNDS,
-  planRoundReminder,
-  recordDelivery,
-  REPLY_REMINDER,
-  restartedTurnReminder,
-  TOOL_BUDGET_EXHAUSTED_REMINDER,
-  wrapSystemReminder,
-} from './reminders'
+import { toPiBuiltinTools, toPiMcpTools } from '../tools/pi'
+import { agentWorkspaceDirectory } from '../tools/shell/workspace'
 
-// A turn may interleave tool calls and completions; after this many rounds
-// the toolset degrades to SendMessage only, so delivery stays possible.
-const MAX_TOOL_ROUNDS = 8
-
-// Mid-turn history stored on a waiting turn so the resumed run replays a
-// coherent tool transcript (the system prompt is re-rendered on resume).
-const resumeMessagesSchema = z.object({ modelMessages: z.array(modelMessageSchema) })
-
-// In-memory execution state. Durable truth lives in the turns table; these
-// maps only fan visible output out to connected clients and serialize
-// execution per target. Plain assistant text is model-private: the only
-// visible output is delivered SendMessage rows.
+// In-memory execution state. Durable truth lives in the turns table and the
+// per-conversation pi session files; these maps only fan visible output out
+// to connected clients and serialize execution per target. Plain assistant
+// text is model-private: the only visible output is delivered SendMessage rows.
 export type TurnStreamEvent =
   | { type: 'message'; message: ConversationMessage }
   | { type: 'done'; turnId: string }
@@ -76,6 +52,8 @@ type ActiveTurn = {
   delivered: ConversationMessage[]
   controller: AbortController
   subscribers: Set<(event: TurnStreamEvent) => void>
+  /** Set once the pi session exists; cancellation aborts the running loop. */
+  abortSession?: () => Promise<void>
 }
 
 const activeTurns = new Map<string, ActiveTurn>()
@@ -93,12 +71,12 @@ async function memberAgentsOf(group: Group) {
 }
 
 /**
- * MVP member selection: the first member mentioned in the posted text (by
- * `@name` or plain name on word boundaries, earliest occurrence wins),
- * falling back to the first member in membership order. Selection from
- * recent room context and multi-member rounds are future work.
+ * Member mention lookup: the first member mentioned in the posted text (by
+ * `@name` or plain name on word boundaries, earliest occurrence wins), or
+ * undefined when no member is mentioned — the round then fans out to every
+ * member, one turn each, in membership order.
  */
-export function selectGroupMember(members: Agent[], text: string) {
+export function findMentionedMember(members: Agent[], text: string) {
   let best: { agent: Agent; index: number } | undefined
   for (const agent of members) {
     const name = agent.name.trim()
@@ -113,7 +91,17 @@ export function selectGroupMember(members: Agent[], text: string) {
       best = { agent, index: match.index }
     }
   }
-  return best?.agent ?? members[0]
+  return best?.agent
+}
+
+/** A model round that ended in a wire/provider error fails the turn. */
+function throwOnModelError(messages: readonly unknown[]) {
+  const last = messages.at(-1) as
+    | { role?: string; stopReason?: string; errorMessage?: string }
+    | undefined
+  if (last?.role === 'assistant' && last.stopReason === 'error') {
+    throw new Error(last.errorMessage ?? 'Model request failed')
+  }
 }
 
 async function executeTurn(turnId: string) {
@@ -137,6 +125,7 @@ async function executeTurn(turnId: string) {
     for (const subscriber of subscribers) subscriber(event)
   }
   let mcpRegistry: McpToolRegistry | undefined
+  let session: { dispose(): void } | undefined
 
   try {
     const conversation = await getConversation(claimed.conversationId)
@@ -157,30 +146,30 @@ async function executeTurn(turnId: string) {
     if (conversation.ownerGroupId && !group) {
       throw new Error(`Group ${conversation.ownerGroupId} not found`)
     }
+    const members = group ? await memberAgentsOf(group) : undefined
 
     const config = getAiConfig()
     const waitingState = claimed.waitingStateJson
       ? waitingStateSchema.parse(claimed.waitingStateJson)
       : undefined
-    // Visible turns carry the delivery contract (SendMessage + reminders);
-    // hidden background work has no user to talk to and is exempt.
-    const remindersApply = claimed.lane !== 'background'
-    const builtInToolDefinitions = remindersApply
-      ? agentToolDefinitions
-      : backgroundToolDefinitions
+    // Hidden background work has no user to talk to, so no SendMessage.
+    const builtInToolDefinitions =
+      claimed.lane !== 'background' ? agentToolDefinitions : backgroundToolDefinitions
     const currentMcpRegistry = await discoverMcpToolsForTurn(
       agent.id,
       active.controller.signal,
     )
     mcpRegistry = currentMcpRegistry
-    const toolDefinitions = [...builtInToolDefinitions, ...currentMcpRegistry.definitions]
     // Historical snapshot of what this execution actually used.
     await recordTurnExecution(turnId, {
-      modelProvider: 'openai-compatible',
+      modelProvider: 'pi',
       modelId: config.model,
       effectiveTools: {
         version: 1,
-        tools: toolDefinitions.map((tool) => tool.function.name),
+        tools: [
+          ...builtInToolDefinitions.map((tool) => tool.function.name),
+          ...currentMcpRegistry.definitions.map((tool) => tool.function.name),
+        ],
       },
       effectivePermissions: { version: 1, approvalMode: agent.approvalMode },
       runtimeContext: {
@@ -189,7 +178,6 @@ async function executeTurn(turnId: string) {
         lane: claimed.lane,
         mode: claimed.mode,
         ...(waitingState && {
-          resumeData: waitingState.resumeData,
           originatingToolCall: waitingState.originatingToolCall,
           response: waitingState.response,
         }),
@@ -197,8 +185,8 @@ async function executeTurn(turnId: string) {
     })
 
     // Rows an earlier claim of this turn already delivered (a crashed attempt
-    // or the pre-suspension half of a widget turn): they seed the delivery
-    // accounting and let the executor dedupe identical resends.
+    // or the pre-suspension half of a widget turn): they let the SendMessage
+    // executor dedupe identical resends.
     const priorDeliveries =
       claimed.attemptCount > 1
         ? (await listConversationMessages(conversation.id)).filter(
@@ -207,54 +195,6 @@ async function executeTurn(turnId: string) {
               row.payloadJson.deliveryKind === 'send-message',
           )
         : []
-    const state = initialDeliveryState(
-      priorDeliveries.map((row) => String(row.payloadJson.type ?? 'text')),
-    )
-
-    // Model-facing input. A widget-resumed private turn replays its stored
-    // mid-turn history; otherwise group rooms rebuild the shared transcript
-    // from this member's perspective and private rooms replay the checkpoint
-    // history. The system prompt is re-rendered from live state every run.
-    let modelMessages: ModelMessage[] | undefined
-    if (!group && waitingState?.response) {
-      const stored = resumeMessagesSchema.safeParse(waitingState.resumeData)
-      if (stored.success) {
-        modelMessages = [
-          await renderPrivateSystemMessage(agent),
-          ...stored.data.modelMessages,
-          { role: 'user', content: waitingState.response.text },
-        ]
-      }
-    }
-    if (!modelMessages) {
-      modelMessages = group
-        ? await assembleGroupModelMessages({
-            agent,
-            group,
-            members: await memberAgentsOf(group),
-            conversationId: conversation.id,
-          })
-        : await assemblePrivateModelMessages({
-            agent,
-            conversationId: conversation.id,
-            turnId,
-          })
-      if (remindersApply) modelMessages.push(wrapSystemReminder(REPLY_REMINDER))
-    }
-    if (remindersApply && priorDeliveries.length > 0 && !waitingState?.response) {
-      modelMessages.push(
-        wrapSystemReminder(
-          restartedTurnReminder(priorDeliveries.map((row) => row.bodyText ?? '')),
-        ),
-      )
-    }
-    const messages = modelMessages
-
-    console.info('[agent prompt]', {
-      agent: { id: agent.id, name: agent.name },
-      model: config.model,
-      prompt: messages,
-    })
 
     const toolContext: ToolTurnContext = {
       turnId,
@@ -266,146 +206,96 @@ async function executeTurn(turnId: string) {
       onDelivered: (message) => {
         active.delivered.push(message)
         emit({ type: 'message', message })
-        const type = message.payloadJson.type
-        recordDelivery(state, type === 'widget' || type === 'attachment' ? type : 'text')
       },
     }
 
-    // Private prose never streams to the user; only delivered rows do.
-    const onDelta = () => {}
+    // The system prompt is re-rendered from live profile and memory state on
+    // every turn; pi swaps it in through the resource loader.
+    const memory = await listPromptMemoryForAgent(agent.id)
+    const systemPrompt = renderSystemPrompt({ agent, memory, group, members })
+    const workspace = agentWorkspaceDirectory(agent.id)
+    const agentDir = piAgentDirectory()
+    const resourceLoader = new DefaultResourceLoader({
+      cwd: workspace,
+      agentDir,
+      noExtensions: true,
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+      systemPromptOverride: () => systemPrompt,
+    })
+    await resourceLoader.reload()
 
-    /** One model round: append prose or execute the requested tool calls. */
-    const executeRound = async (tools?: ToolDefinition[], toolChoice?: ToolChoice) => {
-      const completion = await streamChatCompletion(
-        config,
-        messages,
-        onDelta,
-        active.controller.signal,
-        tools,
-        toolChoice,
-      )
-      if (completion.toolCalls.length === 0) {
-        if (completion.text) messages.push({ role: 'assistant', content: completion.text })
-        return 0
-      }
-      messages.push({
-        role: 'assistant',
-        content: completion.text,
-        tool_calls: completion.toolCalls,
-      })
-      for (const toolCall of completion.toolCalls) {
-        console.info('[agent tool]', {
-          agent: { id: agent.id, name: agent.name },
-          tool: toolCall.function.name,
-          arguments: toolCall.function.arguments,
-        })
-        messages.push({
-          role: 'tool',
-          tool_call_id: toolCall.id,
-          content: currentMcpRegistry.has(toolCall.function.name)
-            ? await currentMcpRegistry.execute(toolCall, active.controller.signal)
-            : await executeAgentToolCall(agent, toolCall, toolContext),
-        })
-        state.totalToolCalls += 1
-        if (toolCall.function.name !== SEND_MESSAGE_TOOL_NAME) {
-          state.silentToolCallsSinceLastSend += 1
-        }
-      }
-      return completion.toolCalls.length
+    // Private rooms continue the conversation's stored pi session (or create
+    // it on first turn); the session file is the durable model-facing
+    // history and is never edited, only appended to by pi. Group turns are
+    // stateless: an in-memory session with the transcript in the prompt.
+    const sessionManager = group
+      ? SessionManager.inMemory(workspace)
+      : SessionManager.continueRecent(workspace, piSessionDirectory(conversation.id))
+
+    const customTools = [
+      ...toPiBuiltinTools(agent, builtInToolDefinitions, toolContext),
+      ...toPiMcpTools(currentMcpRegistry),
+    ]
+    const { runtime, model } = await getOpenbotModel(config)
+    const created = await createAgentSession({
+      cwd: workspace,
+      agentDir,
+      modelRuntime: runtime,
+      model,
+      thinkingLevel: 'off',
+      // Explicit allowlist: exactly our tools, none of pi's coding built-ins.
+      tools: customTools.map((tool) => tool.name),
+      customTools,
+      resourceLoader,
+      sessionManager,
+      settingsManager: SettingsManager.inMemory(),
+    })
+    session = created.session
+    active.abortSession = () => created.session.abort()
+
+    // A widget-resumed turn continues its stored session with the user's
+    // response; group turns rebuild the shared transcript from this member's
+    // perspective; private turns supply this turn's user text.
+    const promptText =
+      !group && waitingState?.response
+        ? waitingState.response.text
+        : group
+          ? await renderGroupTurnPrompt({
+              agent,
+              group,
+              members: members ?? [],
+              conversationId: conversation.id,
+            })
+          : await renderPrivateTurnPrompt({ conversationId: conversation.id, turnId })
+
+    console.info('[agent prompt]', {
+      agent: { id: agent.id, name: agent.name },
+      model: config.model,
+      sessionFile: created.session.sessionFile,
+      prompt: promptText,
+    })
+
+    // Pi owns the completion/tool loop: it streams rounds, executes the
+    // custom tools above, and stops when a round makes no tool calls.
+    // SendMessage never ends the run — the agent may deliver any number of
+    // messages (widgets included) and keep working.
+    await created.session.prompt(promptText)
+
+    // Durable cancellation already settled the turn; just close the stream.
+    if (active.controller.signal.aborted) {
+      emitTerminal({ type: 'error', message: 'Cancelled by user', status: 'cancelled' })
+      return
     }
+    throwOnModelError(created.session.state.messages)
 
-    // Completion/tool loop: full toolset within the round budget, then
-    // SendMessage-only degraded rounds so delivery stays possible (hidden
-    // turns keep one legacy tool-less final round instead). Reminders are
-    // injected per round when the turn is going silent.
-    const runToolLoop = async (maxRounds: number) => {
-      for (let round = 0; ; round += 1) {
-        const sendOnly = round >= maxRounds
-        if (round >= maxRounds + (remindersApply ? MAX_SEND_ONLY_ROUNDS : 1)) return
-        if (remindersApply) {
-          if (sendOnly && round === maxRounds) {
-            messages.push(wrapSystemReminder(TOOL_BUDGET_EXHAUSTED_REMINDER))
-          } else if (!sendOnly && round > 0) {
-            const reminder = planRoundReminder(state)
-            if (reminder) messages.push(wrapSystemReminder(reminder))
-          }
-        }
-        const tools = sendOnly
-          ? remindersApply
-            ? sendMessageOnlyToolDefinitions
-            : undefined
-          : toolDefinitions
-        const toolCallCount = await executeRound(tools)
-        if (toolCallCount === 0 || toolContext.pendingWaiting) return
-      }
-    }
-
-    // A widget send suspends the turn once its round settles: the waiting
-    // state stores the mid-turn history and the stream hands off to the
-    // waiting UI. respondToWaitingTurn re-queues the turn with the response.
-    const suspendIfWaiting = async () => {
-      const pending = toolContext.pendingWaiting
-      if (!pending) return false
-      const turn = await markTurnWaiting(turnId, {
-        version: 1,
-        prompt: pending.prompt,
-        options: pending.options,
-        originatingToolCall: { id: pending.toolCallId, name: SEND_MESSAGE_TOOL_NAME },
-        resumeData: JSON.parse(
-          JSON.stringify({
-            modelMessages: messages.filter((message) => message.role !== 'system'),
-          }),
-        ),
-        response: null,
-      })
-      if (!turn) throw new Error(`Turn ${turnId} is no longer running`)
-      emitTerminal({
-        type: 'waiting',
-        turnId,
-        state: waitingStateSchema.parse(turn.waitingStateJson),
-      })
-      return true
-    }
-
-    await runToolLoop(MAX_TOOL_ROUNDS)
-    if (await suspendIfWaiting()) return
-
-    if (remindersApply) {
-      // Delivery owed: a visible turn that sent nothing is re-run with only
-      // SendMessage on offer, forcing the call on the last attempt.
-      for (
-        let nudge = 0;
-        state.sentMessageCount === 0 && nudge < MAX_FINAL_REPLY_NUDGES;
-        nudge += 1
-      ) {
-        messages.push(wrapSystemReminder(FINAL_REPLY_NUDGE))
-        await executeRound(
-          sendMessageOnlyToolDefinitions,
-          nudge === MAX_FINAL_REPLY_NUDGES - 1
-            ? { type: 'function', function: { name: SEND_MESSAGE_TOOL_NAME } }
-            : undefined,
-        )
-        if (await suspendIfWaiting()) return
-      }
-      // A turn that went quiet after its last delivery may still owe the
-      // result those tool calls produced; re-enter the loop once.
-      if (state.sentMessageCount > 0 && state.silentToolCallsSinceLastSend > 0) {
-        messages.push(wrapSystemReminder(CLOSING_SEND_NUDGE))
-        await runToolLoop(CLOSING_NUDGE_ROUNDS)
-        if (await suspendIfWaiting()) return
-      }
-    }
-
-    // One transaction: next checkpoint (pointer advance) and the succeeded
-    // status. Delivered rows were appended in-flight as idempotent side
-    // effects; injected reminders never persist.
+    // The pi session file is the checkpoint now; the row only advances status.
     await finalizeTurnSuccess({
       turnId,
       conversationId: conversation.id,
-      checkpointState: {
-        version: 1,
-        modelMessages: messages.filter((message) => !isSystemReminder(message)),
-      },
+      checkpointState: { version: 1, modelMessages: [] },
     })
     emitTerminal({ type: 'done', turnId })
   } catch (error) {
@@ -425,16 +315,19 @@ async function executeTurn(turnId: string) {
       status: settled?.turn.status === 'cancelled' ? 'cancelled' : 'failed',
     })
   } finally {
+    session?.dispose()
     await mcpRegistry?.close().catch(() => {})
     activeTurns.delete(turnId)
   }
 }
 
 /**
- * Executes one group-targeted orchestration turn: select one member from the
- * posted text and queue the agent-targeted child turn that will answer in
- * the same shared conversation. The orchestration turn itself produces no
- * visible output; watchers hand off to the child turn.
+ * Executes one group-targeted orchestration turn. A message that mentions a
+ * member queues one child turn for that member; a message with no mention
+ * gives every member one turn each, in membership order. Child turns run
+ * sequentially so later members see earlier replies in the shared
+ * transcript. The orchestration turn itself produces no visible output;
+ * watchers hand off to the child turns.
  */
 async function executeGroupTurn(turnId: string) {
   const claimed = await claimQueuedTurn(turnId)
@@ -455,15 +348,20 @@ async function executeGroupTurn(turnId: string) {
       .filter((m) => m.turnId === turnId && m.kind === 'message' && m.role === 'user')
       .map((m) => m.bodyText ?? '')
       .join('\n')
-    const selected = selectGroupMember(members, triggeringText)
+    const mentioned = findMentionedMember(members, triggeringText)
+    const targets = mentioned ? [mentioned] : members
 
-    const { childTurn } = await queueGroupChildTurn({
+    const { childTurns } = await queueGroupChildTurns({
       groupTurnId: turnId,
-      targetAgentId: selected.id,
+      targetAgentIds: targets.map((member) => member.id),
       orchestrationRound: 0,
-      positionInRound: 0,
     })
-    ensureDrainForTurn(childTurn)
+    // One member at a time: awaiting each agent's drain keeps the round
+    // ordered, so a later member's transcript includes earlier answers.
+    for (const childTurn of childTurns) {
+      if (!childTurn.targetAgentId) continue
+      await ensureAgentDrain(childTurn.targetAgentId)
+    }
   } catch (error) {
     const message =
       error instanceof Error ? error.message : 'Group turn orchestration failed'
@@ -475,7 +373,7 @@ async function executeGroupTurn(turnId: string) {
   }
 }
 
-/** Settles a durable turn first, then interrupts an in-flight model request. */
+/** Settles a durable turn first, then interrupts an in-flight pi session. */
 export async function cancelTurnExecution(turnId: string) {
   let result = await finalizeTurnTerminal({
     turnId,
@@ -492,9 +390,15 @@ export async function cancelTurnExecution(turnId: string) {
       })
     }
   }
-  if (result.changed) activeTurns.get(turnId)?.controller.abort()
-  if (result.changed) activeTurns.get(result.turn.id)?.controller.abort()
-  if (result.changed) ensureDrainAfterCurrent(result.turn)
+  if (result.changed) {
+    for (const id of [turnId, result.turn.id]) {
+      const active = activeTurns.get(id)
+      if (!active) continue
+      active.controller.abort()
+      void active.abortSession?.().catch(() => {})
+    }
+    ensureDrainAfterCurrent(result.turn)
+  }
   return result.turn
 }
 
@@ -582,8 +486,11 @@ export function watchTurn(
     let settled = false
     let detach = () => {}
     // A group orchestration turn succeeds without visible output; the watch
-    // hands off to its child turn, so this can move past the original id.
+    // hands off to its child turns, so this can move past the original id.
+    // A no-mention round has one child per member; the watch walks them in
+    // round order and settles after the last one.
     let currentTurnId = turnId
+    const siblings: string[] = []
     const finish = () => {
       if (settled) return
       settled = true
@@ -592,6 +499,13 @@ export function watchTurn(
     }
     signal?.addEventListener('abort', finish, { once: true })
 
+    const advanceToNextSibling = () => {
+      const next = siblings.shift()
+      if (!next) return false
+      currentTurnId = next
+      return true
+    }
+
     // Synchronous attach: no awaits between lookup and subscribe, so the
     // executor cannot emit between the replay and the subscription.
     const tryAttach = () => {
@@ -599,8 +513,19 @@ export function watchTurn(
       if (!active) return false
       for (const message of active.delivered) onEvent({ type: 'message', message })
       const subscriber = (event: TurnStreamEvent) => {
+        if (event.type === 'message') {
+          onEvent(event)
+          return
+        }
+        // A settled mid-round child hands the watch to the next member (a
+        // failed member does not end the round; its error stays on the turn).
+        if ((event.type === 'done' || event.type === 'error') && advanceToNextSibling()) {
+          detach()
+          void poll()
+          return
+        }
         onEvent(event)
-        if (event.type !== 'message') finish()
+        finish()
       }
       active.subscribers.add(subscriber)
       detach = () => active.subscribers.delete(subscriber)
@@ -626,30 +551,34 @@ export function watchTurn(
           const deliveries = turnRows.filter(
             (m) => m.payloadJson.deliveryKind === 'send-message',
           )
-          if (deliveries.length > 0) {
-            for (const message of deliveries) onEvent({ type: 'message', message })
-            onEvent({ type: 'done', turnId: currentTurnId })
-            return finish()
+          for (const message of deliveries) onEvent({ type: 'message', message })
+          if (deliveries.length === 0) {
+            // A group orchestration turn succeeds by delegating: walk its
+            // child turns (one per selected member) in round order.
+            // The round runs sequentially on the orchestrator's drain; the
+            // watch only follows along (the queued-status poll below kicks
+            // the current child's drain if the orchestrator is gone).
+            const children = await findChildTurns(currentTurnId)
+            if (children.length > 0) {
+              siblings.push(...children.map((child) => child.id))
+            } else {
+              // Pre-SendMessage turns persisted one assistant row at finalize.
+              const legacy = turnRows
+                .filter((m) => m.kind === 'message' && m.role === 'assistant')
+                .at(-1)
+              if (legacy) onEvent({ type: 'message', message: legacy })
+            }
           }
-          // A group orchestration turn succeeds by delegating: follow the
-          // newest child turn (the selected member's answer) instead.
-          const child = (await findChildTurns(currentTurnId)).at(-1)
-          if (child) {
-            currentTurnId = child.id
-            ensureDrainForTurn(child)
-            continue
-          }
-          // Pre-SendMessage turns persisted one assistant row at finalize.
-          const legacy = turnRows
-            .filter((m) => m.kind === 'message' && m.role === 'assistant')
-            .at(-1)
-          if (legacy) onEvent({ type: 'message', message: legacy })
-          // A turn may legitimately succeed with nothing delivered (the
-          // nudges gave up); the watch still settles cleanly.
+          if (advanceToNextSibling()) continue
+          // A turn may legitimately succeed with nothing delivered; the
+          // watch still settles cleanly.
           onEvent({ type: 'done', turnId: currentTurnId })
           return finish()
         }
         if (turn.status === 'failed' || turn.status === 'cancelled') {
+          // A failed mid-round member does not end the round; its error
+          // stays on the turn row and the watch moves to the next member.
+          if (advanceToNextSibling()) continue
           const stored =
             turn.errorJson && typeof turn.errorJson.message === 'string'
               ? turn.errorJson.message

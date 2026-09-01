@@ -21,6 +21,7 @@ export function renderDefaultSystemPrompt(): string {
     '- Deliver every reply by actually invoking the SendMessage tool (a real tool/function call, not text you write).',
     '- Open a normal reply with one short text SendMessage before running other tools, so the user is never watching silence.',
     '- The user cannot see tool output. Anything they should know from a tool result must be sent with SendMessage.',
+    '- Sending a message never ends your turn: keep working after a SendMessage and call it as many times as you need in one run — progress updates while you work, then the result.',
     '- Before your turn ends, send the final answer or result with SendMessage. A turn that ends without one delivers nothing.',
     '- Each SendMessage is one self-contained chat message in Markdown, following the tone rules above.',
     '',

@@ -55,13 +55,13 @@ export const sendMessageToolDefinition: ToolDefinition = {
       'plain assistant text is private working output and is never shown to ' +
       'the user — only messages sent with this tool appear in the chat. Use ' +
       'it for acknowledgements, progress updates, questions, and final ' +
-      'answers. Each call appears immediately as one chat message; call it ' +
-      'multiple times to send multiple messages. type "text" sends the ' +
-      'Markdown in content (optionally set reply_to to the id of the ' +
-      'transcript message you are replying to). type "widget" asks the user ' +
-      'a multiple-choice question: the turn pauses after the current round ' +
-      'and their selection arrives as the next user message. type ' +
-      '"attachment" delivers a file from your workspace.',
+      'answers. Each call appears immediately as one chat message and never ' +
+      'ends your turn: keep working and call it as many times as you need ' +
+      'in one run. type "text" sends the Markdown in content (optionally ' +
+      'set reply_to to the id of the transcript message you are replying ' +
+      'to). type "widget" asks the user a multiple-choice question; their ' +
+      'selection arrives as a later user message. type "attachment" ' +
+      'delivers a file from your workspace.',
     parameters: {
       type: 'object',
       properties: {
@@ -134,12 +134,6 @@ export type ToolTurnContext = {
   priorDeliveries: ConversationMessage[]
   /** Called after a delivery row is committed; the runner streams and counts it. */
   onDelivered: (message: ConversationMessage) => void
-  /** Set by a widget send: the runner suspends the turn after this round. */
-  pendingWaiting?: {
-    prompt: string
-    options: { id: string; label: string }[]
-    toolCallId: string
-  }
 }
 
 const ATTACHMENT_SIZE_LIMIT = 25 * 1024 * 1024
@@ -219,13 +213,6 @@ export async function executeSendMessage(
   if (!context) {
     return { error: 'SendMessage is unavailable in this execution context' }
   }
-  // The spec's waiting rejection: once a widget is pending, the turn is about
-  // to suspend and nothing further may be delivered this round.
-  if (context.pendingWaiting) {
-    return {
-      error: "Delivery rejected: already waiting for the user's widget response.",
-    }
-  }
 
   if (args.type === 'text') {
     // Semantic exactly-once across a crash/restart: an identical text from
@@ -274,17 +261,11 @@ export async function executeSendMessage(
         widget: { prompt: args.widget.prompt, options },
       },
     })
-    context.pendingWaiting = {
-      prompt: args.widget.prompt,
-      options,
-      toolCallId: call.id,
-    }
     return {
       ...deliveredView(message),
-      status: 'waiting',
       note:
-        'Widget delivered. The turn pauses after this round; the user\'s ' +
-        'selection arrives as the next user message.',
+        "Widget delivered. The user's selection arrives as a later user " +
+        'message; keep working in the meantime if there is anything left to do.',
     }
   }
 

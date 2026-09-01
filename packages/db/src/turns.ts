@@ -108,7 +108,12 @@ export function findChildTurns(parentTurnId: string) {
     .select()
     .from(schema.turns)
     .where(eq(schema.turns.parentTurnId, parentTurnId))
-    .orderBy(asc(schema.turns.createdAt), asc(schema.turns.id))
+    .orderBy(
+      asc(schema.turns.createdAt),
+      asc(schema.turns.orchestrationRound),
+      asc(schema.turns.positionInRound),
+      asc(schema.turns.id),
+    )
 }
 
 /** Active turn, or next queued turn, for one conversation. */
@@ -447,22 +452,25 @@ export function finalizeTurnTerminal(input: TurnTerminalInput) {
   })
 }
 
-export type GroupChildTurnInput = {
+export type GroupChildTurnsInput = {
   /** The running group-targeted turn being orchestrated. */
   groupTurnId: string
-  /** The selected member agent. */
-  targetAgentId: string
+  /** The selected member agents, in round order (one child turn each). */
+  targetAgentIds: string[]
   orchestrationRound?: number
-  positionInRound?: number
 }
 
 /**
  * The group orchestrator's delegation boundary: one transaction queues the
- * agent-targeted child turn in the group's shared conversation and settles
- * the parent group turn as succeeded. Either the delegation fully exists
- * afterwards or the group turn stays running for startup recovery to re-queue.
+ * agent-targeted child turns (one per selected member, in round order) in the
+ * group's shared conversation and settles the parent group turn as succeeded.
+ * Either the delegation fully exists afterwards or the group turn stays
+ * running for startup recovery to re-queue.
  */
-export async function queueGroupChildTurn(input: GroupChildTurnInput) {
+export async function queueGroupChildTurns(input: GroupChildTurnsInput) {
+  if (input.targetAgentIds.length === 0) {
+    throw new Error('A group round needs at least one member')
+  }
   return db.transaction(async (tx) => {
     const [parent] = await tx
       .select()
@@ -478,26 +486,30 @@ export async function queueGroupChildTurn(input: GroupChildTurnInput) {
     }
 
     const now = Date.now()
-    const [childTurn] = await tx
+    const childTurns = await tx
       .insert(schema.turns)
-      .values({
-        id: createId('trn'),
-        conversationId: parent.conversationId,
-        targetAgentId: input.targetAgentId,
-        parentTurnId: parent.id,
-        lane: 'agent',
-        source: 'group-orchestrator',
-        status: 'queued',
-        orchestrationRound: input.orchestrationRound ?? 0,
-        positionInRound: input.positionInRound ?? 0,
-        createdAt: now,
-        updatedAt: now,
-      })
+      .values(
+        input.targetAgentIds.map((targetAgentId, index) => ({
+          id: createId('trn'),
+          conversationId: parent.conversationId,
+          targetAgentId,
+          parentTurnId: parent.id,
+          lane: 'agent' as const,
+          source: 'group-orchestrator' as const,
+          status: 'queued' as const,
+          orchestrationRound: input.orchestrationRound ?? 0,
+          positionInRound: index,
+          createdAt: now,
+          updatedAt: now,
+        })),
+      )
       .returning()
+    // Insert order is not guaranteed back from returning(); restore round order.
+    childTurns.sort((a, b) => (a.positionInRound ?? 0) - (b.positionInRound ?? 0))
 
     const groupTurn = await completeTurn(parent.id, { status: 'succeeded' }, tx)
     if (!groupTurn) throw new Error(`Turn ${input.groupTurnId} not found`)
-    return { childTurn, groupTurn }
+    return { childTurns, groupTurn }
   })
 }
 
