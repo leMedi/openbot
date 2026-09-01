@@ -207,6 +207,16 @@ export const oauthCredentialsSchema = z.object({
   issuer: oauthUrlSchema,
 })
 
+/** OpenAI-compatible function tool declaration, sent verbatim on the wire. */
+export type ToolDefinition = {
+  type: 'function'
+  function: {
+    name: string
+    description: string
+    parameters: Record<string, unknown>
+  }
+}
+
 export type VersionedObject = z.infer<typeof versionedObjectSchema>
 export type ModelToolCall = z.infer<typeof modelToolCallSchema>
 export type ModelMessage = z.infer<typeof modelMessageSchema>

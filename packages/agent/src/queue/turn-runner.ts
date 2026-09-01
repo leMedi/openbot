@@ -23,19 +23,21 @@ import {
   waitingStateSchema,
 } from '@openbot/db'
 import * as z from 'zod'
-import { getAiConfig, streamChatCompletion, type ToolChoice, type ToolDefinition } from './ai'
+import { getAiConfig, streamChatCompletion, type ToolChoice, type ToolDefinition } from '../ai'
 import {
   agentToolDefinitions,
   backgroundToolDefinitions,
   executeAgentToolCall,
+  SEND_MESSAGE_TOOL_NAME,
   sendMessageOnlyToolDefinitions,
   type ToolTurnContext,
-} from './agent-tools'
+} from '../tools'
 import {
   assembleGroupModelMessages,
   assemblePrivateModelMessages,
   renderPrivateSystemMessage,
-} from './prompt-assembly'
+} from '../prompt/assembly'
+import { discoverMcpToolsForTurn, type McpToolRegistry } from '@openbot/plugins'
 import {
   CLOSING_NUDGE_ROUNDS,
   CLOSING_SEND_NUDGE,
@@ -48,11 +50,9 @@ import {
   recordDelivery,
   REPLY_REMINDER,
   restartedTurnReminder,
-  SEND_MESSAGE_TOOL_NAME,
   TOOL_BUDGET_EXHAUSTED_REMINDER,
   wrapSystemReminder,
-} from './send-message-reminders'
-import { discoverMcpToolsForTurn, type McpToolRegistry } from './mcp-tools'
+} from './reminders'
 
 // A turn may interleave tool calls and completions; after this many rounds
 // the toolset degrades to SendMessage only, so delivery stays possible.

@@ -3,7 +3,7 @@ import {
   recoverQueuedTurns,
   type TurnStreamEvent,
   watchTurn,
-} from '@/server/turn-runner'
+} from '@openbot/agent'
 
 // Streams one turn's visible output as server-sent events: one `message` per
 // delivered SendMessage row, then a terminal `done`, `waiting` interaction,

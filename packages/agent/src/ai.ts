@@ -1,4 +1,6 @@
-import type { ModelMessage, ModelToolCall } from '@openbot/db'
+import type { ModelMessage, ModelToolCall, ToolDefinition } from '@openbot/db'
+
+export type { ToolDefinition }
 
 // Inference goes through one OpenAI-compatible chat-completions endpoint
 // fixed by server configuration; there is no per-agent provider selection yet.
@@ -6,16 +8,6 @@ export type AiConfig = {
   baseUrl: string
   apiKey: string
   model: string
-}
-
-/** OpenAI-compatible function tool declaration, sent verbatim on the wire. */
-export type ToolDefinition = {
-  type: 'function'
-  function: {
-    name: string
-    description: string
-    parameters: Record<string, unknown>
-  }
 }
 
 export type ChatCompletion = {

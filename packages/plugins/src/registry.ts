@@ -5,9 +5,9 @@ import {
   listRuntimeMcpAccountsForAgent,
   type ModelToolCall,
   type RuntimeMcpAccount,
+  type ToolDefinition,
 } from '@openbot/db'
-import type { ToolDefinition } from './ai'
-import { refreshExpiredMcpOauthAccounts } from './mcp-oauth.server'
+import { refreshExpiredMcpOauthAccounts } from './oauth'
 
 const MAX_TOOL_RESULT_LENGTH = 50_000
 const MCP_DISCOVERY_TIMEOUT_MS = 10_000

@@ -12,14 +12,15 @@
     "build": "pnpm with-env vite build",
     "preview": "pnpm with-env vite preview",
     "typecheck": "pnpm generate-routes && tsc --noEmit",
-    "test": "vitest run",
     "ui:add": "shadcn add"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
     "@floating-ui/dom": "^1.8.0",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@openbot/agent": "workspace:*",
     "@openbot/db": "workspace:*",
+    "@openbot/memory": "workspace:*",
+    "@openbot/plugins": "workspace:*",
     "@tailwindcss/vite": "4.3.3",
     "@tanstack/react-router": "1.170.32",
     "@tanstack/react-start": "1.168.49",
@@ -38,7 +39,6 @@
     "katex": "^0.18.4",
     "lucide-react": "^1.35.0",
     "mermaid": "^11.17.2",
-    "re2js": "^2.8.6",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-hotkeys-hook": "^5.3.3",
@@ -59,7 +59,6 @@
     "dotenv-cli": "11.0.0",
     "shadcn": "4.19.0",
     "typescript": "7.0.2",
-    "vite": "8.2.2",
-    "vitest": "^4.1.11"
+    "vite": "8.2.2"
   }
 }

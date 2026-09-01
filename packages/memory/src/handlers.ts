@@ -10,7 +10,7 @@ import {
   memoryItemSelector,
   memoryListInput,
   memoryUpdateInput,
-} from './memory-contract'
+} from './contract'
 
 export function listMemory(input: unknown) {
   return listMemoryItems(memoryListInput.parse(input))

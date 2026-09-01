@@ -3,7 +3,7 @@ import {
   finishMcpOauthAuthorization,
   mcpOauthPublicUrl,
   rejectMcpOauthAuthorization,
-} from '@/server/mcp-oauth.server'
+} from '@openbot/plugins'
 
 function resultRedirect(requestUrl: string, result: 'success' | 'error') {
   const url = mcpOauthPublicUrl(requestUrl)

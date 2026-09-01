@@ -6,8 +6,6 @@
 
 import type { ModelMessage } from '@openbot/db'
 
-export const SEND_MESSAGE_TOOL_NAME = 'SendMessage'
-
 // A turn that opens with more than this many tool calls before a text
 // SendMessage gets the acknowledgement reminder.
 export const ACK_TOOL_CALL_THRESHOLD = 1

@@ -10,7 +10,7 @@ import {
   cancelTurnExecution,
   ensureDrainForTurn,
   recoverQueuedTurns,
-} from './turn-runner'
+} from '@openbot/agent'
 
 const messagesQueryInput = z.object({ conversationId: z.string().min(1) })
 

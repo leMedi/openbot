@@ -17,7 +17,7 @@ import {
   mcpIdInput,
   mcpServerCreateInput,
   mcpServerUpdateInput,
-} from './mcp-contract'
+} from './contract'
 
 export async function readConfiguration() {
   const [servers, accounts, grants] = await Promise.all([

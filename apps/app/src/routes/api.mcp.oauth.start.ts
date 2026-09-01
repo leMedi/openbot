@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import {
   beginMcpOauthAuthorization,
   mcpOauthPublicUrl,
-} from '@/server/mcp-oauth.server'
+} from '@openbot/plugins'
 
 function resultRedirect(requestUrl: string, result: 'error') {
   const url = mcpOauthPublicUrl(requestUrl)

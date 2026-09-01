@@ -2,7 +2,7 @@
 
 // Type-only import: erased at build time, so the server module never reaches
 // the client bundle. The event shape has exactly one definition.
-import type { TurnStreamEvent } from '@/server/turn-runner'
+import type { TurnStreamEvent } from '@openbot/agent'
 
 export type { TurnStreamEvent }
 

@@ -1,23 +1,23 @@
 {
-  "name": "@openbot/tools",
+  "name": "@openbot/agent",
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
-    "with-env": "dotenv -e ../../.env --",
-    "clean": "pnpm with-env tsx src/cli.ts clean",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@clack/prompts": "1.0.0",
     "@openbot/db": "workspace:*",
-    "citty": "0.2.2",
-    "drizzle-orm": "0.45.2"
+    "@openbot/memory": "workspace:*",
+    "@openbot/plugins": "workspace:*",
+    "re2js": "^2.8.6",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/node": "26.4.0",
-    "dotenv-cli": "11.0.0",
-    "tsx": "4.23.12",
     "typescript": "7.0.2"
   }
 }
