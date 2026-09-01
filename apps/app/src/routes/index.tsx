@@ -332,6 +332,7 @@ function OpenBot() {
             turnId,
             text,
             optionId,
+            dismissed,
             toolCallId,
             requestId,
             idempotencyKey,
@@ -341,12 +342,24 @@ function OpenBot() {
                 turnId,
                 text,
                 optionId,
+                dismissed,
                 toolCallId,
                 requestId,
                 idempotencyKey,
               },
             })
           }
+          onToggleReaction={(messageId, reaction) =>
+            toggleConversationReaction({
+              data: { conversationId: active.id, messageId, reaction },
+            })
+          }
+          onRefreshEntries={async () => {
+            const refreshed = await getConversationMessages({
+              data: { conversationId: active.id },
+            })
+            return entriesFromMessages(refreshed.rows, authorFromBot(bot), membersById)
+          }}
           onCancelTurn={(turnId) => cancelConversationTurn({ data: { turnId } })}
           onTurnSettled={async () => {
             // The assistant message advanced the sequence counter; the user

@@ -12,6 +12,8 @@ import {
   type ModelToolCall,
   type SendMessagePayload,
   type ToolDefinition,
+  type VersionedObject,
+  type WaitingState,
 } from '@openbot/db'
 import * as z from 'zod'
 import { agentWorkspaceDirectory, resolveWorkspacePath } from './shell/workspace'
@@ -33,10 +35,13 @@ export const sendMessageArgsSchema = z.discriminatedUnion('type', [
           z.object({
             label: z.string().trim().min(1).max(200),
             value: z.string().trim().min(1).max(200).optional(),
+            style: z.enum(['primary', 'danger']).optional(),
           }),
         )
         .min(1)
         .max(8),
+      allowCustom: z.boolean().optional(),
+      dismissOnMoveOn: z.boolean().optional(),
     }),
   }),
   z.object({
@@ -91,10 +96,23 @@ export const sendMessageToolDefinition: ToolDefinition = {
                     type: 'string',
                     description: 'Optional stable id reported back on selection.',
                   },
+                  style: {
+                    type: 'string',
+                    enum: ['primary', 'danger'],
+                    description: 'Optional visual emphasis for this choice.',
+                  },
                 },
                 required: ['label'],
                 additionalProperties: false,
               },
+            },
+            allowCustom: {
+              type: 'boolean',
+              description: 'Allow the user to type an answer instead of selecting an option.',
+            },
+            dismissOnMoveOn: {
+              type: 'boolean',
+              description: 'Dismiss this low-stakes question when the user sends a newer message.',
             },
           },
           required: ['prompt', 'options'],
@@ -129,6 +147,17 @@ export type ToolTurnContext = {
   priorDeliveries: ConversationMessage[]
   /** Called after a delivery row is committed; the runner streams and counts it. */
   onDelivered: (message: ConversationMessage) => void
+  /** Persists a waiting interaction and stops the current model loop. */
+  suspend: (
+    state: WaitingState,
+    delivery: { bodyText: string; payload: SendMessagePayload },
+  ) => Promise<ConversationMessage | undefined>
+  /** Queues hidden work that may outlive the current turn. */
+  enqueueBackgroundWake: (input: {
+    source: string
+    idempotencyKey: string
+    runtimeContext: VersionedObject
+  }) => Promise<void>
 }
 
 const ATTACHMENT_SIZE_LIMIT = 25 * 1024 * 1024
@@ -242,25 +271,43 @@ export async function executeSendMessage(
     const options = args.widget.options.map((option, index) => ({
       id: option.value ?? `opt_${index + 1}`,
       label: option.label,
+      ...(option.style && { style: option.style }),
     }))
     if (new Set(options.map((option) => option.id)).size !== options.length) {
       return { error: 'Widget option values must be unique' }
     }
-    const message = await appendDelivery(context, {
-      bodyText: args.widget.prompt,
-      payload: {
-        version: 1,
-        deliveryKind: 'send-message',
-        type: 'widget',
-        toolCallId: call.id,
-        widget: { prompt: args.widget.prompt, options },
+    const payload: SendMessagePayload = {
+      version: 1,
+      deliveryKind: 'send-message',
+      type: 'widget',
+      toolCallId: call.id,
+      widget: {
+        prompt: args.widget.prompt,
+        options,
+        allowCustom: args.widget.allowCustom ?? false,
+        dismissOnMoveOn: args.widget.dismissOnMoveOn ?? false,
       },
+    }
+    const waitingState: WaitingState = {
+      version: 1,
+      prompt: args.widget.prompt,
+      options,
+      allowCustom: args.widget.allowCustom ?? false,
+      dismissOnMoveOn: args.widget.dismissOnMoveOn ?? false,
+      originatingToolCall: { id: call.id, name: call.function.name },
+      resumeData: { toolCallId: call.id },
+      response: null,
+    }
+    const message = await context.suspend(waitingState, {
+      bodyText: args.widget.prompt,
+      payload,
     })
+    if (!message) {
+      return { error: 'The turn could not be suspended for this question' }
+    }
     return {
       ...deliveredView(message),
-      note:
-        "Widget delivered. The user's selection arrives as a later user " +
-        'message; keep working in the meantime if there is anything left to do.',
+      note: "Widget delivered. The turn is suspended until the user responds.",
     }
   }
 

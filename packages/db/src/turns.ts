@@ -283,10 +283,67 @@ export async function markTurnWaiting(id: string, state: WaitingState) {
   })
 }
 
+export type WidgetTurnDelivery = {
+  bodyText: string
+  payload: VersionedObject
+  senderAgentId: string | null
+}
+
+/** Atomically delivers a decision widget and suspends its running turn. */
+export async function deliverWidgetAndMarkTurnWaiting(
+  id: string,
+  state: WaitingState,
+  delivery: WidgetTurnDelivery,
+) {
+  const parsed = waitingStateSchema.parse(state)
+  const now = Date.now()
+  return db.transaction(async (tx) => {
+    const [turn] = await tx
+      .update(schema.turns)
+      .set({ status: 'waiting', waitingStateJson: parsed, updatedAt: now })
+      .where(and(eq(schema.turns.id, id), eq(schema.turns.status, 'running')))
+      .returning()
+    if (!turn) return undefined
+
+    const message = await appendConversationMessage(
+      {
+        conversationId: turn.conversationId,
+        kind: 'message',
+        role: 'assistant',
+        direction: 'outbound',
+        bodyText: delivery.bodyText,
+        payload: delivery.payload,
+        turnId: turn.id,
+        senderAgentId: delivery.senderAgentId,
+      },
+      tx,
+    )
+    await appendConversationMessage(
+      {
+        conversationId: turn.conversationId,
+        kind: 'status',
+        direction: 'internal',
+        bodyText: parsed.prompt,
+        payload: {
+          version: 1,
+          event: 'turn_waiting',
+          prompt: parsed.prompt,
+          options: parsed.options,
+          toolCallId: parsed.originatingToolCall.id,
+        },
+        turnId: turn.id,
+      },
+      tx,
+    )
+    return { turn, message }
+  })
+}
+
 export type WaitingTurnResponseInput = {
   turnId: string
   text: string
   optionId?: string | null
+  dismissed?: boolean
   toolCallId: string
   requestId?: string
   idempotencyKey?: string
@@ -309,6 +366,7 @@ export async function respondToWaitingTurn(input: WaitingTurnResponseInput) {
     }
     const waiting = waitingStateSchema.parse(current.waitingStateJson)
     const optionId = input.optionId ?? null
+    const dismissed = input.dismissed ?? false
     const responseRows = await tx
       .select()
       .from(schema.conversationMessages)
@@ -341,6 +399,7 @@ export async function respondToWaitingTurn(input: WaitingTurnResponseInput) {
       if (
         persistedResponse.bodyText !== text ||
         persistedResponse.payloadJson.optionId !== optionId ||
+        persistedResponse.payloadJson.dismissed !== dismissed ||
         persistedResponse.payloadJson.toolCallId !== input.toolCallId
       ) {
         throw new Error(
@@ -358,10 +417,23 @@ export async function respondToWaitingTurn(input: WaitingTurnResponseInput) {
     if (optionId && !waiting.options.some((option) => option.id === optionId)) {
       throw new Error(`Waiting turn ${input.turnId} has no option ${optionId}`)
     }
+    if (dismissed && optionId) {
+      throw new Error('A dismissed interaction cannot also select an option')
+    }
+    if (!dismissed && !optionId && !waiting.allowCustom) {
+      throw new Error(`Waiting turn ${input.turnId} does not accept a custom response`)
+    }
 
     const nextState = waitingStateSchema.parse({
       ...waiting,
-      response: { optionId, text, requestId, idempotencyKey, respondedAt: Date.now() },
+      response: {
+        optionId,
+        text,
+        dismissed,
+        requestId,
+        idempotencyKey,
+        respondedAt: Date.now(),
+      },
     })
     const now = Date.now()
     const [turn] = await tx
@@ -387,6 +459,7 @@ export async function respondToWaitingTurn(input: WaitingTurnResponseInput) {
           version: 1,
           event: 'turn_response',
           optionId,
+          dismissed,
           toolCallId: input.toolCallId,
           requestId,
           idempotencyKey,

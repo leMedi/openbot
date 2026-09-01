@@ -26,9 +26,16 @@ const waitingResponseInput = z.object({
   turnId: z.string().min(1),
   text: z.string().trim().min(1).max(20_000),
   optionId: z.string().min(1).nullable().default(null),
+  dismissed: z.boolean().default(false),
   toolCallId: z.string().min(1),
   requestId: z.string().min(1).max(200),
   idempotencyKey: z.string().min(1).max(200),
+})
+
+const reactionInput = z.object({
+  conversationId: z.string().min(1),
+  messageId: z.string().min(1),
+  reaction: z.string().trim().min(1).max(64),
 })
 
 const cancelTurnInput = z.object({ turnId: z.string().min(1) })

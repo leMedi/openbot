@@ -57,11 +57,15 @@ export type ConversationProps = {
     turnId: string
     text: string
     optionId: string | null
+    dismissed: boolean
     toolCallId: string
     requestId: string
     idempotencyKey: string
   }) => Promise<{ message: ConversationMessage; turn: Turn }>
   onCancelTurn?: (turnId: string) => Promise<Turn>
+  onToggleReaction?: (messageId: string, reaction: string) => Promise<ConversationMessage>
+  /** Poll boundary for messages produced without a user-started turn stream. */
+  onRefreshEntries?: () => Promise<Entry[]>
   /** Called after a turn reaches a terminal state (refresh sidebar state etc.). */
   onTurnSettled?: () => void
   /** A queued/running turn to reattach to on mount (reload during a turn). */
@@ -227,6 +231,7 @@ export function Conversation({
     draft: Draft,
     optionId: string | null = null,
     retryIdempotencyKey?: string,
+    dismissed = false,
   ) {
     if (!waiting || !onRespondToTurn) return
     const interaction = waiting
@@ -252,6 +257,7 @@ export function Conversation({
           turnId: interaction.turnId,
           toolCallId: interaction.state.originatingToolCall.id,
           optionId,
+          dismissed,
           idempotencyKey,
         },
       },
@@ -262,6 +268,7 @@ export function Conversation({
         turnId: interaction.turnId,
         text: draft.prompt,
         optionId,
+        dismissed,
         toolCallId: interaction.state.originatingToolCall.id,
         requestId,
         idempotencyKey,
@@ -362,7 +369,12 @@ export function Conversation({
   function send(draft: Draft, toThread?: string) {
     // Threads are not persisted yet; thread sends stay client-local.
     if (!toThread && waiting && onRespondToTurn) {
-      void respondToServer(draft)
+      if (waiting.state.allowCustom) {
+        void respondToServer(draft)
+      } else if (waiting.state.dismissOnMoveOn) {
+        setWaiting(null)
+        void sendToServer(draft)
+      }
       return
     }
     if (!toThread && onSendMessage) {
@@ -408,6 +420,7 @@ export function Conversation({
           { prompt: entry.text, attachments: entry.attachments ?? [] },
           entry.waitingResponse.optionId,
           entry.waitingResponse.idempotencyKey,
+          entry.waitingResponse.dismissed ?? false,
         )
       }
       return
@@ -591,7 +604,13 @@ export function Conversation({
               {waiting.state.options.map((option) => (
                 <Button
                   key={option.id}
-                  variant="outline"
+                  variant={
+                    option.style === 'danger'
+                      ? 'destructive'
+                      : option.style === 'primary'
+                        ? 'default'
+                        : 'outline'
+                  }
                   size="sm"
                   onClick={() =>
                     void respondToServer(
@@ -603,6 +622,20 @@ export function Conversation({
                   {option.label}
                 </Button>
               ))}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  void respondToServer(
+                    { prompt: 'Question dismissed.', attachments: [] },
+                    null,
+                    undefined,
+                    true,
+                  )
+                }
+              >
+                Dismiss
+              </Button>
               {onCancelTurn && (
                 <Button
                   variant="ghost"
@@ -618,6 +651,10 @@ export function Conversation({
         {readOnly ? (
           <div className="mx-4 mb-4 flex items-center justify-center rounded-xl border border-dashed px-3 py-3 text-xs text-muted-foreground/70">
             This conversation is read-only.
+          </div>
+        ) : waiting && !waiting.state.allowCustom && !waiting.state.dismissOnMoveOn ? (
+          <div className="mx-4 mb-4 text-center text-xs text-muted-foreground">
+            Select an option above to continue.
           </div>
         ) : (
           <Composer

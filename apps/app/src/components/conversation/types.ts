@@ -107,6 +107,7 @@ export type MessageEntry = {
     turnId: string
     toolCallId: string
     optionId: string | null
+    dismissed?: boolean
     idempotencyKey: string
   }
 }

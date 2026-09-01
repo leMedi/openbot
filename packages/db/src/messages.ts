@@ -9,6 +9,7 @@ import {
   attachmentsSchema,
   type VersionedObject,
   versionedObjectSchema,
+  waitingStateSchema,
 } from './json-schemas'
 import * as schema from './schema'
 
@@ -189,6 +190,34 @@ export async function acceptUserMessage(input: UserMessageInput) {
         }
         if (!conversation.ownerAgentId && !conversation.ownerGroupId) {
           throw new Error(`Conversation ${input.conversationId} has no owner`)
+        }
+
+        const targetCondition = conversation.ownerAgentId
+          ? eq(schema.turns.targetAgentId, conversation.ownerAgentId)
+          : eq(schema.turns.conversationId, conversation.id)
+        const [waitingTurn] = await tx
+          .select()
+          .from(schema.turns)
+          .where(and(eq(schema.turns.status, 'waiting'), targetCondition))
+          .limit(1)
+        if (
+          waitingTurn?.waitingStateJson &&
+          waitingStateSchema.parse(waitingTurn.waitingStateJson).dismissOnMoveOn
+        ) {
+          const dismissedAt = Date.now()
+          await tx
+            .update(schema.turns)
+            .set({
+              status: 'succeeded',
+              completedAt: dismissedAt,
+              updatedAt: dismissedAt,
+            })
+            .where(
+              and(
+                eq(schema.turns.id, waitingTurn.id),
+                eq(schema.turns.status, 'waiting'),
+              ),
+            )
         }
 
         // Reply targets must live in the same conversation (composite FK); an

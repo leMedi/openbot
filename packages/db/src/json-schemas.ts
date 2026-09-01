@@ -108,8 +108,11 @@ export const waitingStateSchema = z.object({
     z.object({
       id: z.string().min(1),
       label: z.string().min(1),
+      style: z.enum(['primary', 'danger']).optional(),
     }),
   ),
+  allowCustom: z.boolean().default(false),
+  dismissOnMoveOn: z.boolean().default(false),
   originatingToolCall: z.object({
     id: z.string().min(1),
     name: z.string().min(1),
@@ -119,6 +122,7 @@ export const waitingStateSchema = z.object({
     .object({
       optionId: z.string().min(1).nullable(),
       text: z.string().min(1),
+      dismissed: z.boolean().default(false),
       requestId: z.string().min(1),
       idempotencyKey: z.string().min(1),
       respondedAt: z.number().int().nonnegative(),
@@ -141,8 +145,11 @@ export const sendMessagePayloadSchema = z.object({
         z.object({
           id: z.string().min(1),
           label: z.string().min(1),
+          style: z.enum(['primary', 'danger']).optional(),
         }),
       ),
+      allowCustom: z.boolean().default(false),
+      dismissOnMoveOn: z.boolean().default(false),
     })
     .optional(),
   alt: z.string().optional(),

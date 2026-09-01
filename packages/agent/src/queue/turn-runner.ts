@@ -16,6 +16,8 @@ import {
   listConversationMessages,
   listPromptMemoryForAgent,
   listQueuedTurns,
+  deliverWidgetAndMarkTurnWaiting,
+  enqueueBackgroundAgentTurn,
   queueGroupChildTurns,
   recordTurnExecution,
   type WaitingState,
@@ -127,6 +129,7 @@ async function executeTurn(turnId: string) {
   let mcpRegistry: McpToolRegistry | undefined
   let session: { dispose(): void } | undefined
   let conversationId: string | undefined
+  let suspendedState: WaitingState | undefined
 
   try {
     const conversation = await getConversation(claimed.conversationId)
@@ -212,7 +215,12 @@ async function executeTurn(turnId: string) {
       conversationId: conversation.id,
       turnId,
       workspace,
-      resumedText: waitingState?.response?.text,
+      resumedText: waitingState?.response
+        ? waitingState.response.dismissed
+          ? `[The user moved on without answering the pending question.]\n\n${waitingState.response.text}`
+          : waitingState.response.text
+        : undefined,
+      hiddenWakePrompt,
     })
     const toolContext: ToolTurnContext = {
       turnId,
@@ -222,6 +230,26 @@ async function executeTurn(turnId: string) {
       onDelivered: (message) => {
         active.delivered.push(message)
         emit({ type: 'message', message })
+      },
+      suspend: async (state, delivery) => {
+        const waiting = await deliverWidgetAndMarkTurnWaiting(turnId, state, {
+          ...delivery,
+          senderAgentId: prepared.senderAgentId,
+        })
+        if (!waiting) return undefined
+        active.delivered.push(waiting.message)
+        emit({ type: 'message', message: waiting.message })
+        suspendedState = state
+        void active.abortSession?.().catch(() => {})
+        return waiting.message
+      },
+      enqueueBackgroundWake: async (input) => {
+        const turn = await enqueueBackgroundAgentTurn({
+          conversationId: conversation.id,
+          targetAgentId: agent.id,
+          ...input,
+        })
+        ensureDrainAfterCurrent(turn)
       },
     }
 
@@ -269,9 +297,22 @@ async function executeTurn(turnId: string) {
 
     // Pi owns the completion/tool loop: it streams rounds, executes the
     // custom tools above, and stops when a round makes no tool calls.
-    // SendMessage never ends the run — the agent may deliver any number of
-    // messages (widgets included) and keep working.
-    await created.session.prompt(prepared.promptText)
+    // Ordinary SendMessage calls do not end the run. A decision widget is the
+    // exception: its tool callback durably suspends the turn and aborts Pi.
+    try {
+      await created.session.prompt(prepared.promptText)
+    } catch (error) {
+      if (!suspendedState) throw error
+    }
+
+    if (suspendedState) {
+      if (active.controller.signal.aborted) {
+        emitTerminal({ type: 'error', message: 'Cancelled by user', status: 'cancelled' })
+        return
+      }
+      emitTerminal({ type: 'waiting', turnId, state: suspendedState })
+      return
+    }
 
     throwOnModelError(created.session.state.messages)
     if (
