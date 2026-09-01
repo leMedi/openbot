@@ -2,25 +2,10 @@ import { siClickup, siLinear, siNotion } from 'simple-icons'
 
 export type McpCatalogOauthAuth = {
   type: 'oauth'
-  label: string
-  connectLabel: string
-  accountLabel: {
-    label: string
-    placeholder: string
-  }
 }
 
 export type McpCatalogApiKeyAuth = {
   type: 'apiKey'
-  label: string
-  accountLabel: {
-    label: string
-    placeholder: string
-  }
-  apiKey: {
-    label: string
-    placeholder: string
-  }
   header: string
   prefix: 'Bearer' | ''
 }
@@ -46,20 +31,8 @@ export const MCP_CATALOG = [
     name: 'Linear',
     description: 'Plan product work and keep engineering projects moving.',
     auth: [
-      {
-        type: 'oauth',
-        label: 'OAuth',
-        connectLabel: 'Connect Linear',
-        accountLabel: { label: 'Account label', placeholder: 'e.g. Product workspace' },
-      },
-      {
-        type: 'apiKey',
-        label: 'API key',
-        accountLabel: { label: 'Account label', placeholder: 'e.g. Product workspace' },
-        apiKey: { label: 'Linear API key', placeholder: 'lin_api_...' },
-        header: 'Authorization',
-        prefix: 'Bearer',
-      },
+      { type: 'oauth' },
+      { type: 'apiKey', header: 'Authorization', prefix: 'Bearer' },
     ],
     url: 'https://mcp.linear.app/mcp',
     icon: { path: siLinear.path, color: `#${siLinear.hex}` },
@@ -69,12 +42,7 @@ export const MCP_CATALOG = [
     key: 'clickup',
     name: 'ClickUp',
     description: 'Work with tasks, docs, chat, and time tracking across your workspace.',
-    auth: [{
-      type: 'oauth',
-      label: 'OAuth',
-      connectLabel: 'Connect ClickUp',
-      accountLabel: { label: 'Account label', placeholder: 'e.g. Marketing workspace' },
-    }],
+    auth: [{ type: 'oauth' }],
     url: 'https://mcp.clickup.com/mcp',
     icon: { path: siClickup.path, color: `#${siClickup.hex}` },
     skills: ['Search the workspace', 'Manage tasks', 'Read docs and chat', 'Track time'],
@@ -83,12 +51,7 @@ export const MCP_CATALOG = [
     key: 'notion',
     name: 'Notion',
     description: 'Search, read, and update knowledge in your Notion workspace.',
-    auth: [{
-      type: 'oauth',
-      label: 'OAuth',
-      connectLabel: 'Connect Notion',
-      accountLabel: { label: 'Account label', placeholder: 'e.g. Team workspace' },
-    }],
+    auth: [{ type: 'oauth' }],
     url: 'https://mcp.notion.com/mcp',
     icon: { path: siNotion.path, color: `#${siNotion.hex}` },
     skills: ['Search workspace content', 'Read and update pages', 'Manage databases', 'Add comments'],

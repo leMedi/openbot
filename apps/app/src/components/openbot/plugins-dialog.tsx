@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type { SafeMcpAccount, SafeMcpServer } from '@openbot/db'
 import {
   MCP_CATALOG,
@@ -6,7 +6,7 @@ import {
   type McpCatalogEntry,
   type McpCatalogKey,
 } from '@openbot/plugins/mcp-catalog'
-import { FileText, Link2, Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
+import { FileText, Link2, Lock, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils'
 import {
   addMcpApiKeyAccount,
   addMcpServer,
+  changeMcpAccount,
   changeMcpServer,
   installMcpFromCatalog,
   removeMcpAccount,
@@ -106,6 +107,21 @@ function draftOf(server?: SafeMcpServer): McpDraft {
   }
 }
 
+function nextAccountLabel(existing: SafeMcpAccount[]) {
+  const labels = new Set(existing.map((account) => account.label))
+  let n = existing.length + 1
+  while (labels.has(`account ${n}`)) n += 1
+  return `account ${n}`
+}
+
+function hostOf(url: string) {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
+}
+
 function PluginsTab({
   servers,
   accounts,
@@ -120,8 +136,10 @@ function PluginsTab({
   const [detailId, setDetailId] = useState('')
   const [creatingServer, setCreatingServer] = useState(false)
   const [draft, setDraft] = useState<McpDraft | null>(null)
-  const [accountDraft, setAccountDraft] = useState({ label: '', apiKey: '' })
-  const [addingAccount, setAddingAccount] = useState<'api_key' | 'oauth' | null>(null)
+  const [addingAccount, setAddingAccount] = useState<'choose' | 'key' | null>(null)
+  const [apiKey, setApiKey] = useState('')
+  const [renamingId, setRenamingId] = useState('')
+  const [renameValue, setRenameValue] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -137,16 +155,21 @@ function PluginsTab({
   const catalogRail = MCP_CATALOG.filter((entry) =>
     `${entry.name} ${entry.skills.join(' ')}`.toLowerCase().includes(normalizedQuery),
   )
+  const catalogAccountCount = (entry: McpCatalogEntry) => {
+    const server = servers.find((candidate) => matchesMcpCatalogEntry(entry, candidate))
+    return accounts.filter((account) => account.serverId === server?.id).length
+  }
+  const installedCatalogRail = catalogRail.filter((entry) => catalogAccountCount(entry) > 0)
+  const availableCatalogRail = catalogRail.filter((entry) => catalogAccountCount(entry) === 0)
   const customRail = servers.filter(
     (server) =>
       !MCP_CATALOG.some((entry) => matchesMcpCatalogEntry(entry, server)) &&
       server.name.toLowerCase().includes(normalizedQuery),
   )
   const detailAccounts = accounts.filter((account) => account.serverId === detail?.id)
-  const catalogApiKeyAuth = detailCatalog?.auth.find((auth) => auth.type === 'apiKey')
-  const selectedCatalogAuth = detailCatalog?.auth.find((auth) =>
-    addingAccount === 'api_key' ? auth.type === 'apiKey' : auth.type === addingAccount,
-  )
+  const authMethods: ('oauth' | 'apiKey')[] = detailCatalog
+    ? detailCatalog.auth.map((auth) => auth.type)
+    : ['oauth', 'apiKey']
 
   useEffect(() => {
     const savedKey = sessionStorage.getItem('openbot:selected-mcp')
@@ -169,6 +192,15 @@ function PluginsTab({
       setDetailId('')
     }
   }, [catalogKey, creatingServer, detailId, servers])
+
+  function resetDetailState() {
+    setCreatingServer(false)
+    setDraft(null)
+    setAddingAccount(null)
+    setApiKey('')
+    setRenamingId('')
+    setError('')
+  }
 
   async function ensureDetailServer() {
     if (detail) return detail
@@ -230,8 +262,20 @@ function PluginsTab({
     }
   }
 
-  async function addAccount() {
-    if (saving) return
+  function startAddAccount() {
+    setError('')
+    if (authMethods.length > 1) {
+      setAddingAccount('choose')
+    } else if (authMethods[0] === 'apiKey') {
+      setAddingAccount('key')
+      setApiKey('')
+    } else {
+      void connectOauthAccount()
+    }
+  }
+
+  async function connectApiKeyAccount() {
+    if (saving || !apiKey.trim()) return
     setSaving(true)
     setError('')
     try {
@@ -239,11 +283,11 @@ function PluginsTab({
       await addMcpApiKeyAccount({
         data: {
           serverId: server.id,
-          label: accountDraft.label,
-          apiKey: accountDraft.apiKey,
+          label: nextAccountLabel(accounts.filter((account) => account.serverId === server.id)),
+          apiKey,
         },
       })
-      setAccountDraft({ label: '', apiKey: '' })
+      setApiKey('')
       setAddingAccount(null)
       await onChanged()
     } catch (cause) {
@@ -254,7 +298,7 @@ function PluginsTab({
   }
 
   async function connectOauthAccount() {
-    if (saving || !accountDraft.label.trim()) return
+    if (saving) return
     setSaving(true)
     setError('')
     try {
@@ -262,7 +306,10 @@ function PluginsTab({
       if (detailCatalog) sessionStorage.setItem('openbot:selected-mcp', detailCatalog.key)
       const authorization = new URL('/api/mcp/oauth/start', window.location.origin)
       authorization.searchParams.set('serverId', server.id)
-      authorization.searchParams.set('label', accountDraft.label)
+      authorization.searchParams.set(
+        'label',
+        nextAccountLabel(accounts.filter((account) => account.serverId === server.id)),
+      )
       window.location.assign(authorization)
     } catch (cause) {
       setSaving(false)
@@ -270,8 +317,24 @@ function PluginsTab({
     }
   }
 
+  async function renameAccount(account: SafeMcpAccount) {
+    const label = renameValue.trim()
+    setRenamingId('')
+    if (!label || label === account.label) return
+    setSaving(true)
+    setError('')
+    try {
+      await changeMcpAccount({ data: { id: account.id, patch: { label } } })
+      await onChanged()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not rename the MCP account')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function deleteAccount(account: SafeMcpAccount) {
-    if (!window.confirm(`Remove account ${account.label}? Agent access will be revoked.`)) return
+    if (!window.confirm(`Disconnect ${account.label}? Agent access will be revoked.`)) return
     setSaving(true)
     setError('')
     try {
@@ -283,6 +346,67 @@ function PluginsTab({
       setSaving(false)
     }
   }
+
+  function railRow({
+    key,
+    selected,
+    icon,
+    name,
+    sub,
+    onClick,
+  }: {
+    key: string
+    selected: boolean
+    icon: ReactNode
+    name: string
+    sub?: string
+    onClick: () => void
+  }) {
+    return (
+      <button
+        key={key}
+        type="button"
+        onClick={onClick}
+        className={cn(
+          'flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left',
+          selected ? 'bg-primary text-white' : 'hover:bg-muted',
+        )}
+      >
+        {icon}
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium">{name}</span>
+          {sub && (
+            <span
+              className={cn('block text-[10px]', selected ? 'text-white/70' : 'text-muted-foreground')}
+            >
+              {sub}
+            </span>
+          )}
+        </span>
+      </button>
+    )
+  }
+
+  function catalogRailRow(entry: (typeof MCP_CATALOG)[number]) {
+    const server = servers.find((candidate) => matchesMcpCatalogEntry(entry, candidate))
+    const accountCount = accounts.filter((account) => account.serverId === server?.id).length
+    return railRow({
+      key: entry.key,
+      selected: entry.key === catalogKey && !creatingServer,
+      icon: <McpBrandIcon entry={entry} className="size-6" />,
+      name: entry.name,
+      sub: accountCount > 0
+        ? `${accountCount} ${accountCount === 1 ? 'account' : 'accounts'}`
+        : undefined,
+      onClick: () => {
+        setCatalogKey(entry.key)
+        setDetailId(server?.id ?? '')
+        resetDetailState()
+      },
+    })
+  }
+
+  const accountsCount = detailAccounts.length
 
   return (
     <div className="flex h-full min-h-0 flex-col sm:flex-row">
@@ -300,90 +424,44 @@ function PluginsTab({
           </div>
         </div>
         <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-3">
-          {catalogRail.map((entry) => {
-            const server = servers.find((candidate) => matchesMcpCatalogEntry(entry, candidate))
-            const accountCount = accounts.filter((account) => account.serverId === server?.id).length
-            return (
-            <button
-              key={entry.key}
-              type="button"
-              onClick={() => {
-                setCatalogKey(entry.key)
-                setDetailId(server?.id ?? '')
-                setCreatingServer(false)
-                setDraft(null)
-                setAddingAccount(null)
-                setError('')
-              }}
-              className={cn(
-                'flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left',
-                entry.key === catalogKey ? 'bg-primary text-white' : 'hover:bg-muted',
-              )}
-            >
-              <McpBrandIcon entry={entry} className="size-6" />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">{entry.name}</span>
-                <span
-                  className={cn(
-                    'block text-[10px]',
-                    entry.key === catalogKey ? 'text-white/70' : 'text-muted-foreground',
-                  )}
-                >
-                  {accountCount} {accountCount === 1 ? 'account' : 'accounts'}
-                </span>
-              </span>
-              <span
-                className={cn(
-                  'size-1.5 shrink-0 rounded-full',
-                  server?.enabled ? 'bg-success' : 'bg-muted-foreground/40',
-                )}
-              />
-            </button>
-            )
-          })}
-          {customRail.length > 0 && (
-            <div className="mt-2 px-2 pb-1 text-[9px] font-semibold tracking-wider text-muted-foreground/70 uppercase">
-              Custom
+          {(installedCatalogRail.length > 0 || customRail.length > 0) && (
+            <div className="px-2 pt-1 pb-1 text-[9px] font-semibold tracking-wider text-muted-foreground/70 uppercase">
+              Installed
             </div>
           )}
-          {customRail.map((server) => (
-            <button
-              key={server.id}
-              type="button"
-              onClick={() => {
+          {installedCatalogRail.map(catalogRailRow)}
+          {customRail.map((server) =>
+            railRow({
+              key: server.id,
+              selected: !catalogKey && !creatingServer && server.id === detailId,
+              icon: <BotAvatar name={server.name} color="#3b82f6" className="size-6 text-[10px]" />,
+              name: server.name,
+              sub: `${accounts.filter((account) => account.serverId === server.id).length} accounts`,
+              onClick: () => {
                 setCatalogKey('')
                 setDetailId(server.id)
-                setCreatingServer(false)
-                setDraft(null)
-                setAddingAccount(null)
-                setError('')
-              }}
-              className={cn(
-                'flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left',
-                !catalogKey && server.id === detailId ? 'bg-primary text-white' : 'hover:bg-muted',
-              )}
-            >
-              <BotAvatar name={server.name} color="#3b82f6" className="size-6 text-[10px]" />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">{server.name}</span>
-                <span className={cn('block text-[10px]', !catalogKey && server.id === detailId ? 'text-white/70' : 'text-muted-foreground')}>
-                  {accounts.filter((account) => account.serverId === server.id).length} accounts
-                </span>
-              </span>
-              <span className={cn('size-1.5 shrink-0 rounded-full', server.enabled ? 'bg-success' : 'bg-muted-foreground/40')} />
-            </button>
-          ))}
+                resetDetailState()
+              },
+            }),
+          )}
+          {availableCatalogRail.length > 0 && (
+            <div className="px-2 pt-3 pb-1 text-[9px] font-semibold tracking-wider text-muted-foreground/70 uppercase">
+              Available
+            </div>
+          )}
+          {availableCatalogRail.map(catalogRailRow)}
           <button
             type="button"
             onClick={() => {
               setDetailId('')
               setCatalogKey('')
+              resetDetailState()
               setCreatingServer(true)
               setDraft(draftOf())
             }}
-            className="mt-1 flex items-center gap-2 rounded-lg px-2 py-2 text-sm font-medium text-info hover:bg-muted"
+            className="mt-1 flex items-center gap-2 rounded-lg px-2 py-2 text-xs font-medium text-info hover:bg-muted"
           >
-            <Plus className="size-3.5" /> Add MCP server
+            <Plus className="size-3" /> Add MCP server
           </button>
         </div>
       </div>
@@ -433,75 +511,181 @@ function PluginsTab({
                 <div className="min-w-0 flex-1">
                   <h2 className="text-xl font-bold tracking-tight">{detailCatalog?.name ?? detail!.name}</h2>
                   <div className="mt-0.5 text-xs text-muted-foreground">
-                    {detailCatalog?.description ?? `${detail!.serverKey} · Streamable HTTP`}
+                    {detailCatalog
+                      ? `MCP · ${hostOf(detailCatalog.url)}`
+                      : `${detail!.serverKey} · ${hostOf(configurationOf(detail!).url)}`}
                   </div>
                 </div>
-                {detail ? (
-                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                    {detail.enabled ? 'Enabled' : 'Disabled'}
-                    <Switch checked={detail.enabled} disabled={saving} onCheckedChange={(enabled) => void changeMcpServer({ data: { id: detail.id, patch: { enabled } } }).then(onChanged).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Could not update server'))} />
-                  </label>
-                ) : (
-                  <Badge variant="secondary">Not connected</Badge>
+                {!detailCatalog && (
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setDraft(draftOf(detail))}>Edit</Button>
+                    <Button size="sm" variant="destructive-outline" disabled={saving} onClick={() => void deleteServer(detail!)}>
+                      <Trash2 /> Remove
+                    </Button>
+                  </div>
                 )}
               </div>
-              <div className="mt-4 rounded-lg border bg-card px-3 py-2.5 text-xs text-muted-foreground">
-                {detailCatalog?.url ?? configurationOf(detail!).url}
-              </div>
               {detailCatalog && (
-                <div className="mt-4 flex flex-wrap gap-1.5">
-                  {detailCatalog.skills.map((skill) => <Badge key={skill} variant="secondary">{skill}</Badge>)}
-                </div>
-              )}
-              {detail && (
-                <div className="mt-3 flex gap-2">
-                  <Button size="sm" variant="outline" onClick={() => setDraft(draftOf(detail))}>Edit Server</Button>
-                  <Button size="sm" variant="destructive-outline" disabled={saving} onClick={() => void deleteServer(detail)}><Trash2 /> Remove</Button>
-                </div>
+                <p className="mt-4 text-[13px] leading-relaxed text-muted-foreground">
+                  {detailCatalog.description}
+                </p>
               )}
 
               <h3 className="mt-6 mb-2 text-[11px] font-semibold text-muted-foreground">Accounts</h3>
               <div className="overflow-hidden rounded-lg border">
                 {detailAccounts.map((account) => (
-                  <div key={account.id} className="flex items-center gap-2.5 border-b bg-card px-3 py-2.5 last:border-b-0">
-                    <span className="flex-1 text-sm">{account.label}</span>
-                    <Badge variant="secondary" className="text-[10px]">
-                      {account.authType === 'oauth' ? 'OAuth' : 'API key'}
-                    </Badge>
-                    <span className="text-[11px] font-medium text-success">{account.status}</span>
-                    <Button variant="ghost" size="icon-xs" aria-label={`Remove ${account.label}`} disabled={saving} onClick={() => void deleteAccount(account)}><Trash2 /></Button>
+                  <div key={account.id} className="flex items-center gap-2.5 border-b bg-card px-3 py-2.5">
+                    {renamingId === account.id ? (
+                      <>
+                        <Input
+                          autoFocus
+                          aria-label={`Rename ${account.label}`}
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') void renameAccount(account)
+                            if (e.key === 'Escape') setRenamingId('')
+                          }}
+                          className="h-7 flex-1 text-sm"
+                        />
+                        <Button size="sm" disabled={saving} onClick={() => void renameAccount(account)}>Save</Button>
+                      </>
+                    ) : (
+                      <>
+                        <span className="flex min-w-0 flex-1 items-center gap-2">
+                          <span className="truncate text-sm">{account.label}</span>
+                          {authMethods.length > 1 && (
+                            <Badge variant="secondary" className="text-[10px]">
+                              {account.authType === 'oauth' ? 'OAuth' : 'API key'}
+                            </Badge>
+                          )}
+                          <button
+                            type="button"
+                            aria-label={`Rename ${account.label}`}
+                            onClick={() => {
+                              setRenamingId(account.id)
+                              setRenameValue(account.label)
+                            }}
+                            className="text-muted-foreground/70 hover:text-foreground"
+                          >
+                            <Pencil className="size-3" />
+                          </button>
+                        </span>
+                        <span
+                          className={cn(
+                            'text-[11px] font-medium',
+                            account.status === 'active' ? 'text-success' : 'text-warning',
+                          )}
+                        >
+                          {account.status === 'active' ? 'connected' : account.status}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={saving}
+                          onClick={() => void deleteAccount(account)}
+                          className="px-1 text-xs text-muted-foreground hover:text-destructive"
+                        >
+                          Disconnect
+                        </button>
+                      </>
+                    )}
                   </div>
                 ))}
-                {detailAccounts.length === 0 && !addingAccount && <p className="bg-card px-3 py-3 text-xs text-muted-foreground">No accounts configured.</p>}
-                {addingAccount ? (
-                  <div className="space-y-2 bg-card p-3">
-                    <Input aria-label={selectedCatalogAuth?.accountLabel.label ?? 'Account label'} value={accountDraft.label} onChange={(e) => setAccountDraft({ ...accountDraft, label: e.target.value })} placeholder={selectedCatalogAuth?.accountLabel.placeholder ?? 'Account label'} />
-                    {addingAccount === 'api_key' && <Input type="password" autoComplete="new-password" aria-label={catalogApiKeyAuth?.apiKey.label ?? 'API key'} value={accountDraft.apiKey} onChange={(e) => setAccountDraft({ ...accountDraft, apiKey: e.target.value })} placeholder={catalogApiKeyAuth?.apiKey.placeholder ?? 'API key'} />}
-                    {addingAccount === 'oauth' && <p className="text-xs text-muted-foreground">You will continue to the provider to authorize this account.</p>}
-                    <div className="flex justify-end gap-2">
-                      <Button size="sm" variant="ghost" onClick={() => { setAddingAccount(null); setAccountDraft({ label: '', apiKey: '' }) }}>Cancel</Button>
-                      {addingAccount === 'api_key' ? (
-                        <Button size="sm" disabled={saving || !accountDraft.label.trim() || !accountDraft.apiKey} onClick={() => void addAccount()}>Add Account</Button>
-                      ) : (
-                        <Button size="sm" disabled={saving || !accountDraft.label.trim()} onClick={() => void connectOauthAccount()}>{detailCatalog?.auth.find((auth) => auth.type === 'oauth')?.connectLabel ?? 'Connect OAuth'}</Button>
-                      )}
+                {addingAccount === null && (
+                  <button
+                    type="button"
+                    onClick={startAddAccount}
+                    className="flex w-full items-center gap-2 bg-card px-3 py-2.5 text-sm font-medium text-info hover:text-info/80"
+                  >
+                    <Plus className="size-3.5" /> {accountsCount > 0 ? 'Add Another Account' : 'Add Account'}
+                  </button>
+                )}
+                {addingAccount === 'choose' && (
+                  <div className="bg-card p-3">
+                    <div className="mb-2 text-[11px] font-semibold text-muted-foreground">Connect with</div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => void connectOauthAccount()}
+                        className="flex-1 rounded-lg border px-3 py-2.5 text-left hover:border-info/50"
+                      >
+                        <span className="block text-sm font-semibold">OAuth</span>
+                        <span className="mt-0.5 block text-xs text-muted-foreground">Sign in with your browser</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAddingAccount('key')
+                          setApiKey('')
+                        }}
+                        className="flex-1 rounded-lg border px-3 py-2.5 text-left hover:border-info/50"
+                      >
+                        <span className="block text-sm font-semibold">API key</span>
+                        <span className="mt-0.5 block text-xs text-muted-foreground">Paste a key from your account</span>
+                      </button>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setAddingAccount(null)}
+                      className="mt-2 text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      Cancel
+                    </button>
                   </div>
-                ) : (
-                  <div className={cn('grid divide-x border-t bg-card', (!detailCatalog || detailCatalog.auth.length === 2) ? 'grid-cols-2' : 'grid-cols-1')}>
-                    {(!detailCatalog || catalogApiKeyAuth) && (
-                      <button type="button" onClick={() => setAddingAccount('api_key')} className="flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium text-info hover:bg-muted/50">
-                        <Plus className="size-3.5" /> Add API key
-                      </button>
-                    )}
-                    {(!detailCatalog || detailCatalog.auth.some((auth) => auth.type === 'oauth')) && (
-                      <button type="button" onClick={() => setAddingAccount('oauth')} className="flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium text-info hover:bg-muted/50">
-                        <Link2 className="size-3.5" /> Connect OAuth
-                      </button>
-                    )}
+                )}
+                {addingAccount === 'key' && (
+                  <div className="flex items-center gap-2 bg-card p-3">
+                    <Input
+                      autoFocus
+                      type="password"
+                      autoComplete="new-password"
+                      aria-label="API key"
+                      value={apiKey}
+                      onChange={(e) => setApiKey(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void connectApiKeyAccount()
+                        if (e.key === 'Escape') setAddingAccount(null)
+                      }}
+                      placeholder="sk-…"
+                      className="h-8 flex-1 font-mono text-sm"
+                    />
+                    <Button size="sm" disabled={saving || !apiKey.trim()} onClick={() => void connectApiKeyAccount()}>
+                      Connect
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setAddingAccount(null)
+                        setApiKey('')
+                      }}
+                    >
+                      Cancel
+                    </Button>
                   </div>
                 )}
               </div>
+
+              {detailCatalog && (
+                <>
+                  <h3 className="mt-6 mb-2 text-[11px] font-semibold text-muted-foreground">Bundled Skills</h3>
+                  <div className="overflow-hidden rounded-lg border">
+                    {detailCatalog.skills.map((skill) => (
+                      <div key={skill} className="flex items-center gap-2.5 border-b bg-card px-3 py-2.5 last:border-b-0">
+                        <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-[#7a68d8]/80">
+                          <FileText className="size-3 text-white" />
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium">{skill}</span>
+                        <Lock className="size-3 shrink-0 text-muted-foreground/70" />
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground/70">
+                    Included with this plugin to teach bots how to use it.
+                  </p>
+                </>
+              )}
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">Add an MCP server to get started.</p>
