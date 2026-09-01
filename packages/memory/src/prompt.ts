@@ -37,13 +37,15 @@ function renderFactLines(
 }
 
 /**
- * One bounded fact list: profile facts (oldest first) then recent log/note
+ * One bounded fact list: profile facts (newest updates first) then recent log/note
  * facts (newest first), with an omission line when records exceed the
  * record and character budgets.
  */
 function renderFactSection(items: MemoryItem[], withVia: boolean) {
   const profile = renderFactLines(
-    items.filter((item) => item.kind === 'profile'),
+    items
+      .filter((item) => item.kind === 'profile')
+      .sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? 1 : -1)),
     { recordLimit: PROFILE_RECORD_LIMIT, charBudget: PROFILE_CHAR_BUDGET, withVia },
   )
   const recent = renderFactLines(
