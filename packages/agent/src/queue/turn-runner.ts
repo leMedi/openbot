@@ -273,12 +273,30 @@ async function executeTurn(turnId: string) {
     // messages (widgets included) and keep working.
     await created.session.prompt(prepared.promptText)
 
+    throwOnModelError(created.session.state.messages)
+    if (
+      !active.controller.signal.aborted &&
+      (claimed.source === 'composer' || claimed.source === 'group-orchestrator') &&
+      active.delivered.length === 0
+    ) {
+      console.warn('[agent delivery missing]', {
+        agent: { id: agent.id, name: agent.name },
+        turnId,
+      })
+      await created.session.prompt(
+        'You finished without sending the person a visible response. Use SendMessage now to deliver your response, then finish with a short assistant message.',
+      )
+      throwOnModelError(created.session.state.messages)
+      if (active.delivered.length === 0) {
+        throw new Error('Agent completed without delivering a message')
+      }
+    }
+
     // Durable cancellation already settled the turn; just close the stream.
     if (active.controller.signal.aborted) {
       emitTerminal({ type: 'error', message: 'Cancelled by user', status: 'cancelled' })
       return
     }
-    throwOnModelError(created.session.state.messages)
 
     await finalizeTurnSuccess(turnId)
     emitTerminal({ type: 'done', turnId })
