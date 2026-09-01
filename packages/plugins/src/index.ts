@@ -1,4 +1,5 @@
 export * from './contract'
 export * from './handlers'
+export * from './mcp-catalog'
 export * from './oauth'
 export * from './registry'

@@ -2,6 +2,7 @@ import {
   agentMcpAccountsInput,
   mcpAccountUpdateInput,
   mcpApiKeyAccountCreateInput,
+  mcpCatalogInstallInput,
   mcpIdInput,
   mcpServerCreateInput,
   mcpServerUpdateInput,
@@ -15,6 +16,10 @@ export const getMcpConfiguration = createServerFn({ method: 'GET' }).handler(asy
 export const addMcpServer = createServerFn({ method: 'POST' })
   .validator((input: unknown) => mcpServerCreateInput.parse(input))
   .handler(async ({ data }) => (await import('@openbot/plugins')).createServer(data))
+
+export const installMcpFromCatalog = createServerFn({ method: 'POST' })
+  .validator((input: unknown) => mcpCatalogInstallInput.parse(input))
+  .handler(async ({ data }) => (await import('@openbot/plugins')).installCatalogServer(data))
 
 export const changeMcpServer = createServerFn({ method: 'POST' })
   .validator((input: unknown) => mcpServerUpdateInput.parse(input))

@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react'
 import type { SafeMcpAccount, SafeMcpServer } from '@openbot/db'
+import {
+  MCP_CATALOG,
+  matchesMcpCatalogEntry,
+  type McpCatalogEntry,
+  type McpCatalogKey,
+} from '@openbot/plugins/mcp-catalog'
 import { FileText, Link2, Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -13,6 +19,7 @@ import {
   addMcpApiKeyAccount,
   addMcpServer,
   changeMcpServer,
+  installMcpFromCatalog,
   removeMcpAccount,
   removeMcpServer,
 } from '@/server/mcp'
@@ -63,6 +70,21 @@ type McpDraft = {
   apiKeyPrefix: 'Bearer' | ''
 }
 
+function McpBrandIcon({ entry, className }: { entry: McpCatalogEntry; className?: string }) {
+  return (
+    <span
+      className={cn(
+        'flex size-7 shrink-0 items-center justify-center rounded-md border bg-white p-1.5',
+        className,
+      )}
+    >
+      <svg viewBox="0 0 24 24" role="img" aria-label={`${entry.name} logo`} className="size-full">
+        <path d={entry.icon.path} fill={entry.icon.color} />
+      </svg>
+    </span>
+  )
+}
+
 function configurationOf(server: SafeMcpServer) {
   const value = server.configurationJson as Record<string, unknown>
   return {
@@ -94,29 +116,68 @@ function PluginsTab({
   onChanged: () => Promise<unknown>
 }) {
   const [query, setQuery] = useState('')
-  const [detailId, setDetailId] = useState(servers[0]?.id ?? '')
-  const [creatingServer, setCreatingServer] = useState(servers.length === 0)
-  const [draft, setDraft] = useState<McpDraft | null>(servers.length === 0 ? draftOf() : null)
+  const [catalogKey, setCatalogKey] = useState<McpCatalogKey | ''>(MCP_CATALOG[0].key)
+  const [detailId, setDetailId] = useState('')
+  const [creatingServer, setCreatingServer] = useState(false)
+  const [draft, setDraft] = useState<McpDraft | null>(null)
   const [accountDraft, setAccountDraft] = useState({ label: '', apiKey: '' })
   const [addingAccount, setAddingAccount] = useState<'api_key' | 'oauth' | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
+  const detailCatalog = MCP_CATALOG.find((entry) => entry.key === catalogKey)
   const detail = creatingServer
     ? undefined
-    : servers.find((server) => server.id === detailId)
-  const rail = servers.filter((server) =>
-    server.name.toLowerCase().includes(query.toLowerCase()),
+    : catalogKey
+      ? servers.find(
+          (server) => detailCatalog && matchesMcpCatalogEntry(detailCatalog, server),
+        )
+      : servers.find((server) => server.id === detailId)
+  const normalizedQuery = query.trim().toLowerCase()
+  const catalogRail = MCP_CATALOG.filter((entry) =>
+    `${entry.name} ${entry.skills.join(' ')}`.toLowerCase().includes(normalizedQuery),
+  )
+  const customRail = servers.filter(
+    (server) =>
+      !MCP_CATALOG.some((entry) => matchesMcpCatalogEntry(entry, server)) &&
+      server.name.toLowerCase().includes(normalizedQuery),
   )
   const detailAccounts = accounts.filter((account) => account.serverId === detail?.id)
+  const catalogApiKeyAuth = detailCatalog?.auth.find((auth) => auth.type === 'apiKey')
+  const selectedCatalogAuth = detailCatalog?.auth.find((auth) =>
+    addingAccount === 'api_key' ? auth.type === 'apiKey' : auth.type === addingAccount,
+  )
+
+  useEffect(() => {
+    const savedKey = sessionStorage.getItem('openbot:selected-mcp')
+    if (savedKey && MCP_CATALOG.some((entry) => entry.key === savedKey)) {
+      setCatalogKey(savedKey as McpCatalogKey)
+    }
+  }, [])
 
   useEffect(() => {
     if (creatingServer) return
-    if (!detailId && servers[0]) setDetailId(servers[0].id)
-    if (detailId && !servers.some((server) => server.id === detailId)) {
-      setDetailId(servers[0]?.id ?? '')
+    if (catalogKey) return
+    if (!detailId) {
+      const firstCustom = servers.find(
+        (server) => !MCP_CATALOG.some((entry) => matchesMcpCatalogEntry(entry, server)),
+      )
+      if (firstCustom) setDetailId(firstCustom.id)
     }
-  }, [creatingServer, detailId, servers])
+    if (detailId && !servers.some((server) => server.id === detailId)) {
+      setCatalogKey(MCP_CATALOG[0].key)
+      setDetailId('')
+    }
+  }, [catalogKey, creatingServer, detailId, servers])
+
+  async function ensureDetailServer() {
+    if (detail) return detail
+    if (!detailCatalog) throw new Error('Select an MCP before connecting an account')
+    const installed = await installMcpFromCatalog({ data: { key: detailCatalog.key } })
+    setDetailId(installed.id)
+    await onChanged()
+    return installed
+  }
 
   async function saveServer() {
     if (!draft || saving) return
@@ -170,13 +231,14 @@ function PluginsTab({
   }
 
   async function addAccount() {
-    if (!detail || saving) return
+    if (saving) return
     setSaving(true)
     setError('')
     try {
+      const server = await ensureDetailServer()
       await addMcpApiKeyAccount({
         data: {
-          serverId: detail.id,
+          serverId: server.id,
           label: accountDraft.label,
           apiKey: accountDraft.apiKey,
         },
@@ -191,13 +253,21 @@ function PluginsTab({
     }
   }
 
-  function connectOauthAccount() {
-    if (!detail || saving || !accountDraft.label.trim()) return
+  async function connectOauthAccount() {
+    if (saving || !accountDraft.label.trim()) return
     setSaving(true)
-    const authorization = new URL('/api/mcp/oauth/start', window.location.origin)
-    authorization.searchParams.set('serverId', detail.id)
-    authorization.searchParams.set('label', accountDraft.label)
-    window.location.assign(authorization)
+    setError('')
+    try {
+      const server = await ensureDetailServer()
+      if (detailCatalog) sessionStorage.setItem('openbot:selected-mcp', detailCatalog.key)
+      const authorization = new URL('/api/mcp/oauth/start', window.location.origin)
+      authorization.searchParams.set('serverId', server.id)
+      authorization.searchParams.set('label', accountDraft.label)
+      window.location.assign(authorization)
+    } catch (cause) {
+      setSaving(false)
+      setError(cause instanceof Error ? cause.message : 'Could not connect the MCP account')
+    }
   }
 
   async function deleteAccount(account: SafeMcpAccount) {
@@ -215,9 +285,9 @@ function PluginsTab({
   }
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="flex h-full min-h-0 flex-col sm:flex-row">
       {/* Rail */}
-      <div className="flex w-64 shrink-0 flex-col border-r bg-sidebar/70">
+      <div className="flex max-h-52 w-full shrink-0 flex-col border-b bg-sidebar/70 sm:max-h-none sm:w-64 sm:border-r sm:border-b-0">
         <div className="p-2.5 pb-2">
           <div className="relative">
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3 -translate-y-1/2 text-muted-foreground" />
@@ -230,44 +300,84 @@ function PluginsTab({
           </div>
         </div>
         <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-3">
-          {rail.map((server) => (
+          {catalogRail.map((entry) => {
+            const server = servers.find((candidate) => matchesMcpCatalogEntry(entry, candidate))
+            const accountCount = accounts.filter((account) => account.serverId === server?.id).length
+            return (
             <button
-              key={server.id}
+              key={entry.key}
               type="button"
               onClick={() => {
-                setDetailId(server.id)
+                setCatalogKey(entry.key)
+                setDetailId(server?.id ?? '')
                 setCreatingServer(false)
                 setDraft(null)
+                setAddingAccount(null)
+                setError('')
               }}
               className={cn(
                 'flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left',
-                server.id === detailId ? 'bg-primary text-white' : 'hover:bg-muted',
+                entry.key === catalogKey ? 'bg-primary text-white' : 'hover:bg-muted',
               )}
             >
-              <BotAvatar name={server.name} color="#3b82f6" className="size-6 text-[10px]" />
+              <McpBrandIcon entry={entry} className="size-6" />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">{server.name}</span>
+                <span className="block truncate text-sm font-medium">{entry.name}</span>
                 <span
                   className={cn(
                     'block text-[10px]',
-                    server.id === detailId ? 'text-white/70' : 'text-muted-foreground',
+                    entry.key === catalogKey ? 'text-white/70' : 'text-muted-foreground',
                   )}
                 >
-                  {accounts.filter((account) => account.serverId === server.id).length} accounts
+                  {accountCount} {accountCount === 1 ? 'account' : 'accounts'}
                 </span>
               </span>
               <span
                 className={cn(
                   'size-1.5 shrink-0 rounded-full',
-                  server.enabled ? 'bg-success' : 'bg-muted-foreground/40',
+                  server?.enabled ? 'bg-success' : 'bg-muted-foreground/40',
                 )}
               />
+            </button>
+            )
+          })}
+          {customRail.length > 0 && (
+            <div className="mt-2 px-2 pb-1 text-[9px] font-semibold tracking-wider text-muted-foreground/70 uppercase">
+              Custom
+            </div>
+          )}
+          {customRail.map((server) => (
+            <button
+              key={server.id}
+              type="button"
+              onClick={() => {
+                setCatalogKey('')
+                setDetailId(server.id)
+                setCreatingServer(false)
+                setDraft(null)
+                setAddingAccount(null)
+                setError('')
+              }}
+              className={cn(
+                'flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left',
+                !catalogKey && server.id === detailId ? 'bg-primary text-white' : 'hover:bg-muted',
+              )}
+            >
+              <BotAvatar name={server.name} color="#3b82f6" className="size-6 text-[10px]" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium">{server.name}</span>
+                <span className={cn('block text-[10px]', !catalogKey && server.id === detailId ? 'text-white/70' : 'text-muted-foreground')}>
+                  {accounts.filter((account) => account.serverId === server.id).length} accounts
+                </span>
+              </span>
+              <span className={cn('size-1.5 shrink-0 rounded-full', server.enabled ? 'bg-success' : 'bg-muted-foreground/40')} />
             </button>
           ))}
           <button
             type="button"
             onClick={() => {
               setDetailId('')
+              setCatalogKey('')
               setCreatingServer(true)
               setDraft(draftOf())
             }}
@@ -312,26 +422,43 @@ function PluginsTab({
                 </Button>
               </div>
             </div>
-          ) : detail ? (
+          ) : detail || detailCatalog ? (
             <div>
               <div className="flex items-start gap-3.5">
-                <BotAvatar name={detail.name} color="#3b82f6" className="size-13 rounded-lg text-xl" />
+                {detailCatalog ? (
+                  <McpBrandIcon entry={detailCatalog} className="size-13 rounded-xl p-3" />
+                ) : (
+                  <BotAvatar name={detail!.name} color="#3b82f6" className="size-13 rounded-lg text-xl" />
+                )}
                 <div className="min-w-0 flex-1">
-                  <h2 className="text-xl font-bold tracking-tight">{detail.name}</h2>
-                  <div className="mt-0.5 text-xs text-muted-foreground">{detail.serverKey} · Streamable HTTP</div>
+                  <h2 className="text-xl font-bold tracking-tight">{detailCatalog?.name ?? detail!.name}</h2>
+                  <div className="mt-0.5 text-xs text-muted-foreground">
+                    {detailCatalog?.description ?? `${detail!.serverKey} · Streamable HTTP`}
+                  </div>
                 </div>
-                <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                  {detail.enabled ? 'Enabled' : 'Disabled'}
-                  <Switch checked={detail.enabled} disabled={saving} onCheckedChange={(enabled) => void changeMcpServer({ data: { id: detail.id, patch: { enabled } } }).then(onChanged).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Could not update server'))} />
-                </label>
+                {detail ? (
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                    {detail.enabled ? 'Enabled' : 'Disabled'}
+                    <Switch checked={detail.enabled} disabled={saving} onCheckedChange={(enabled) => void changeMcpServer({ data: { id: detail.id, patch: { enabled } } }).then(onChanged).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Could not update server'))} />
+                  </label>
+                ) : (
+                  <Badge variant="secondary">Not connected</Badge>
+                )}
               </div>
               <div className="mt-4 rounded-lg border bg-card px-3 py-2.5 text-xs text-muted-foreground">
-                {configurationOf(detail).url}
+                {detailCatalog?.url ?? configurationOf(detail!).url}
               </div>
-              <div className="mt-3 flex gap-2">
-                <Button size="sm" variant="outline" onClick={() => setDraft(draftOf(detail))}>Edit Server</Button>
-                <Button size="sm" variant="destructive-outline" disabled={saving} onClick={() => void deleteServer(detail)}><Trash2 /> Remove</Button>
-              </div>
+              {detailCatalog && (
+                <div className="mt-4 flex flex-wrap gap-1.5">
+                  {detailCatalog.skills.map((skill) => <Badge key={skill} variant="secondary">{skill}</Badge>)}
+                </div>
+              )}
+              {detail && (
+                <div className="mt-3 flex gap-2">
+                  <Button size="sm" variant="outline" onClick={() => setDraft(draftOf(detail))}>Edit Server</Button>
+                  <Button size="sm" variant="destructive-outline" disabled={saving} onClick={() => void deleteServer(detail)}><Trash2 /> Remove</Button>
+                </div>
+              )}
 
               <h3 className="mt-6 mb-2 text-[11px] font-semibold text-muted-foreground">Accounts</h3>
               <div className="overflow-hidden rounded-lg border">
@@ -348,26 +475,30 @@ function PluginsTab({
                 {detailAccounts.length === 0 && !addingAccount && <p className="bg-card px-3 py-3 text-xs text-muted-foreground">No accounts configured.</p>}
                 {addingAccount ? (
                   <div className="space-y-2 bg-card p-3">
-                    <Input value={accountDraft.label} onChange={(e) => setAccountDraft({ ...accountDraft, label: e.target.value })} placeholder="Account label" />
-                    {addingAccount === 'api_key' && <Input type="password" autoComplete="new-password" value={accountDraft.apiKey} onChange={(e) => setAccountDraft({ ...accountDraft, apiKey: e.target.value })} placeholder="API key" />}
+                    <Input aria-label={selectedCatalogAuth?.accountLabel.label ?? 'Account label'} value={accountDraft.label} onChange={(e) => setAccountDraft({ ...accountDraft, label: e.target.value })} placeholder={selectedCatalogAuth?.accountLabel.placeholder ?? 'Account label'} />
+                    {addingAccount === 'api_key' && <Input type="password" autoComplete="new-password" aria-label={catalogApiKeyAuth?.apiKey.label ?? 'API key'} value={accountDraft.apiKey} onChange={(e) => setAccountDraft({ ...accountDraft, apiKey: e.target.value })} placeholder={catalogApiKeyAuth?.apiKey.placeholder ?? 'API key'} />}
                     {addingAccount === 'oauth' && <p className="text-xs text-muted-foreground">You will continue to the provider to authorize this account.</p>}
                     <div className="flex justify-end gap-2">
                       <Button size="sm" variant="ghost" onClick={() => { setAddingAccount(null); setAccountDraft({ label: '', apiKey: '' }) }}>Cancel</Button>
                       {addingAccount === 'api_key' ? (
                         <Button size="sm" disabled={saving || !accountDraft.label.trim() || !accountDraft.apiKey} onClick={() => void addAccount()}>Add Account</Button>
                       ) : (
-                        <Button size="sm" disabled={saving || !accountDraft.label.trim()} onClick={connectOauthAccount}>Connect OAuth</Button>
+                        <Button size="sm" disabled={saving || !accountDraft.label.trim()} onClick={() => void connectOauthAccount()}>{detailCatalog?.auth.find((auth) => auth.type === 'oauth')?.connectLabel ?? 'Connect OAuth'}</Button>
                       )}
                     </div>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 divide-x border-t bg-card">
-                    <button type="button" onClick={() => setAddingAccount('api_key')} className="flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium text-info hover:bg-muted/50">
-                      <Plus className="size-3.5" /> Add API key
-                    </button>
-                    <button type="button" onClick={() => setAddingAccount('oauth')} className="flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium text-info hover:bg-muted/50">
-                      <Link2 className="size-3.5" /> Connect OAuth
-                    </button>
+                  <div className={cn('grid divide-x border-t bg-card', (!detailCatalog || detailCatalog.auth.length === 2) ? 'grid-cols-2' : 'grid-cols-1')}>
+                    {(!detailCatalog || catalogApiKeyAuth) && (
+                      <button type="button" onClick={() => setAddingAccount('api_key')} className="flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium text-info hover:bg-muted/50">
+                        <Plus className="size-3.5" /> Add API key
+                      </button>
+                    )}
+                    {(!detailCatalog || detailCatalog.auth.some((auth) => auth.type === 'oauth')) && (
+                      <button type="button" onClick={() => setAddingAccount('oauth')} className="flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium text-info hover:bg-muted/50">
+                        <Link2 className="size-3.5" /> Connect OAuth
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

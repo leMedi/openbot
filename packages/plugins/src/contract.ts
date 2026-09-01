@@ -37,6 +37,8 @@ export const mcpServerUpdateInput = z.object({
 
 export const mcpIdInput = z.object({ id: z.string().min(1) })
 
+export const mcpCatalogInstallInput = z.object({ key: z.string().trim().min(1) })
+
 export const mcpApiKeyAccountCreateInput = z.object({
   serverId: z.string().min(1),
   label: z.string().trim().min(1).max(200),

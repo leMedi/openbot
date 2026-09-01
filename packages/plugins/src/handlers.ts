@@ -11,9 +11,15 @@ import {
   updateMcpServer,
 } from '@openbot/db'
 import {
+  findMcpCatalogEntry,
+  matchesMcpCatalogEntry,
+  mcpCatalogServerConfiguration,
+} from './mcp-catalog'
+import {
   agentMcpAccountsInput,
   mcpAccountUpdateInput,
   mcpApiKeyAccountCreateInput,
+  mcpCatalogInstallInput,
   mcpIdInput,
   mcpServerCreateInput,
   mcpServerUpdateInput,
@@ -30,6 +36,35 @@ export async function readConfiguration() {
 
 export function createServer(input: unknown) {
   return createMcpServer(mcpServerCreateInput.parse(input))
+}
+
+export async function installCatalogServer(input: unknown) {
+  const { key } = mcpCatalogInstallInput.parse(input)
+  const entry = findMcpCatalogEntry(key)
+  if (!entry) throw new Error(`Unknown MCP catalog entry: ${key}`)
+
+  const existing = (await listMcpServers()).find((server) => server.serverKey === entry.key)
+  if (existing) {
+    if (matchesMcpCatalogEntry(entry, existing)) return existing
+    throw new Error(`The MCP server key "${entry.key}" is already used by a custom server`)
+  }
+
+  try {
+    return await createMcpServer({
+      serverKey: entry.key,
+      name: entry.name,
+      transport: 'streamable_http',
+      configuration: mcpCatalogServerConfiguration(entry),
+    })
+  } catch (cause) {
+    const concurrentlyInstalled = (await listMcpServers()).find(
+      (server) => server.serverKey === entry.key,
+    )
+    if (concurrentlyInstalled && matchesMcpCatalogEntry(entry, concurrentlyInstalled)) {
+      return concurrentlyInstalled
+    }
+    throw cause
+  }
 }
 
 export async function changeServer(input: unknown) {
