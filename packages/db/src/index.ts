@@ -8,7 +8,7 @@ export * from './groups'
 export * from './conversations'
 export * from './messages'
 export * from './turns'
-export * from './checkpoints'
+export * from './pi-sessions'
 export * from './files'
 export * from './memory'
 export * from './mcp'
@@ -16,7 +16,6 @@ export {
   agents,
   groups,
   conversations,
-  conversationCheckpoints,
   conversationMessages,
   managedFiles,
   memoryItems,
@@ -32,8 +31,6 @@ export type {
   NewGroup,
   Conversation,
   NewConversation,
-  ConversationCheckpoint,
-  NewConversationCheckpoint,
   ConversationMessage,
   NewConversationMessage,
   ManagedFile,

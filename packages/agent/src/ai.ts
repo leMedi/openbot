@@ -38,13 +38,6 @@ export function piAgentDirectory() {
   return directory
 }
 
-/** Per-conversation pi session storage; each turn continues the stored session. */
-export function piSessionDirectory(conversationId: string) {
-  const directory = path.join(dataDirectory, 'pi-sessions', conversationId)
-  mkdirSync(directory, { recursive: true })
-  return directory
-}
-
 /**
  * Registers the configured endpoint as a pi provider. The API key stays an
  * environment-variable reference so the credential never lands on disk.

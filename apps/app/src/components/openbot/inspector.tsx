@@ -356,7 +356,7 @@ export function Inspector({
           {memoryError && <p className="text-xs text-destructive">{memoryError}</p>}
           <DialogFooter className="items-center">
             <span className="mr-auto text-[11px] text-muted-foreground/70">
-              Changes affect new checkpoint epochs.
+              Changes affect future turns.
             </span>
             {editingMemory && (
               <Button variant="secondary" size="sm" onClick={resetMemoryDraft}>

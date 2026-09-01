@@ -2,15 +2,25 @@
 // so a private turn only supplies this turn's user text. Group turns run on a
 // fresh in-memory session, so they carry the rendered shared transcript.
 
-import { listConversationMessages, type Agent, type Group } from '@openbot/db'
+import { SessionManager } from '@earendil-works/pi-coding-agent'
+import {
+  listConversationMessages,
+  piSessionDirectory,
+  type Agent,
+  type MemoryItem,
+} from '@openbot/db'
+import {
+  type ConversationPromptContext,
+  renderSystemPrompt,
+} from './system'
 
-export type PrivatePromptInput = {
+type PrivatePromptInput = {
   conversationId: string
   turnId: string
 }
 
 /** The user text posted for this turn (multiple rows join into one prompt). */
-export async function renderPrivateTurnPrompt(input: PrivatePromptInput): Promise<string> {
+async function renderPrivateTurnPrompt(input: PrivatePromptInput): Promise<string> {
   const rows = await listConversationMessages(input.conversationId)
   return rows
     .filter(
@@ -23,10 +33,9 @@ export async function renderPrivateTurnPrompt(input: PrivatePromptInput): Promis
     .join('\n\n')
 }
 
-export type GroupPromptInput = {
+type GroupPromptInput = {
   agent: Agent
-  group: Group
-  members: Agent[]
+  conversation: Extract<ConversationPromptContext, { kind: 'group' }>
   conversationId: string
 }
 
@@ -35,10 +44,11 @@ export type GroupPromptInput = {
  * stateless: the whole transcript is rebuilt from the shared conversation on
  * every turn, from this member's perspective.
  */
-export async function renderGroupTurnPrompt(input: GroupPromptInput): Promise<string> {
+async function renderGroupTurnPrompt(input: GroupPromptInput): Promise<string> {
   const rows = await listConversationMessages(input.conversationId)
   const nameOf = (agentId: string) =>
-    input.members.find((member) => member.id === agentId)?.name ?? 'Another agent'
+    input.conversation.members.find((member) => member.id === agentId)?.name ??
+    'Another agent'
   const lines: string[] = []
   for (const row of rows) {
     if (row.kind !== 'message' || !row.bodyText) continue
@@ -51,12 +61,55 @@ export async function renderGroupTurnPrompt(input: GroupPromptInput): Promise<st
     }
   }
   return [
-    `Transcript of the shared room "${input.group.name}" so far (your earlier messages are prefixed [you]):`,
+    `Transcript of the shared room "${input.conversation.group.name}" so far (your earlier messages are prefixed [you]):`,
     '',
     ...lines,
-    '',
-    'Continue the conversation as yourself, without a name prefix. Deliver ' +
-      'your reply by actually invoking the SendMessage tool — plain assistant ' +
-      'text is never shown to the room.',
   ].join('\n')
+}
+
+export type PrepareConversationTurnInput = {
+  agent: Agent
+  memory: MemoryItem[]
+  conversation: ConversationPromptContext
+  conversationId: string
+  turnId: string
+  workspace: string
+  resumedText?: string
+}
+
+/** Resolves every private/group execution difference at one boundary. */
+export async function prepareConversationTurn(input: PrepareConversationTurnInput) {
+  const systemPrompt = renderSystemPrompt({
+    agent: input.agent,
+    memory: input.memory,
+    conversation: input.conversation,
+  })
+
+  if (input.conversation.kind === 'group') {
+    return {
+      systemPrompt,
+      sessionManager: SessionManager.inMemory(input.workspace),
+      promptText: await renderGroupTurnPrompt({
+        agent: input.agent,
+        conversation: input.conversation,
+        conversationId: input.conversationId,
+      }),
+      senderAgentId: input.agent.id,
+    }
+  }
+
+  return {
+    systemPrompt,
+    sessionManager: SessionManager.continueRecent(
+      input.workspace,
+      await piSessionDirectory(input.conversationId),
+    ),
+    promptText:
+      input.resumedText ??
+      (await renderPrivateTurnPrompt({
+        conversationId: input.conversationId,
+        turnId: input.turnId,
+      })),
+    senderAgentId: null,
+  }
 }

@@ -33,13 +33,15 @@ export function renderDefaultSystemPrompt(): string {
   ].join('\n')
 }
 
-export type AgentPromptContext = {
-  group?: Group
-  members?: Agent[]
-}
+export type ConversationPromptContext =
+  | { kind: 'private' }
+  | { kind: 'group'; group: Group; members: Agent[] }
 
-export function renderAgentPrompt(agent: Agent, context: AgentPromptContext = {}): string {
-  const sharedRoom = !!context.group
+export function renderAgentPrompt(
+  agent: Agent,
+  context: ConversationPromptContext = { kind: 'private' },
+): string {
+  const sharedRoom = context.kind === 'group'
   const name = agent.name.trim()
   const description = agent.description.trim()
   const lines: string[] = []
@@ -50,8 +52,8 @@ export function renderAgentPrompt(agent: Agent, context: AgentPromptContext = {}
     }
   }
   if (description) lines.push(`Description: ${description}`)
-  if (context.group) {
-    const others = (context.members ?? [])
+  if (context.kind === 'group') {
+    const others = context.members
       .filter((member) => member.id !== agent.id)
       .map((member) => member.name)
     lines.push(
@@ -66,13 +68,14 @@ export function renderAgentPrompt(agent: Agent, context: AgentPromptContext = {}
 export type SystemPromptInput = {
   agent: Agent
   memory: MemoryItem[]
-} & AgentPromptContext
+  conversation: ConversationPromptContext
+}
 
 /** The system prompt is rebuilt from live state on every run. */
 export function renderSystemPrompt(input: SystemPromptInput): string {
   return [
     renderDefaultSystemPrompt(),
-    renderAgentPrompt(input.agent, { group: input.group, members: input.members }),
+    renderAgentPrompt(input.agent, input.conversation),
     renderMemoryPrompt(input.memory),
   ]
     .filter(Boolean)

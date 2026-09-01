@@ -1,4 +1,9 @@
-import { createId, db, deleteManagedFileIfUnreferenced } from '@openbot/db'
+import {
+  createId,
+  db,
+  deleteManagedFileIfUnreferenced,
+  deletePiSessionDirectories,
+} from '@openbot/db'
 import {
   agents,
   conversationMessages,
@@ -16,6 +21,7 @@ export type CleanResult = Partial<Record<CleanTarget, number>>
 
 export async function cleanData(targets: ReadonlySet<CleanTarget>) {
   const managedFileIds = new Set<string>()
+  let piSessionConversationIds: string[] = []
 
   if (targets.has('bots')) {
     const avatars = await db
@@ -39,10 +45,10 @@ export async function cleanData(targets: ReadonlySet<CleanTarget>) {
     const result: CleanResult = {}
 
     if (targets.has('conversations')) {
-      await tx.update(conversations).set({ currentCheckpointId: null })
       const deleted = await tx
         .delete(conversations)
         .returning({ id: conversations.id })
+      piSessionConversationIds = deleted.map(({ id }) => id)
       result.conversations = deleted.length
 
       const existingGroups = await tx.select({ id: groups.id }).from(groups)
@@ -61,10 +67,12 @@ export async function cleanData(targets: ReadonlySet<CleanTarget>) {
 
     if (targets.has('bots')) {
       if (!targets.has('conversations')) {
-        await tx
-          .update(conversations)
-          .set({ currentCheckpointId: null })
-          .where(isNotNull(conversations.ownerAgentId))
+        piSessionConversationIds = (
+          await tx
+            .select({ id: conversations.id })
+            .from(conversations)
+            .where(isNotNull(conversations.ownerAgentId))
+        ).map(({ id }) => id)
       }
 
       const agentTurns = await tx
@@ -105,6 +113,7 @@ export async function cleanData(targets: ReadonlySet<CleanTarget>) {
   for (const fileId of managedFileIds) {
     await deleteManagedFileIfUnreferenced(fileId)
   }
+  await deletePiSessionDirectories(piSessionConversationIds)
 
   return result
 }

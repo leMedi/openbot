@@ -2,6 +2,7 @@ import {
   type Agent,
   claimQueuedTurn,
   type ConversationMessage,
+  deletePiSessionDirectory,
   finalizeTurnTerminal,
   finalizeTurnSuccess,
   findChildTurns,
@@ -23,13 +24,12 @@ import {
 import {
   createAgentSession,
   DefaultResourceLoader,
-  SessionManager,
   SettingsManager,
 } from '@earendil-works/pi-coding-agent'
 import { discoverMcpToolsForTurn, type McpToolRegistry } from '@openbot/plugins'
-import { getAiConfig, getOpenbotModel, piAgentDirectory, piSessionDirectory } from '../ai'
-import { renderGroupTurnPrompt, renderPrivateTurnPrompt } from '../prompt/assembly'
-import { renderSystemPrompt } from '../prompt/system'
+import { getAiConfig, getOpenbotModel, piAgentDirectory } from '../ai'
+import { prepareConversationTurn } from '../prompt/assembly'
+import type { ConversationPromptContext } from '../prompt/system'
 import {
   agentToolDefinitions,
   backgroundToolDefinitions,
@@ -126,12 +126,14 @@ async function executeTurn(turnId: string) {
   }
   let mcpRegistry: McpToolRegistry | undefined
   let session: { dispose(): void } | undefined
+  let conversationId: string | undefined
 
   try {
     const conversation = await getConversation(claimed.conversationId)
     if (!conversation) {
       throw new Error(`Conversation ${claimed.conversationId} not found`)
     }
+    conversationId = conversation.id
     // The executing identity is the turn's target (group child turns run a
     // member agent inside a group-owned conversation).
     const agentId = claimed.targetAgentId ?? conversation.ownerAgentId
@@ -147,6 +149,9 @@ async function executeTurn(turnId: string) {
       throw new Error(`Group ${conversation.ownerGroupId} not found`)
     }
     const members = group ? await memberAgentsOf(group) : undefined
+    const conversationContext: ConversationPromptContext = group
+      ? { kind: 'group', group, members: members ?? [] }
+      : { kind: 'private' }
 
     const config = getAiConfig()
     const waitingState = claimed.waitingStateJson
@@ -196,12 +201,23 @@ async function executeTurn(turnId: string) {
           )
         : []
 
+    // One boundary resolves the system prompt, session persistence, turn
+    // prompt, and sender identity for either private or group execution.
+    const memory = await listPromptMemoryForAgent(agent.id)
+    const workspace = agentWorkspaceDirectory(agent.id)
+    const prepared = await prepareConversationTurn({
+      agent,
+      memory,
+      conversation: conversationContext,
+      conversationId: conversation.id,
+      turnId,
+      workspace,
+      resumedText: waitingState?.response?.text,
+    })
     const toolContext: ToolTurnContext = {
       turnId,
       conversationId: conversation.id,
-      // In a shared group room the transcript must carry the member's
-      // identity; in a private room the owning agent is implied.
-      senderAgentId: group ? agent.id : null,
+      senderAgentId: prepared.senderAgentId,
       priorDeliveries,
       onDelivered: (message) => {
         active.delivered.push(message)
@@ -209,11 +225,6 @@ async function executeTurn(turnId: string) {
       },
     }
 
-    // The system prompt is re-rendered from live profile and memory state on
-    // every turn; pi swaps it in through the resource loader.
-    const memory = await listPromptMemoryForAgent(agent.id)
-    const systemPrompt = renderSystemPrompt({ agent, memory, group, members })
-    const workspace = agentWorkspaceDirectory(agent.id)
     const agentDir = piAgentDirectory()
     const resourceLoader = new DefaultResourceLoader({
       cwd: workspace,
@@ -223,17 +234,9 @@ async function executeTurn(turnId: string) {
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
-      systemPromptOverride: () => systemPrompt,
+      systemPromptOverride: () => prepared.systemPrompt,
     })
     await resourceLoader.reload()
-
-    // Private rooms continue the conversation's stored pi session (or create
-    // it on first turn); the session file is the durable model-facing
-    // history and is never edited, only appended to by pi. Group turns are
-    // stateless: an in-memory session with the transcript in the prompt.
-    const sessionManager = group
-      ? SessionManager.inMemory(workspace)
-      : SessionManager.continueRecent(workspace, piSessionDirectory(conversation.id))
 
     const customTools = [
       ...toPiBuiltinTools(agent, builtInToolDefinitions, toolContext),
@@ -250,39 +253,24 @@ async function executeTurn(turnId: string) {
       tools: customTools.map((tool) => tool.name),
       customTools,
       resourceLoader,
-      sessionManager,
+      sessionManager: prepared.sessionManager,
       settingsManager: SettingsManager.inMemory(),
     })
     session = created.session
     active.abortSession = () => created.session.abort()
 
-    // A widget-resumed turn continues its stored session with the user's
-    // response; group turns rebuild the shared transcript from this member's
-    // perspective; private turns supply this turn's user text.
-    const promptText =
-      !group && waitingState?.response
-        ? waitingState.response.text
-        : group
-          ? await renderGroupTurnPrompt({
-              agent,
-              group,
-              members: members ?? [],
-              conversationId: conversation.id,
-            })
-          : await renderPrivateTurnPrompt({ conversationId: conversation.id, turnId })
-
     console.info('[agent prompt]', {
       agent: { id: agent.id, name: agent.name },
       model: config.model,
       sessionFile: created.session.sessionFile,
-      prompt: promptText,
+      prompt: prepared.promptText,
     })
 
     // Pi owns the completion/tool loop: it streams rounds, executes the
     // custom tools above, and stops when a round makes no tool calls.
     // SendMessage never ends the run — the agent may deliver any number of
     // messages (widgets included) and keep working.
-    await created.session.prompt(promptText)
+    await created.session.prompt(prepared.promptText)
 
     // Durable cancellation already settled the turn; just close the stream.
     if (active.controller.signal.aborted) {
@@ -291,12 +279,7 @@ async function executeTurn(turnId: string) {
     }
     throwOnModelError(created.session.state.messages)
 
-    // The pi session file is the checkpoint now; the row only advances status.
-    await finalizeTurnSuccess({
-      turnId,
-      conversationId: conversation.id,
-      checkpointState: { version: 1, modelMessages: [] },
-    })
+    await finalizeTurnSuccess(turnId)
     emitTerminal({ type: 'done', turnId })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Turn execution failed'
@@ -317,6 +300,14 @@ async function executeTurn(turnId: string) {
   } finally {
     session?.dispose()
     await mcpRegistry?.close().catch(() => {})
+    const completedConversationId = conversationId
+    if (completedConversationId) {
+      await getConversation(completedConversationId)
+        .then((conversation) =>
+          conversation ? undefined : deletePiSessionDirectory(completedConversationId),
+        )
+        .catch(() => {})
+    }
     activeTurns.delete(turnId)
   }
 }

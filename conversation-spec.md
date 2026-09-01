@@ -101,7 +101,7 @@ Copy is unavailable for URLs, attachment paths, and structured payloads. Failed/
 - Offline queued send: `Will send when reconnected`.
 - Failed send: `Failed to send`, with Resend/Delete when available.
 - Voice states: `Listening…`, recording timer/waveform, `Transcribing…`, and bounded error text.
-- Do not expose internal checkpoints as normal transcript UI.
+- Do not expose internal Pi session history as normal transcript UI.
 
 ## Groups
 

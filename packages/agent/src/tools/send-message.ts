@@ -51,13 +51,8 @@ export const sendMessageToolDefinition: ToolDefinition = {
   function: {
     name: SEND_MESSAGE_TOOL_NAME,
     description:
-      'Deliver a message to the user. This is your ONLY way to communicate: ' +
-      'plain assistant text is private working output and is never shown to ' +
-      'the user — only messages sent with this tool appear in the chat. Use ' +
-      'it for acknowledgements, progress updates, questions, and final ' +
-      'answers. Each call appears immediately as one chat message and never ' +
-      'ends your turn: keep working and call it as many times as you need ' +
-      'in one run. type "text" sends the Markdown in content (optionally ' +
+      'Deliver one visible chat message. type "text" sends the Markdown in ' +
+      'content (optionally ' +
       'set reply_to to the id of the transcript message you are replying ' +
       'to). type "widget" asks the user a multiple-choice question; their ' +
       'selection arrives as a later user message. type "attachment" ' +

@@ -85,9 +85,6 @@ export const conversations = sqliteTable('conversations', {
     onDelete: 'cascade',
   }),
   title: text('title'),
-  currentCheckpointId: text('current_checkpoint_id').references(
-    (): AnySQLiteColumn => conversationCheckpoints.id,
-  ),
   currentPlanUri: text('current_plan_uri'),
   nextSequenceNo: integer('next_sequence_no').notNull().default(1),
   lastReadSequenceNo: integer('last_read_sequence_no').notNull().default(0),
@@ -114,34 +111,6 @@ export const conversations = sqliteTable('conversations', {
     .on(table.ownerGroupId)
     .where(sql`${table.ownerGroupId} IS NOT NULL`),
   index('conversations_agent_owner_idx').on(table.ownerAgentId, table.updatedAt),
-])
-
-export const conversationCheckpoints = sqliteTable('conversation_checkpoints', {
-  id: text('id').primaryKey(),
-  conversationId: text('conversation_id')
-    .notNull()
-    .references(() => conversations.id, { onDelete: 'cascade' }),
-  parentCheckpointId: text('parent_checkpoint_id'),
-  schemaVersion: integer('schema_version').notNull(),
-  stateJson: text('state_json', { mode: 'json' }).$type<VersionedObject>().notNull(),
-  byteSize: integer('byte_size').notNull(),
-  contentHash: text('content_hash').notNull(),
-  createdAt: integer('created_at').notNull(),
-}, (table) => [
-  check('checkpoints_schema_version_check', sql`${table.schemaVersion} > 0`),
-  check('checkpoints_state_json_check', sql`json_valid(${table.stateJson})`),
-  check('checkpoints_byte_size_check', sql`${table.byteSize} >= 0`),
-  check('checkpoints_hash_check', sql`length(${table.contentHash}) = 64`),
-  uniqueIndex('checkpoints_conversation_id_unique').on(table.conversationId, table.id),
-  foreignKey({
-    columns: [table.conversationId, table.parentCheckpointId],
-    foreignColumns: [table.conversationId, table.id],
-    name: 'checkpoints_parent_fk',
-  }),
-  index('checkpoints_conversation_created_idx').on(
-    table.conversationId,
-    table.createdAt,
-  ),
 ])
 
 export const turns = sqliteTable('turns', {
@@ -395,8 +364,6 @@ export type Group = typeof groups.$inferSelect
 export type NewGroup = typeof groups.$inferInsert
 export type Conversation = typeof conversations.$inferSelect
 export type NewConversation = typeof conversations.$inferInsert
-export type ConversationCheckpoint = typeof conversationCheckpoints.$inferSelect
-export type NewConversationCheckpoint = typeof conversationCheckpoints.$inferInsert
 export type Turn = typeof turns.$inferSelect
 export type NewTurn = typeof turns.$inferInsert
 export type ConversationMessage = typeof conversationMessages.$inferSelect

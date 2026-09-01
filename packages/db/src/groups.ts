@@ -9,6 +9,7 @@ import {
 } from './files'
 import { createId } from './ids'
 import { type GroupMembers, groupMembersSchema } from './json-schemas'
+import { deletePiSessionDirectory } from './pi-sessions'
 import * as schema from './schema'
 
 export type GroupMemberInput = GroupMembers['members'][number]
@@ -139,14 +140,16 @@ export async function setGroupMembers(id: string, members: GroupMemberInput[]) {
 }
 
 /**
- * Deletes the group; its shared conversation (and that conversation's
- * messages, turns, and checkpoints) cascade in the database. The avatar file
- * is released afterwards if nothing else references it.
+ * Deletes the group; its shared conversation, messages, and turns cascade in
+ * the database. The Pi session and avatar file are released afterwards if
+ * nothing else references them.
  */
 export async function deleteGroup(id: string) {
   const existing = await getGroup(id)
   if (!existing) return false
+  const conversation = await getGroupConversation(id)
   await db.delete(schema.groups).where(eq(schema.groups.id, id))
+  if (conversation) await deletePiSessionDirectory(conversation.id)
   if (existing.avatarFileId) {
     await deleteManagedFileIfUnreferenced(existing.avatarFileId)
   }

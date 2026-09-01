@@ -1,11 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
-import { appendCheckpointWithExecutor } from './checkpoints'
 import { db } from './client'
 import type { DbExecutor } from './conversations'
 import { createId } from './ids'
 import {
-  type CheckpointState,
   type EffectiveTools,
   effectiveToolsSchema,
   type WaitingState,
@@ -513,30 +511,9 @@ export async function queueGroupChildTurns(input: GroupChildTurnsInput) {
   })
 }
 
-export type TurnSuccessInput = {
-  turnId: string
-  conversationId: string
-  checkpointState: CheckpointState
-}
-
-/**
- * Commits a successful turn's outcome atomically: the next immutable
- * checkpoint (with pointer advance) and the succeeded status. A crash can
- * therefore never persist a succeeded turn without its checkpoint — startup
- * recovery re-queues the still-running turn. User-visible transcript rows are
- * appended in-flight by the SendMessage tool as turn side effects, idempotent
- * on re-execution (keyed by turn + content), so they sit deliberately outside
- * this transaction.
- */
-export function finalizeTurnSuccess(input: TurnSuccessInput) {
-  return db.transaction(async (tx) => {
-    const checkpoint = await appendCheckpointWithExecutor(
-      tx,
-      input.conversationId,
-      input.checkpointState,
-    )
-    const turn = await completeTurn(input.turnId, { status: 'succeeded' }, tx)
-    if (!turn) throw new Error(`Turn ${input.turnId} not found`)
-    return { checkpoint, turn }
-  })
+/** Marks a running turn successful after Pi has durably appended its session. */
+export async function finalizeTurnSuccess(turnId: string) {
+  const turn = await completeTurn(turnId, { status: 'succeeded' })
+  if (!turn) throw new Error(`Turn ${turnId} not found`)
+  return turn
 }

@@ -1,6 +1,7 @@
 import { desc, eq, sql } from 'drizzle-orm'
 import { db } from './client'
 import { createId } from './ids'
+import { deletePiSessionDirectory } from './pi-sessions'
 import * as schema from './schema'
 
 export type ConversationCreateInput = {
@@ -117,8 +118,8 @@ export async function allocateConversationSequence(id: string, executor: DbExecu
 }
 
 /**
- * Deletes the conversation (cascading to its messages, turns, and
- * checkpoints) and creates a fresh one for the same owner in one
+ * Deletes the conversation (cascading to its messages and turns) and creates
+ * a fresh one for the same owner in one
  * transaction, keeping only identity metadata: title, origin, and purpose.
  *
  * Attachment managed-file references live inside message JSON, so once
@@ -127,7 +128,7 @@ export async function allocateConversationSequence(id: string, executor: DbExecu
  */
 export async function clearConversation(id: string) {
   const now = Date.now()
-  return db.transaction(async (tx) => {
+  const fresh = await db.transaction(async (tx) => {
     const [existing] = await tx
       .select()
       .from(schema.conversations)
@@ -152,6 +153,8 @@ export async function clearConversation(id: string) {
       .returning()
     return fresh
   })
+  await deletePiSessionDirectory(id)
+  return fresh
 }
 
 export async function deleteConversation(id: string) {
@@ -159,5 +162,7 @@ export async function deleteConversation(id: string) {
     .delete(schema.conversations)
     .where(eq(schema.conversations.id, id))
     .returning({ id: schema.conversations.id })
-  return deleted.length > 0
+  if (deleted.length === 0) return false
+  await deletePiSessionDirectory(id)
+  return true
 }
