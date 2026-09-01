@@ -45,10 +45,8 @@ export const sendMessageOnlyToolDefinitions: ToolDefinition[] = [
   sendMessageToolDefinition,
 ]
 
-/** Hidden/background turns have no user to talk to, so no SendMessage. */
-export const backgroundToolDefinitions: ToolDefinition[] = agentToolDefinitions.filter(
-  (tool) => tool.function.name !== SEND_MESSAGE_TOOL_NAME,
-)
+/** Background wakes may stay silent, but can surface a material outcome. */
+export const backgroundToolDefinitions: ToolDefinition[] = agentToolDefinitions
 
 /**
  * Executes one model-requested tool call and returns the tool-role message
@@ -80,7 +78,7 @@ export async function executeAgentToolCall(
       return respond(await executeRecallMemory(agent, recallMemoryArgsSchema.parse(args)))
     }
     if (call.function.name === 'runShell') {
-      return respond(await executeRunShell(agent, runShellArgsSchema.parse(args)))
+      return respond(await executeRunShell(agent, runShellArgsSchema.parse(args), context))
     }
     if (call.function.name === 'Read') {
       return respond(await executeRead(agent, readArgsSchema.parse(args)))

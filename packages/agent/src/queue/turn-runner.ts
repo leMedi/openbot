@@ -38,7 +38,11 @@ import {
   type ToolTurnContext,
 } from '../tools'
 import { toPiBuiltinTools, toPiMcpTools } from '../tools/pi'
-import { agentWorkspaceDirectory } from '../tools/shell/workspace'
+import {
+  agentWorkspaceDirectory,
+  listCompletedShellWakes,
+  shellOutputRelativePath,
+} from '../tools/shell/workspace'
 
 // In-memory execution state. Durable truth lives in the turns table and the
 // per-conversation pi session files; these maps only fan visible output out
@@ -160,7 +164,6 @@ async function executeTurn(turnId: string) {
     const waitingState = claimed.waitingStateJson
       ? waitingStateSchema.parse(claimed.waitingStateJson)
       : undefined
-    // Hidden background work has no user to talk to, so no SendMessage.
     const builtInToolDefinitions =
       claimed.lane !== 'background' ? agentToolDefinitions : backgroundToolDefinitions
     const currentMcpRegistry = await discoverMcpToolsForTurn(
@@ -181,6 +184,7 @@ async function executeTurn(turnId: string) {
       },
       effectivePermissions: { version: 1, approvalMode: agent.approvalMode },
       runtimeContext: {
+        ...claimed.runtimeContextJson,
         version: 1,
         baseUrl: config.baseUrl,
         lane: claimed.lane,
@@ -693,6 +697,37 @@ export function recoverQueuedTurns() {
   recoveryStarted = true
   void (async () => {
     try {
+      const reconcileShells = async (): Promise<void> => {
+        const { completed, pending } = await listCompletedShellWakes()
+        for (const shell of completed) {
+          if (!shell.completionConversationId) continue
+          try {
+            const turn = await enqueueBackgroundAgentTurn({
+              conversationId: shell.completionConversationId,
+              targetAgentId: shell.agentId,
+              source: 'shell-completion',
+              idempotencyKey: `shell-completion:${shell.agentId}:${shell.shellId}`,
+              runtimeContext: {
+                version: 1,
+                wake: {
+                  version: 1,
+                  type: 'shell-completed',
+                  shellId: shell.shellId,
+                  outputPath: shellOutputRelativePath(shell.shellId),
+                  exitCode: shell.exitCode ?? null,
+                  signal: shell.signal ?? null,
+                  outputTruncated: shell.outputTruncated ?? false,
+                },
+              },
+            })
+            ensureDrainForTurn(turn)
+          } catch (error) {
+            console.error(`Shell completion recovery failed for ${shell.shellId}`, error)
+          }
+        }
+        if (pending) setTimeout(() => void reconcileShells(), 2_000)
+      }
+      await reconcileShells()
       for (const turn of await listQueuedTurns()) {
         ensureDrainForTurn(turn)
       }

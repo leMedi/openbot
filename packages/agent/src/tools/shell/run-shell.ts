@@ -2,6 +2,7 @@
 // a managed shell (foreground mode waits inline on the same machinery).
 
 import { type Agent, type ToolDefinition } from '@openbot/db'
+import type { ToolTurnContext } from '../send-message'
 import * as z from 'zod'
 import {
   agentWorkspaceDirectory,
@@ -82,6 +83,7 @@ function truncateMiddle(text: string) {
 export async function executeRunShell(
   agent: Agent,
   args: z.infer<typeof runShellArgsSchema>,
+  context?: ToolTurnContext,
 ) {
   const workspace = agentWorkspaceDirectory(agent.id)
   let cwd = workspace
@@ -93,13 +95,41 @@ export async function executeRunShell(
 
   // Every command runs as a managed shell: it gets an id and an output file,
   // and foreground mode just waits inline on the same machinery.
-  const meta = await startBackgroundShell(agent.id, args.command, cwd)
+  const shell = await startBackgroundShell(
+    agent.id,
+    args.command,
+    cwd,
+    context
+      ? async (completed) => {
+          await context.enqueueBackgroundWake({
+            source: 'shell-completion',
+            idempotencyKey: `shell-completion:${agent.id}:${completed.shellId}`,
+            runtimeContext: {
+              version: 1,
+              wake: {
+                version: 1,
+                type: 'shell-completed',
+                shellId: completed.shellId,
+                outputPath: shellOutputRelativePath(completed.shellId),
+                exitCode: completed.exitCode ?? null,
+                signal: completed.signal ?? null,
+                outputTruncated: completed.outputTruncated ?? false,
+              },
+            },
+          })
+        }
+      : undefined,
+  )
+  const meta = shell.meta
   const shellView = {
     shell_id: meta.shellId,
     ...(meta.pid !== undefined && { pid: meta.pid }),
     outputPath: shellOutputRelativePath(meta.shellId),
   }
-  if (args.background) return { ...shellView, status: 'running' }
+  if (args.background) {
+    if (context) await shell.enableCompletionWake(context.conversationId)
+    return { ...shellView, status: 'running' }
+  }
 
   const timeoutMs = (args.timeoutSeconds ?? SHELL_DEFAULT_TIMEOUT_SECONDS) * 1000
   const finished = await waitForShell(agent.id, meta.shellId, timeoutMs)
@@ -115,6 +145,7 @@ export async function executeRunShell(
       ...(output.truncated && { outputTruncated: true }),
     }
   }
+  if (context) await shell.enableCompletionWake(context.conversationId)
   return {
     ...shellView,
     status: 'running',

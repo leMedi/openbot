@@ -472,6 +472,52 @@ export async function respondToWaitingTurn(input: WaitingTurnResponseInput) {
   })
 }
 
+export type BackgroundAgentTurnInput = {
+  conversationId: string
+  targetAgentId: string
+  source: string
+  idempotencyKey: string
+  runtimeContext: VersionedObject
+}
+
+/** Idempotently queues hidden work for an agent in an existing conversation. */
+export async function enqueueBackgroundAgentTurn(input: BackgroundAgentTurnInput) {
+  const runtimeContext = versionedObjectSchema.parse(input.runtimeContext)
+  const existing = await db
+    .select()
+    .from(schema.turns)
+    .where(eq(schema.turns.idempotencyKey, input.idempotencyKey))
+    .limit(1)
+  if (existing[0]) return existing[0]
+
+  const now = Date.now()
+  const [created] = await db
+    .insert(schema.turns)
+    .values({
+      id: createId('trn'),
+      conversationId: input.conversationId,
+      targetAgentId: input.targetAgentId,
+      lane: 'background',
+      source: input.source,
+      status: 'queued',
+      idempotencyKey: input.idempotencyKey,
+      runtimeContextJson: runtimeContext,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoNothing({ target: schema.turns.idempotencyKey })
+    .returning()
+  if (created) return created
+
+  const [winner] = await db
+    .select()
+    .from(schema.turns)
+    .where(eq(schema.turns.idempotencyKey, input.idempotencyKey))
+    .limit(1)
+  if (!winner) throw new Error('Background turn could not be queued')
+  return winner
+}
+
 export type TurnTerminalInput = {
   turnId: string
   status: 'failed' | 'cancelled'

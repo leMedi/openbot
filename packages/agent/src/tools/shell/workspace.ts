@@ -41,7 +41,11 @@ export type ShellMeta = {
   exitCode?: number | null
   signal?: string | null
   outputTruncated?: boolean
+  completionWakeEnabled?: boolean
+  completionConversationId?: string
 }
+
+export type ShellCompletionCallback = (meta: ShellMeta) => Promise<void>
 
 // Background shell output is capped so a runaway command cannot fill the disk.
 const SHELL_OUTPUT_FILE_LIMIT = 10 * 1024 * 1024
@@ -97,7 +101,8 @@ export async function startBackgroundShell(
   agentId: string,
   command: string,
   cwd: string,
-): Promise<ShellMeta> {
+  onCompletion?: ShellCompletionCallback,
+) {
   const workspace = agentWorkspaceDirectory(agentId)
   const shellId = nextShellId(agentId)
   const outputPath = path.join(workspace, shellOutputRelativePath(shellId))
@@ -116,7 +121,34 @@ export async function startBackgroundShell(
     ...(child.pid !== undefined && { pid: child.pid }),
     startedAt: Date.now(),
   }
-  const persistMeta = () => writeFile(shellMetaPath(agentId, shellId), JSON.stringify(meta))
+  let pendingWrite = Promise.resolve()
+  const persistMeta = () => {
+    pendingWrite = pendingWrite.then(() =>
+      writeFile(shellMetaPath(agentId, shellId), JSON.stringify(meta)),
+    )
+    return pendingWrite
+  }
+  let completionNotified = false
+  let completionAttempts = 0
+  const notifyCompletion = async () => {
+    if (
+      completionNotified ||
+      !onCompletion ||
+      !meta.completionWakeEnabled ||
+      !meta.completionConversationId ||
+      meta.endedAt === undefined
+    ) return
+    completionAttempts += 1
+    try {
+      await onCompletion(meta)
+      completionNotified = true
+    } catch (error) {
+      console.error('Shell completion wake failed', error)
+      if (completionAttempts < 5) {
+        setTimeout(() => void notifyCompletion(), 1_000)
+      }
+    }
+  }
 
   let written = 0
   const collect = (chunk: Buffer) => {
@@ -140,12 +172,68 @@ export async function startBackgroundShell(
     meta.endedAt = Date.now()
     meta.exitCode = code
     meta.signal = signal
-    output.end()
-    void persistMeta()
+    output.end(() => {
+      void persistMeta().then(notifyCompletion).catch((error) => {
+        console.error('Shell completion persistence failed', error)
+      })
+    })
   })
 
   await persistMeta()
-  return meta
+  return {
+    meta,
+    async enableCompletionWake(conversationId: string) {
+      meta.completionWakeEnabled = true
+      meta.completionConversationId = conversationId
+      await persistMeta()
+      await notifyCompletion()
+    },
+  }
+}
+
+/** Completed, wake-enabled shells discovered after a server restart. */
+export async function listCompletedShellWakes() {
+  const workspaces = path.join(dataDirectory, 'workspaces')
+  if (!existsSync(workspaces)) return { completed: [], pending: false }
+  const completed: ShellMeta[] = []
+  let pending = false
+  for (const agentId of readdirSync(workspaces)) {
+    const directory = path.join(workspaces, agentId, '.shells')
+    if (!existsSync(directory)) continue
+    for (const name of readdirSync(directory)) {
+      if (!name.endsWith('.json')) continue
+      try {
+        const candidate = JSON.parse(
+          await readFile(path.join(directory, name), 'utf8'),
+        ) as Partial<ShellMeta>
+        if (
+          typeof candidate.shellId !== 'string' ||
+          typeof candidate.agentId !== 'string' ||
+          typeof candidate.command !== 'string' ||
+          typeof candidate.startedAt !== 'number'
+        ) continue
+        const meta = candidate as ShellMeta
+        if (!meta.completionWakeEnabled || !meta.completionConversationId) continue
+        if (meta.endedAt === undefined && meta.pid !== undefined) {
+          try {
+            process.kill(meta.pid, 0)
+            pending = true
+            continue
+          } catch {
+            // The original server cannot observe this detached child's exit.
+            meta.endedAt = Date.now()
+            meta.exitCode = null
+            meta.signal = 'unknown-after-restart'
+            await writeFile(path.join(directory, name), JSON.stringify(meta))
+          }
+        }
+        if (meta.endedAt !== undefined) completed.push(meta)
+      } catch {
+        // An incomplete sidecar is retried on the next recovery pass.
+      }
+    }
+  }
+  return { completed, pending }
 }
 
 export function shellExists(agentId: string, shellId: string) {
