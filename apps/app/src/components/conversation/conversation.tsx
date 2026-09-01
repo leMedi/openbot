@@ -91,6 +91,8 @@ export function Conversation({
   onSendMessage,
   onRespondToTurn,
   onCancelTurn,
+  onToggleReaction,
+  onRefreshEntries,
   onTurnSettled,
   pendingTurnId,
   resolveAuthor,
@@ -108,6 +110,7 @@ export function Conversation({
   } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const cancellingTurns = useRef(new Set<string>())
+  const reactionQueues = useRef(new Map<string, Promise<void>>())
 
   const working = entries.some((e) => e.type === 'message' && e.delivery === 'streaming')
   const oneToOne = !members || members.length === 0
@@ -116,6 +119,34 @@ export function Conversation({
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [entries, threadRootId])
+
+  useEffect(() => {
+    if (!onRefreshEntries) return
+    let stopped = false
+    let refreshing = false
+    const refresh = async () => {
+      if (refreshing) return
+      refreshing = true
+      try {
+        const authoritative = await onRefreshEntries()
+        if (stopped) return
+        setEntries((current) => {
+          const freshById = new Map(authoritative.map((entry) => [entry.id, entry]))
+          const next = current.map((entry) => freshById.get(entry.id) ?? entry)
+          const known = new Set(current.map((entry) => entry.id))
+          next.push(...authoritative.filter((entry) => !known.has(entry.id)))
+          return next
+        })
+      } finally {
+        refreshing = false
+      }
+    }
+    const timer = setInterval(() => void refresh().catch(() => {}), 2_000)
+    return () => {
+      stopped = true
+      clearInterval(timer)
+    }
+  }, [onRefreshEntries])
 
   // Reattach to a turn that was in flight when this conversation mounted
   // (page reload mid-turn): the stream replays the rows already delivered, or
@@ -143,8 +174,7 @@ export function Conversation({
     [entries],
   )
 
-  const toggleReaction = useCallback((entryId: string, emoji: string) => {
-    // Optimistic update; a real client would reconcile with the event stream.
+  const applyReactionToggle = useCallback((entryId: string, emoji: string) => {
     setEntries((all) =>
       mapMessages(all, (m) => {
         if (m.id !== entryId) return m
@@ -163,6 +193,38 @@ export function Conversation({
       }),
     )
   }, [])
+
+  const toggleReaction = useCallback((entryId: string, emoji: string) => {
+    applyReactionToggle(entryId, emoji)
+    if (!onToggleReaction) return
+    const key = `${entryId}:${emoji}`
+    const previous = reactionQueues.current.get(key) ?? Promise.resolve()
+    const request = previous.catch(() => {}).then(async () => {
+      try {
+        const message = await onToggleReaction(entryId, emoji)
+        if (reactionQueues.current.get(key) !== request) return
+        const authoritative = entryFromMessage(
+          message,
+          resolveAuthor?.(message) ?? agent,
+        )
+        if (!authoritative || authoritative.type !== 'message') return
+        setEntries((all) =>
+          mapMessages(all, (entry) =>
+            entry.id === entryId
+              ? { ...entry, reactions: authoritative.reactions }
+              : entry,
+          ),
+        )
+      } catch {
+        applyReactionToggle(entryId, emoji)
+      } finally {
+        if (reactionQueues.current.get(key) === request) {
+          reactionQueues.current.delete(key)
+        }
+      }
+    })
+    reactionQueues.current.set(key, request)
+  }, [agent, applyReactionToggle, onToggleReaction, resolveAuthor])
 
   const jump = useCallback((entryId: string) => {
     const el = document.getElementById(`entry-${entryId}`)

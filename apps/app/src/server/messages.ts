@@ -3,6 +3,7 @@ import {
   findUnsettledTurn,
   listConversationMessages,
   respondToWaitingTurn,
+  toggleUserReaction,
 } from '@openbot/db'
 import { createServerFn } from '@tanstack/react-start'
 import * as z from 'zod'
@@ -67,6 +68,14 @@ export const sendConversationMessage = createServerFn({ method: 'POST' })
     // durable accept, and visible output arrives over the turn stream.
     ensureDrainForTurn(accepted.turn)
     return accepted
+  })
+
+export const toggleConversationReaction = createServerFn({ method: 'POST' })
+  .validator((input: unknown) => reactionInput.parse(input))
+  .handler(async ({ data }) => {
+    const result = await toggleUserReaction(data)
+    if (result.wakeTurn) ensureDrainForTurn(result.wakeTurn)
+    return result.message
   })
 
 export const respondToConversationTurn = createServerFn({ method: 'POST' })

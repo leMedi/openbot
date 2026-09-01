@@ -208,6 +208,15 @@ async function executeTurn(turnId: string) {
     // prompt, and sender identity for either private or group execution.
     const memory = await listPromptMemoryForAgent(agent.id)
     const workspace = agentWorkspaceDirectory(agent.id)
+    const wake = claimed.runtimeContextJson.wake
+    const hiddenWakePrompt =
+      wake && typeof wake === 'object' && !Array.isArray(wake)
+        ? wake.type === 'user-reaction'
+          ? `[user_reaction]\nThe user reacted ${String(wake.reaction ?? '')} to your message:\n${String(wake.messageBody ?? '')}`
+          : wake.type === 'shell-completed'
+            ? `A detached shell you started has completed. Inspect ${String(wake.outputPath ?? '')} and decide whether the outcome materially matters to the user. This is a hidden background wake; nobody just messaged you. Send a message only for a requested result, meaningful failure or blocker, or useful artifact. Otherwise finish silently.`
+            : undefined
+        : undefined
     const prepared = await prepareConversationTurn({
       agent,
       memory,

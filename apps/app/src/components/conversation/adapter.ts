@@ -77,6 +77,22 @@ function attachmentsFrom(row: ConversationMessage): Attachment[] {
   })
 }
 
+function reactionsFrom(row: ConversationMessage) {
+  const grouped = new Map<string, string[]>()
+  for (const item of row.reactionsJson.items) {
+    const users = grouped.get(item.reaction) ?? []
+    users.push(
+      item.actorAgentId
+        ? 'Agent'
+        : item.actorExternalId
+          ? item.actorExternalId
+          : 'You',
+    )
+    grouped.set(item.reaction, users)
+  }
+  return [...grouped].map(([emoji, users]) => ({ emoji, users }))
+}
+
 /**
  * One persisted row as a renderable entry, or null for rows the transcript
  * deliberately hides (the internal turn_waiting status duplicates the widget
@@ -92,6 +108,7 @@ export function entryFromMessage(row: ConversationMessage, author: Author): Entr
       author: YOU,
       time,
       text: row.bodyText ?? '',
+      reactions: reactionsFrom(row),
       replyTo: row.replyToEntryId ?? undefined,
     }
   }
@@ -119,6 +136,7 @@ export function entryFromMessage(row: ConversationMessage, author: Author): Entr
             body: labels.join('\n'),
           },
         ],
+        reactions: reactionsFrom(row),
       }
     }
     if (payload.deliveryKind === 'send-message' && payload.type === 'attachment') {
@@ -128,6 +146,7 @@ export function entryFromMessage(row: ConversationMessage, author: Author): Entr
         author,
         time,
         attachments: attachmentsFrom(row),
+        reactions: reactionsFrom(row),
       }
     }
     return {
@@ -136,6 +155,7 @@ export function entryFromMessage(row: ConversationMessage, author: Author): Entr
       author,
       time,
       markdown: row.bodyText ?? '',
+      reactions: reactionsFrom(row),
       replyTo: row.replyToEntryId ?? undefined,
     }
   }

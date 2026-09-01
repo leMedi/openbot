@@ -75,6 +75,7 @@ export type PrepareConversationTurnInput = {
   turnId: string
   workspace: string
   resumedText?: string
+  hiddenWakePrompt?: string
 }
 
 /** Resolves every private/group execution difference at one boundary. */
@@ -89,11 +90,14 @@ export async function prepareConversationTurn(input: PrepareConversationTurnInpu
     return {
       systemPrompt,
       sessionManager: SessionManager.inMemory(input.workspace),
-      promptText: await renderGroupTurnPrompt({
-        agent: input.agent,
-        conversation: input.conversation,
-        conversationId: input.conversationId,
-      }),
+      promptText: [
+        await renderGroupTurnPrompt({
+          agent: input.agent,
+          conversation: input.conversation,
+          conversationId: input.conversationId,
+        }),
+        input.hiddenWakePrompt,
+      ].filter(Boolean).join('\n\n'),
       senderAgentId: input.agent.id,
     }
   }
@@ -106,6 +110,7 @@ export async function prepareConversationTurn(input: PrepareConversationTurnInpu
     ),
     promptText:
       input.resumedText ??
+      input.hiddenWakePrompt ??
       (await renderPrivateTurnPrompt({
         conversationId: input.conversationId,
         turnId: input.turnId,
