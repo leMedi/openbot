@@ -263,6 +263,7 @@ async function executeTurn(turnId: string) {
       agent: { id: agent.id, name: agent.name },
       model: config.model,
       sessionFile: created.session.sessionFile,
+      systemPrompt: created.session.systemPrompt,
       prompt: prepared.promptText,
     })
 
