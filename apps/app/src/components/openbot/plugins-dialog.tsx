@@ -39,12 +39,8 @@ export function PluginsDialog({
           <div className="flex h-12 shrink-0 items-center justify-center border-b bg-card/50">
             <DialogTitle className="sr-only">Plugins &amp; Skills</DialogTitle>
             <TabsList>
-              <TabsTrigger value="plugins" className="px-4">
-                Plugins
-              </TabsTrigger>
-              <TabsTrigger value="skills" className="px-4">
-                Skills
-              </TabsTrigger>
+              <TabsTrigger value="plugins">Plugins</TabsTrigger>
+              <TabsTrigger value="skills">Skills</TabsTrigger>
             </TabsList>
           </div>
           <TabsContent value="plugins" className="min-h-0 flex-1">

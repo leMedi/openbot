@@ -199,7 +199,7 @@ export function BotDialog({
                 />
                 <PopoverContent align="start" className="w-64 p-2.5">
                   <Tabs defaultValue={previewUrl ? 'image' : 'shape'} className="flex-col">
-                    <TabsList className="mb-2 h-auto justify-start gap-1 bg-transparent p-0">
+                    <TabsList className="mb-2 h-auto justify-start gap-1 border-0 bg-transparent p-0">
                       <TabsTrigger
                         value="shape"
                         className="h-auto flex-none rounded-md px-2 py-0.5 text-xs border-0"
