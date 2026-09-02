@@ -7,7 +7,7 @@ import {
   type RuntimeMcpAccount,
   type ToolDefinition,
 } from '@openbot/db'
-import { refreshExpiredMcpOauthAccount } from './oauth'
+import { refreshExpiredMcpOauthAccountOnce } from './oauth'
 
 const MAX_TOOL_RESULT_LENGTH = 50_000
 const MCP_REQUEST_TIMEOUT_MS = 30_000
@@ -271,9 +271,12 @@ function stringifyResult(value: unknown, secrets: string[]) {
   } catch {
     content = JSON.stringify({ error: 'MCP tool returned an unreadable result' })
   }
-  return content.length > MAX_TOOL_RESULT_LENGTH
-    ? `${content.slice(0, MAX_TOOL_RESULT_LENGTH)}...`
-    : content
+  if (content.length <= MAX_TOOL_RESULT_LENGTH) return content
+  return JSON.stringify({
+    truncated: true,
+    error: `MCP gateway result exceeded ${MAX_TOOL_RESULT_LENGTH} characters`,
+    preview: content.slice(0, 20_000),
+  })
 }
 
 function accountSummary(runtime: AccountRuntime) {
@@ -291,6 +294,7 @@ export function createMcpToolRegistry(
   connector: McpConnector = connectMcpAccount,
   prepareAccount: McpAccountPreparer = async (account) => account,
 ): McpToolRegistry {
+  let closed = false
   const now = Date.now()
   for (const [accountId, cached] of metadataCache) {
     if (now - cached.cachedAt >= MCP_METADATA_CACHE_TTL_MS) metadataCache.delete(accountId)
@@ -311,6 +315,7 @@ export function createMcpToolRegistry(
   })
 
   async function ensureConnection(runtime: AccountRuntime, signal?: AbortSignal) {
+    if (closed) throw new Error('MCP gateway is closed')
     if (runtime.connection) {
       runtime.status = 'connected'
       delete runtime.error
@@ -322,6 +327,10 @@ export function createMcpToolRegistry(
       runtime.fingerprint = accountFingerprint(runtime.account)
       secrets.push(...accountSecrets(runtime.account))
       const connection = await connector(runtime.account, requestSignal(signal))
+      if (closed) {
+        await connection.close().catch(() => {})
+        throw new Error('MCP gateway is closed')
+      }
       runtime.connection = connection
       runtime.status = 'connected'
       delete runtime.error
@@ -555,10 +564,12 @@ export function createMcpToolRegistry(
       return JSON.stringify({ error: `Unknown MCP gateway tool: ${call.function.name}` })
     },
     async close() {
+      closed = true
       await Promise.allSettled(
-        runtimes.flatMap((runtime) =>
-          runtime.connection ? [runtime.connection.close()] : [],
-        ),
+        runtimes.map(async (runtime) => {
+          await runtime.connectionPromise?.catch(() => {})
+          await discardConnection(runtime)
+        }),
       )
     },
   }
@@ -568,6 +579,6 @@ export async function createMcpGatewayForTurn(agentId: string) {
   return createMcpToolRegistry(
     await listRuntimeMcpAccountsForAgent(agentId),
     connectMcpAccount,
-    refreshExpiredMcpOauthAccount,
+    refreshExpiredMcpOauthAccountOnce,
   )
 }

@@ -263,4 +263,42 @@ describe('MCP gateway', () => {
       error: 'MCP tool reported a failure',
     }))
   })
+
+  it('keeps oversized gateway responses valid JSON', async () => {
+    const registry = createMcpToolRegistry([account('large-result')], async () => ({
+      listTools: async () => ({
+        tools: [{ name: 'large_tool', inputSchema: { type: 'object' } }],
+      }),
+      callTool: async () => ({ content: 'x'.repeat(60_000) }),
+      close: async () => {},
+    }))
+    const searched = JSON.parse(await registry.execute(call('McpSearch', {})))
+    const text = await registry.execute(call('McpCall', {
+      tool: searched.tools[0].tool,
+      arguments: {},
+    }))
+
+    expect(() => JSON.parse(text)).not.toThrow()
+    expect(JSON.parse(text)).toEqual(expect.objectContaining({ truncated: true }))
+  })
+
+  it('closes a connection that finishes opening during shutdown', async () => {
+    let release: (() => void) | undefined
+    const blocked = new Promise<void>((resolve) => { release = resolve })
+    const close = vi.fn(async () => {})
+    const registry = createMcpToolRegistry([account('closing')], async () => {
+      await blocked
+      return {
+        listTools: async () => ({ tools: [] }),
+        callTool: async () => ({}),
+        close,
+      }
+    })
+    const search = registry.execute(call('McpSearch', {}))
+    const closing = registry.close()
+    release?.()
+    await Promise.all([search, closing])
+
+    expect(close).toHaveBeenCalledOnce()
+  })
 })

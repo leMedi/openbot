@@ -500,17 +500,21 @@ export async function refreshExpiredMcpOauthAccount(
 
 const activeRefreshes = new Map<string, Promise<RuntimeMcpAccount>>()
 
+export async function refreshExpiredMcpOauthAccountOnce(account: RuntimeMcpAccount) {
+  const active = activeRefreshes.get(account.accountId)
+  if (active) return active
+  const refresh = refreshExpiredMcpOauthAccount(account).finally(() => {
+    activeRefreshes.delete(account.accountId)
+  })
+  activeRefreshes.set(account.accountId, refresh)
+  return refresh
+}
+
 export function refreshExpiredMcpOauthAccounts(accounts: RuntimeMcpAccount[]) {
   return Promise.all(
     accounts.map(async (account) => {
       try {
-        const active = activeRefreshes.get(account.accountId)
-        if (active) return await active
-        const refresh = refreshExpiredMcpOauthAccount(account).finally(() => {
-          activeRefreshes.delete(account.accountId)
-        })
-        activeRefreshes.set(account.accountId, refresh)
-        return await refresh
+        return await refreshExpiredMcpOauthAccountOnce(account)
       } catch {
         return undefined
       }
