@@ -1,4 +1,4 @@
-// Adapts the built-in agent tools and discovered MCP tools into pi custom
+// Adapts the built-in agent tools and MCP gateway tools into pi custom
 // tools, so pi's agent loop can call the existing executors unchanged.
 
 import {
@@ -58,7 +58,7 @@ export function toPiBuiltinTools(
   )
 }
 
-/** Wraps a turn's discovered MCP tools so pi dispatches into the registry. */
+/** Wraps a turn's MCP gateway tools so pi dispatches into the registry. */
 export function toPiMcpTools(registry: McpToolRegistry): PiToolDefinition[] {
   return registry.definitions.map((definition) =>
     defineTool({
