@@ -48,6 +48,8 @@ function toolCallFrom(row: ConversationMessage): ToolCall {
 type SendMessagePayloadView = {
   deliveryKind?: unknown
   type?: unknown
+  event?: unknown
+  senderAgentName?: unknown
   widget?: { prompt?: unknown; options?: unknown }
   alt?: unknown
 }
@@ -182,22 +184,36 @@ export function entryFromMessage(row: ConversationMessage, author: Author): Entr
 }
 
 /**
- * The author identity for one persisted row: in group rooms the sender agent
- * resolves to its member identity, everywhere else the owning `agent`.
+ * Resolve a persisted sender to a live agent, or to the denormalized direct-
+ * message identity when that agent has since been deleted.
  */
 export function authorForMessage(
-  row: Pick<ConversationMessage, 'senderAgentId'>,
+  row: Pick<ConversationMessage, 'id' | 'senderAgentId' | 'payloadJson'>,
   agent: Author,
   membersById?: Map<string, Author>,
 ): Author {
-  return (row.senderAgentId && membersById?.get(row.senderAgentId)) || agent
+  const known = row.senderAgentId && membersById?.get(row.senderAgentId)
+  if (known) return known
+  const payload = row.payloadJson as SendMessagePayloadView
+  if (
+    payload.event === 'direct-agent-message' &&
+    typeof payload.senderAgentName === 'string'
+  ) {
+    return {
+      ...agent,
+      id: row.senderAgentId ?? `deleted:${row.id}`,
+      name: payload.senderAgentName,
+      kind: 'agent',
+    }
+  }
+  return agent
 }
 
 /** Convert persisted transcript rows into renderable entries. */
 export function entriesFromMessages(
   rows: ConversationMessage[],
   agent: Author,
-  /** Group rooms: member identity by sender agent id (falls back to `agent`). */
+  /** Known agent identities by sender id (falls back to persisted provenance). */
   membersById?: Map<string, Author>,
 ): Entry[] {
   const out: Entry[] = []

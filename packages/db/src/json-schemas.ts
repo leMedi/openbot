@@ -155,6 +155,26 @@ export const sendMessagePayloadSchema = z.object({
   alt: z.string().optional(),
 })
 
+export const directAgentMessagePayloadSchema = z.object({
+  version: z.literal(1),
+  event: z.literal('direct-agent-message'),
+  deliveryId: z.string().min(1),
+  senderAgentId: z.string().min(1),
+  senderAgentName: z.string().min(1),
+  recipientAgentId: z.string().min(1),
+  recipientAgentName: z.string().min(1),
+})
+
+export const directAgentMessageContextSchema = z.object({
+  version: z.literal(1),
+  type: z.literal('direct-agent-message'),
+  deliveryId: z.string().min(1),
+  senderAgentId: z.string().min(1),
+  senderAgentName: z.string().min(1),
+  recipientAgentId: z.string().min(1),
+  content: z.string().min(1).max(20_000),
+})
+
 export const apiKeyCredentialsSchema = z.object({
   version: z.literal(1),
   apiKey: z.string().min(1),
@@ -214,6 +234,8 @@ export type Reactions = z.infer<typeof reactionsSchema>
 export type EffectiveTools = z.infer<typeof effectiveToolsSchema>
 export type WaitingState = z.infer<typeof waitingStateSchema>
 export type SendMessagePayload = z.infer<typeof sendMessagePayloadSchema>
+export type DirectAgentMessagePayload = z.infer<typeof directAgentMessagePayloadSchema>
+export type DirectAgentMessageContext = z.infer<typeof directAgentMessageContextSchema>
 export type ApiKeyCredentials = z.infer<typeof apiKeyCredentialsSchema>
 export type OauthCredentials = z.infer<typeof oauthCredentialsSchema>
 export type McpCredentials = ApiKeyCredentials | OauthCredentials

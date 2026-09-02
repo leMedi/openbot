@@ -36,6 +36,13 @@
       "when": 1788268901590,
       "tag": "0004_woozy_squadron_supreme",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1788334571196,
+      "tag": "0005_flimsy_skrulls",
+      "breakpoints": true
     }
   ]
 }

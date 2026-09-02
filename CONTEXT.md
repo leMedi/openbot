@@ -384,6 +384,12 @@ the persisted waiting-turn interaction and resumes from stored mid-turn
 history. Visible output reaches clients over a per-turn SSE route; execution
 never depends on a connected client.
 
+Direct agent messaging is implemented through `SendAgentMessage`. Acceptance
+atomically appends linked outbound and inbound transcript copies and queues an
+agent-lane recipient turn. Each agent has one private direct-message inbox,
+delivery retries are idempotent, and the sender receives acknowledgement after
+durable queueing without waiting for recipient inference.
+
 Group shared rooms are implemented: group identity, avatar, and versioned
 membership services, one shared conversation created with the group, a
 group-targeted turn queued per user post, and a group orchestrator that
@@ -403,9 +409,8 @@ runtime connection path and redacted from model-visible tool surfaces.
 
 Remaining implementation slices are:
 
-1. Transactional direct agent delivery.
-2. Group selection from room context and bounded multi-member rounds.
-3. User-uploaded attachments (agent-sent attachments and the managed-file
+1. Group selection from room context and bounded multi-member rounds.
+2. User-uploaded attachments (agent-sent attachments and the managed-file
    serving route are implemented).
 
 ## Source Map
@@ -420,8 +425,8 @@ Remaining implementation slices are:
 - `packages/db/src/avatars.ts`: shared avatar-upload contract and validation.
 - `packages/db/src/conversations.ts`: conversation repository (navigation state,
   atomic sequence allocation, clear-into-fresh-conversation).
-- `packages/db/src/messages.ts`: transcript repository (ordered appends and the
-  idempotent atomic user-message + queued-turn accept).
+- `packages/db/src/messages.ts`: transcript repository (ordered appends,
+  idempotent user-message acceptance, and atomic direct-agent delivery).
 - `packages/db/src/turns.ts`: durable turn queue (target-safe priority claims,
   waiting/resume, terminal settlement, execution snapshots, and atomic group
   child-turn delegation).

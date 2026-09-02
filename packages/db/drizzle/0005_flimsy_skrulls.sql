@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `conversations_agent_direct_unique` ON `conversations` (`owner_agent_id`) WHERE "conversations"."owner_agent_id" IS NOT NULL AND "conversations"."origin" = 'agent-direct';

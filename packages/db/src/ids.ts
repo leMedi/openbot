@@ -9,6 +9,7 @@ export type IdPrefix =
   | 'ent'
   | 'mem'
   | 'fil'
+  | 'dlv'
   | 'mcp'
   | 'acc'
 

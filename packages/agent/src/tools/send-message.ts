@@ -9,9 +9,11 @@ import {
   listConversationMessages,
   type Agent,
   type ConversationMessage,
+  type DirectAgentMessageInput,
   type ModelToolCall,
   type SendMessagePayload,
   type ToolDefinition,
+  type Turn,
   type VersionedObject,
   type WaitingState,
 } from '@openbot/db'
@@ -158,6 +160,10 @@ export type ToolTurnContext = {
     idempotencyKey: string
     runtimeContext: VersionedObject
   }) => Promise<void>
+  /** Atomically accepts direct delivery and queues the recipient without waiting. */
+  sendDirectAgentMessage: (
+    input: Omit<DirectAgentMessageInput, 'senderAgentId'>,
+  ) => Promise<{ deliveryId: string; turn: Turn }>
 }
 
 const ATTACHMENT_SIZE_LIMIT = 25 * 1024 * 1024

@@ -12,6 +12,12 @@ import {
 import * as z from 'zod'
 import { executeRead, readArgsSchema, readToolDefinition } from './read'
 import {
+  executeSendAgentMessage,
+  SEND_AGENT_MESSAGE_TOOL_NAME,
+  sendAgentMessageArgsSchema,
+  sendAgentMessageToolDefinition,
+} from './send-agent-message'
+import {
   executeSendMessage,
   SEND_MESSAGE_TOOL_NAME,
   sendMessageArgsSchema,
@@ -34,6 +40,7 @@ export type { ToolTurnContext }
 
 export const agentToolDefinitions: ToolDefinition[] = [
   sendMessageToolDefinition,
+  sendAgentMessageToolDefinition,
   ...memoryToolDefinitions,
   runShellToolDefinition,
   readToolDefinition,
@@ -69,6 +76,16 @@ export async function executeAgentToolCall(
     if (call.function.name === SEND_MESSAGE_TOOL_NAME) {
       return respond(
         await executeSendMessage(agent, sendMessageArgsSchema.parse(args), call, context),
+      )
+    }
+    if (call.function.name === SEND_AGENT_MESSAGE_TOOL_NAME) {
+      return respond(
+        await executeSendAgentMessage(
+          agent,
+          sendAgentMessageArgsSchema.parse(args),
+          call,
+          context,
+        ),
       )
     }
     if (call.function.name === 'updateMemory') {

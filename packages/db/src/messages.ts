@@ -7,6 +7,8 @@ import { createId } from './ids'
 import {
   type Attachments,
   attachmentsSchema,
+  directAgentMessageContextSchema,
+  directAgentMessagePayloadSchema,
   type VersionedObject,
   versionedObjectSchema,
   waitingStateSchema,
@@ -24,6 +26,10 @@ export type MessageAppendInput = {
   replyToEntryId?: string | null
   /** Authoring agent, for rows produced by an agent (e.g. group members). */
   senderAgentId?: string | null
+  /** Receiving agent for direct agent-to-agent transcript projections. */
+  recipientAgentId?: string | null
+  /** Shared identifier linking direct-message sender and recipient copies. */
+  deliveryId?: string | null
   /** Managed-file references delivered with the row (agent attachments). */
   attachments?: Attachments
 }
@@ -63,6 +69,8 @@ export async function appendConversationMessage(
         attachmentsJson: attachmentsSchema.parse(input.attachments),
       }),
       senderAgentId: input.senderAgentId ?? null,
+      recipientAgentId: input.recipientAgentId ?? null,
+      deliveryId: input.deliveryId ?? null,
       replyToEntryId: input.replyToEntryId ?? null,
       createdAt: now,
       updatedAt: now,
@@ -127,6 +135,16 @@ function isSqliteBusy(error: unknown) {
     'code' in error &&
     typeof error.code === 'string' &&
     error.code.startsWith('SQLITE_BUSY')
+  )
+}
+
+function isSqliteConstraint(error: unknown) {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof error.code === 'string' &&
+    error.code.startsWith('SQLITE_CONSTRAINT')
   )
 }
 
@@ -290,6 +308,214 @@ export async function acceptUserMessage(input: UserMessageInput) {
         if (!isSqliteBusy(lookupError)) throw lookupError
       }
       if (!isSqliteBusy(error)) throw error
+    }
+  }
+  throw lastError
+}
+
+const DIRECT_AGENT_ORIGIN = 'agent-direct'
+
+async function directAgentConversation(
+  agent: { id: string; name: string },
+  executor: DbExecutor,
+) {
+  const [existing] = await executor
+    .select()
+    .from(schema.conversations)
+    .where(
+      and(
+        eq(schema.conversations.ownerAgentId, agent.id),
+        eq(schema.conversations.origin, DIRECT_AGENT_ORIGIN),
+      ),
+    )
+    .orderBy(asc(schema.conversations.createdAt), asc(schema.conversations.id))
+    .limit(1)
+  if (existing) return existing
+
+  const now = Date.now()
+  const [created] = await executor
+    .insert(schema.conversations)
+    .values({
+      id: createId('cnv'),
+      ownerAgentId: agent.id,
+      title: 'Agent messages',
+      origin: DIRECT_AGENT_ORIGIN,
+      purpose: 'Direct messages with other local agents',
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning()
+  return created
+}
+
+export type DirectAgentMessageInput = {
+  senderAgentId: string
+  recipientAgentId: string
+  content: string
+  idempotencyKey?: string
+}
+
+async function findAcceptedDirectMessage(
+  idempotencyKey: string,
+  executor: DbExecutor = db,
+) {
+  const [turn] = await executor
+    .select()
+    .from(schema.turns)
+    .where(eq(schema.turns.idempotencyKey, idempotencyKey))
+    .limit(1)
+  if (!turn || turn.source !== 'direct-agent-message') return undefined
+  const direct = directAgentMessageContextSchema.parse(
+    turn.runtimeContextJson.directMessage,
+  )
+  const { deliveryId } = direct
+  const copies = await executor
+    .select()
+    .from(schema.conversationMessages)
+    .where(eq(schema.conversationMessages.deliveryId, deliveryId))
+    .orderBy(asc(schema.conversationMessages.createdAt), asc(schema.conversationMessages.id))
+  const outbound = copies.find((message) => message.direction === 'outbound')
+  const inbound = copies.find((message) => message.direction === 'inbound')
+  if (!outbound || !inbound) {
+    throw new Error(`Direct message delivery ${deliveryId} is incomplete`)
+  }
+  return { deliveryId, outbound, inbound, turn }
+}
+
+function validateAcceptedDirectMessage(
+  accepted: NonNullable<Awaited<ReturnType<typeof findAcceptedDirectMessage>>>,
+  input: DirectAgentMessageInput,
+) {
+  if (
+    accepted.outbound.senderAgentId !== input.senderAgentId ||
+    accepted.outbound.recipientAgentId !== input.recipientAgentId ||
+    accepted.outbound.bodyText !== input.content ||
+    accepted.inbound.senderAgentId !== input.senderAgentId ||
+    accepted.inbound.recipientAgentId !== input.recipientAgentId ||
+    accepted.inbound.bodyText !== input.content
+  ) {
+    throw new Error('A direct-message idempotency key cannot be reused with different input')
+  }
+  return accepted
+}
+
+/**
+ * Durable direct-agent inbox boundary: both transcript projections and the
+ * recipient's queued work are accepted in one transaction.
+ */
+export async function acceptDirectAgentMessage(input: DirectAgentMessageInput) {
+  const content = input.content.trim()
+  if (!content) throw new Error('A direct agent message cannot be empty')
+  if (content.length > 20_000) throw new Error('A direct agent message is too long')
+  if (input.senderAgentId === input.recipientAgentId) {
+    throw new Error('An agent cannot send a direct message to itself')
+  }
+  const normalized = { ...input, content }
+  const idempotencyKey = input.idempotencyKey ?? `direct_${randomUUID()}`
+  let lastError: unknown
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      return await db.transaction(async (tx) => {
+        const existing = await findAcceptedDirectMessage(idempotencyKey, tx)
+        if (existing) return validateAcceptedDirectMessage(existing, normalized)
+
+        const [sender] = await tx
+          .select()
+          .from(schema.agents)
+          .where(eq(schema.agents.id, input.senderAgentId))
+          .limit(1)
+        if (!sender) throw new Error(`Sender agent ${input.senderAgentId} not found`)
+        const [recipient] = await tx
+          .select()
+          .from(schema.agents)
+          .where(eq(schema.agents.id, input.recipientAgentId))
+          .limit(1)
+        if (!recipient) throw new Error(`Recipient agent ${input.recipientAgentId} not found`)
+
+        const senderConversation = await directAgentConversation(sender, tx)
+        const recipientConversation = await directAgentConversation(recipient, tx)
+        const deliveryId = createId('dlv')
+        const payload = directAgentMessagePayloadSchema.parse({
+          version: 1,
+          event: 'direct-agent-message',
+          deliveryId,
+          senderAgentId: sender.id,
+          senderAgentName: sender.name,
+          recipientAgentId: recipient.id,
+          recipientAgentName: recipient.name,
+        })
+        const outbound = await appendConversationMessage(
+          {
+            conversationId: senderConversation.id,
+            kind: 'message',
+            role: 'assistant',
+            direction: 'outbound',
+            bodyText: content,
+            payload,
+            senderAgentId: sender.id,
+            recipientAgentId: recipient.id,
+            deliveryId,
+          },
+          tx,
+        )
+        const inbound = await appendConversationMessage(
+          {
+            conversationId: recipientConversation.id,
+            kind: 'message',
+            role: 'assistant',
+            direction: 'inbound',
+            bodyText: content,
+            payload,
+            senderAgentId: sender.id,
+            recipientAgentId: recipient.id,
+            deliveryId,
+          },
+          tx,
+        )
+
+        const now = Date.now()
+        const [turn] = await tx
+          .insert(schema.turns)
+          .values({
+            id: createId('trn'),
+            conversationId: recipientConversation.id,
+            targetAgentId: recipient.id,
+            lane: 'agent',
+            source: 'direct-agent-message',
+            status: 'queued',
+            idempotencyKey,
+            runtimeContextJson: {
+              version: 1,
+              directMessage: directAgentMessageContextSchema.parse({
+                version: 1,
+                type: 'direct-agent-message',
+                deliveryId,
+                senderAgentId: sender.id,
+                senderAgentName: sender.name,
+                recipientAgentId: recipient.id,
+                content,
+              }),
+            },
+            createdAt: now,
+            updatedAt: now,
+          })
+          .returning()
+        return { deliveryId, outbound, inbound, turn }
+      })
+    } catch (error) {
+      lastError = error
+      const retryable = isSqliteBusy(error) || isSqliteConstraint(error)
+      if (retryable) {
+        await new Promise((resolve) => setTimeout(resolve, 10 * (attempt + 1)))
+      }
+      try {
+        const winner = await findAcceptedDirectMessage(idempotencyKey)
+        if (winner) return validateAcceptedDirectMessage(winner, normalized)
+      } catch (lookupError) {
+        if (!isSqliteBusy(lookupError)) throw lookupError
+      }
+      if (!retryable) throw error
     }
   }
   throw lastError

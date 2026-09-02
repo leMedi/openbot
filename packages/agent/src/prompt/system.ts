@@ -134,6 +134,7 @@ export type ConversationPromptContext =
 export function renderAgentPrompt(
   agent: Agent,
   context: ConversationPromptContext = { kind: 'private' },
+  availableAgents: Agent[] = [],
 ): string {
   const sharedRoom = context.kind === 'group'
   const name = agent.name.trim()
@@ -146,6 +147,14 @@ export function renderAgentPrompt(
     }
   }
   if (description) lines.push(`Description: ${description}`)
+  const peers = availableAgents.filter((candidate) => candidate.id !== agent.id)
+  if (peers.length > 0) {
+    lines.push('Other local agents available through SendAgentMessage:')
+    lines.push(...peers.map((peer) => `- ${peer.name} (${peer.id})`))
+    lines.push(
+      'Direct delivery is asynchronous: the tool acknowledges durable queueing immediately, and any reply arrives on a later turn.',
+    )
+  }
   if (context.kind === 'group') {
     const others = context.members
       .filter((member) => member.id !== agent.id)
@@ -161,6 +170,7 @@ export function renderAgentPrompt(
 
 export type SystemPromptInput = {
   agent: Agent
+  availableAgents?: Agent[]
   memory: MemoryItem[]
   conversation: ConversationPromptContext
 }
@@ -169,7 +179,7 @@ export type SystemPromptInput = {
 export function renderSystemPrompt(input: SystemPromptInput): string {
   return [
     renderDefaultSystemPrompt(),
-    renderAgentPrompt(input.agent, input.conversation),
+    renderAgentPrompt(input.agent, input.conversation, input.availableAgents),
     renderMemoryPrompt(input.memory),
   ]
     .filter(Boolean)

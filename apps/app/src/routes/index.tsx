@@ -160,10 +160,13 @@ function OpenBot() {
       .filter((b): b is Bot => !!b)
       .map((b) => authorFromBot(b, 'member'))
   }, [activeGroup, agentBots])
-  const membersById = useMemo(
-    () => memberAuthors && new Map(memberAuthors.map((a) => [a.id, a])),
-    [memberAuthors],
-  )
+  const transcriptAuthorsById = useMemo(() => {
+    const authors = new Map(
+      agentBots.map((agentBot) => [agentBot.id, authorFromBot(agentBot)]),
+    )
+    for (const member of memberAuthors ?? []) authors.set(member.id, member)
+    return authors
+  }, [agentBots, memberAuthors])
 
   // The persisted transcript for the selected conversation. Loaded on
   // selection rather than in the route loader because the active id is a
@@ -197,10 +200,10 @@ function OpenBot() {
     }
     const author = authorFromBot(bot)
     return {
-      entries: entriesFromMessages(transcript.rows, author, membersById),
+      entries: entriesFromMessages(transcript.rows, author, transcriptAuthorsById),
       tabs: activityFromMessages(transcript.rows, author),
     }
-  }, [active, bot, transcript, transcriptReady, membersById])
+  }, [active, bot, transcript, transcriptReady, transcriptAuthorsById])
 
   async function startConversation(botId: string) {
     const picked = botIn(bots, botId)
@@ -311,7 +314,7 @@ function OpenBot() {
           model={bot.model}
           members={memberAuthors}
           resolveAuthor={(message) =>
-            authorForMessage(message, authorFromBot(bot), membersById)
+            authorForMessage(message, authorFromBot(bot), transcriptAuthorsById)
           }
           initialEntries={entries}
           activityTabs={tabs}
@@ -359,7 +362,11 @@ function OpenBot() {
             const refreshed = await getConversationMessages({
               data: { conversationId: active.id },
             })
-            return entriesFromMessages(refreshed.rows, authorFromBot(bot), membersById)
+            return entriesFromMessages(
+              refreshed.rows,
+              authorFromBot(bot),
+              transcriptAuthorsById,
+            )
           }}
           onCancelTurn={(turnId) => cancelConversationTurn({ data: { turnId } })}
           onTurnSettled={async () => {

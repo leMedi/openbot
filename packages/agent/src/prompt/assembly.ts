@@ -69,6 +69,7 @@ async function renderGroupTurnPrompt(input: GroupPromptInput): Promise<string> {
 
 export type PrepareConversationTurnInput = {
   agent: Agent
+  availableAgents: Agent[]
   memory: MemoryItem[]
   conversation: ConversationPromptContext
   conversationId: string
@@ -82,6 +83,7 @@ export type PrepareConversationTurnInput = {
 export async function prepareConversationTurn(input: PrepareConversationTurnInput) {
   const systemPrompt = renderSystemPrompt({
     agent: input.agent,
+    availableAgents: input.availableAgents,
     memory: input.memory,
     conversation: input.conversation,
   })
