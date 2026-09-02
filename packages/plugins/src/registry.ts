@@ -7,7 +7,7 @@ import {
   type RuntimeMcpAccount,
   type ToolDefinition,
 } from '@openbot/db'
-import { refreshExpiredMcpOauthAccounts } from './oauth'
+import { refreshExpiredMcpOauthAccount } from './oauth'
 
 const MAX_TOOL_RESULT_LENGTH = 50_000
 const MCP_REQUEST_TIMEOUT_MS = 30_000
@@ -48,6 +48,10 @@ export type McpConnector = (
   signal?: AbortSignal,
 ) => Promise<McpClientConnection>
 
+export type McpAccountPreparer = (
+  account: RuntimeMcpAccount,
+) => Promise<RuntimeMcpAccount>
+
 type AccountStatus = 'not_connected' | 'cached' | 'connected' | 'failed'
 
 type AccountRuntime = {
@@ -56,6 +60,8 @@ type AccountRuntime = {
   status: AccountStatus
   error?: string
   connection?: McpClientConnection
+  connectionPromise?: Promise<McpClientConnection>
+  metadataPromise?: Promise<CachedTool[]>
   tools?: CachedTool[]
 }
 
@@ -214,19 +220,38 @@ function redactValue(value: unknown, secrets: string[]): unknown {
 function toolReference(account: RuntimeMcpAccount, originalName: string) {
   const server = account.serverKey.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 24)
   const tool = originalName.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 48)
-  const hash = createHash('sha256')
+  const accountHash = createHash('sha256').update(account.accountId).digest('hex').slice(0, 10)
+  const toolHash = createHash('sha256')
     .update(`${account.accountId}\0${originalName}`)
     .digest('hex')
     .slice(0, 10)
-  return `${server}:${hash}:${tool}`
+  return `${server}:${accountHash}:${toolHash}:${tool}`
+}
+
+function referenceAccountHash(reference: string) {
+  return reference.split(':', 3)[1]
+}
+
+function runtimeAccountHash(runtime: AccountRuntime) {
+  return createHash('sha256').update(runtime.account.accountId).digest('hex').slice(0, 10)
 }
 
 function accountFingerprint(account: RuntimeMcpAccount) {
+  const authIdentity = account.authType === 'api_key'
+    ? account.credentials.apiKey
+    : JSON.stringify({
+        clientId: account.credentials.clientId,
+        issuer: account.credentials.issuer,
+        resource: account.credentials.resourceServerUrl,
+        scope: account.credentials.scope,
+      })
   return JSON.stringify({
     serverId: account.serverId,
     serverKey: account.serverKey,
     transport: account.transport,
     configuration: account.configuration,
+    authType: account.authType,
+    authIdentityHash: createHash('sha256').update(authIdentity).digest('hex'),
   })
 }
 
@@ -264,6 +289,7 @@ function accountSummary(runtime: AccountRuntime) {
 export function createMcpToolRegistry(
   accounts: RuntimeMcpAccount[],
   connector: McpConnector = connectMcpAccount,
+  prepareAccount: McpAccountPreparer = async (account) => account,
 ): McpToolRegistry {
   const now = Date.now()
   for (const [accountId, cached] of metadataCache) {
@@ -290,21 +316,34 @@ export function createMcpToolRegistry(
       delete runtime.error
       return runtime.connection
     }
-    try {
-      runtime.connection = await connector(runtime.account, requestSignal(signal))
+    if (runtime.connectionPromise) return runtime.connectionPromise
+    const attempt = (async () => {
+      runtime.account = await prepareAccount(runtime.account)
+      runtime.fingerprint = accountFingerprint(runtime.account)
+      secrets.push(...accountSecrets(runtime.account))
+      const connection = await connector(runtime.account, requestSignal(signal))
+      runtime.connection = connection
       runtime.status = 'connected'
       delete runtime.error
-      return runtime.connection
+      return connection
+    })()
+    runtime.connectionPromise = attempt
+    try {
+      return await attempt
     } catch (error) {
       runtime.status = 'failed'
       runtime.error = errorMessage(error)
       throw error
+    } finally {
+      if (runtime.connectionPromise === attempt) delete runtime.connectionPromise
     }
   }
 
-  async function discardConnection(runtime: AccountRuntime) {
-    const connection = runtime.connection
-    delete runtime.connection
+  async function discardConnection(
+    runtime: AccountRuntime,
+    connection = runtime.connection,
+  ) {
+    if (runtime.connection === connection) delete runtime.connection
     await connection?.close().catch(() => {})
   }
 
@@ -314,12 +353,23 @@ export function createMcpToolRegistry(
     refresh = false,
   ) {
     if (!refresh && runtime.tools) return runtime.tools
-    const connection = await ensureConnection(runtime, signal)
-    try {
+    if (runtime.metadataPromise) return runtime.metadataPromise
+    if (refresh) {
+      delete runtime.tools
+      metadataCache.delete(runtime.account.accountId)
+    }
+    const operationSignal = requestSignal(signal)
+    const attempt = (async () => {
+      const connection = await ensureConnection(runtime, operationSignal)
       const tools: CachedTool[] = []
+      const seenCursors = new Set<string>()
       let cursor: string | undefined
       do {
-        const page = await connection.listTools(cursor, requestSignal(signal))
+        if (cursor && seenCursors.has(cursor)) {
+          throw new Error('MCP tool pagination repeated a cursor')
+        }
+        if (cursor) seenCursors.add(cursor)
+        const page = await connection.listTools(cursor, operationSignal)
         for (const tool of page.tools) {
           const safeName = redactValue(tool.name, secrets)
           const safeDescription = redactValue(tool.description ?? '', secrets)
@@ -346,16 +396,26 @@ export function createMcpToolRegistry(
         tools,
       })
       return tools
+    })()
+    runtime.metadataPromise = attempt
+    try {
+      return await attempt
     } catch (error) {
       runtime.status = 'failed'
       runtime.error = errorMessage(error)
       await discardConnection(runtime)
       throw error
+    } finally {
+      if (runtime.metadataPromise === attempt) delete runtime.metadataPromise
     }
   }
 
   async function findTool(reference: string, signal?: AbortSignal, refresh = false) {
-    for (const runtime of runtimes) {
+    const accountHash = referenceAccountHash(reference)
+    const candidates = accountHash
+      ? runtimes.filter((runtime) => runtimeAccountHash(runtime) === accountHash)
+      : []
+    for (const runtime of candidates) {
       if (refresh || !runtime.tools) {
         try {
           await loadMetadata(runtime, signal, refresh)
@@ -460,11 +520,18 @@ export function createMcpToolRegistry(
             input.arguments as Record<string, unknown>,
             requestSignal(signal),
           )
+          const toolFailed =
+            result !== null &&
+            typeof result === 'object' &&
+            'isError' in result &&
+            result.isError === true
           return stringifyResult(
             {
               server: found.runtime.account.serverName,
               account: found.runtime.account.accountLabel,
               status: found.runtime.status,
+              toolStatus: toolFailed ? 'failed' : 'succeeded',
+              ...(toolFailed ? { error: 'MCP tool reported a failure' } : {}),
               result,
             },
             secrets,
@@ -499,6 +566,8 @@ export function createMcpToolRegistry(
 
 export async function createMcpGatewayForTurn(agentId: string) {
   return createMcpToolRegistry(
-    await refreshExpiredMcpOauthAccounts(await listRuntimeMcpAccountsForAgent(agentId)),
+    await listRuntimeMcpAccountsForAgent(agentId),
+    connectMcpAccount,
+    refreshExpiredMcpOauthAccount,
   )
 }

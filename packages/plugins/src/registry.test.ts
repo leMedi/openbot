@@ -175,4 +175,92 @@ describe('MCP gateway', () => {
     expect(`${searchedText}${describedText}${calledText}`).not.toContain(secret)
     expect(`${searchedText}${describedText}${calledText}`).toContain('[REDACTED]')
   })
+
+  it('prepares OAuth-style credentials lazily and reports preparation failures', async () => {
+    const prepare = vi.fn(async () => { throw new Error('authorization expired') })
+    const connect = vi.fn(async () => ({
+      listTools: async () => ({ tools: [] }),
+      callTool: async () => ({}),
+      close: async () => {},
+    }))
+    const registry = createMcpToolRegistry(
+      [account('lazy-auth')],
+      connect,
+      prepare,
+    )
+
+    expect(prepare).not.toHaveBeenCalled()
+    const searched = JSON.parse(await registry.execute(call('McpSearch', {})))
+    expect(prepare).toHaveBeenCalledOnce()
+    expect(connect).not.toHaveBeenCalled()
+    expect(searched.accounts[0]).toEqual(expect.objectContaining({
+      status: 'failed',
+      error: 'authorization expired',
+    }))
+  })
+
+  it('does not return stale tools after an explicit refresh fails', async () => {
+    let listAttempt = 0
+    const registry = createMcpToolRegistry([account('refresh-failure')], async () => ({
+      listTools: async () => {
+        listAttempt++
+        if (listAttempt > 1) throw new Error('refresh failed')
+        return { tools: [{ name: 'stale_tool', inputSchema: { type: 'object' } }] }
+      },
+      callTool: async () => ({}),
+      close: async () => {},
+    }))
+    const initial = JSON.parse(await registry.execute(call('McpSearch', {})))
+    expect(initial.tools).toHaveLength(1)
+
+    const refreshed = JSON.parse(await registry.execute(call('McpSearch', { refresh: true })))
+    expect(refreshed.tools).toEqual([])
+    expect(refreshed.accounts[0]).toEqual(expect.objectContaining({
+      status: 'failed',
+      error: 'refresh failed',
+    }))
+  })
+
+  it('shares concurrent connection and metadata work for one account', async () => {
+    let release: (() => void) | undefined
+    const blocked = new Promise<void>((resolve) => { release = resolve })
+    const listTools = vi.fn(async () => {
+      await blocked
+      return { tools: [{ name: 'shared_tool', inputSchema: { type: 'object' as const } }] }
+    })
+    const connect = vi.fn(async () => ({
+      listTools,
+      callTool: async () => ({}),
+      close: async () => {},
+    }))
+    const registry = createMcpToolRegistry([account('concurrent')], connect)
+    const first = registry.execute(call('McpSearch', {}))
+    const second = registry.execute(call('McpSearch', {}))
+    release?.()
+    await Promise.all([first, second])
+
+    expect(connect).toHaveBeenCalledOnce()
+    expect(listTools).toHaveBeenCalledOnce()
+  })
+
+  it('surfaces protocol-level MCP tool failures', async () => {
+    const registry = createMcpToolRegistry([account('protocol-error')], async () => ({
+      listTools: async () => ({
+        tools: [{ name: 'fail_tool', inputSchema: { type: 'object' } }],
+      }),
+      callTool: async () => ({ isError: true, content: [{ type: 'text', text: 'denied' }] }),
+      close: async () => {},
+    }))
+    const searched = JSON.parse(await registry.execute(call('McpSearch', {})))
+    const result = JSON.parse(await registry.execute(call('McpCall', {
+      tool: searched.tools[0].tool,
+      arguments: {},
+    })))
+
+    expect(result).toEqual(expect.objectContaining({
+      status: 'connected',
+      toolStatus: 'failed',
+      error: 'MCP tool reported a failure',
+    }))
+  })
 })
