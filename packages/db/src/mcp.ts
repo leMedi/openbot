@@ -380,6 +380,16 @@ export async function setAgentMcpAccounts(agentId: string, accountIds: string[])
   }).then(() => listAgentMcpAccounts(agentId))
 }
 
+export async function grantAgentMcpAccount(agentId: string, accountId: string) {
+  await db
+    .insert(schema.agentMcpAccounts)
+    .values({ agentId, accountId, enabledAt: Date.now() })
+    .onConflictDoNothing({
+      target: [schema.agentMcpAccounts.agentId, schema.agentMcpAccounts.accountId],
+    })
+  return listAgentMcpAccounts(agentId)
+}
+
 export async function listRuntimeMcpAccountsForAgent(
   agentId: string,
 ): Promise<RuntimeMcpAccount[]> {

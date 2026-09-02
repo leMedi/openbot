@@ -289,6 +289,7 @@ export async function executeSendMessage(
       toolCallId: call.id,
       widget: {
         prompt: args.widget.prompt,
+        interactionKind: 'question',
         options,
         allowCustom: args.widget.allowCustom ?? false,
         dismissOnMoveOn: args.widget.dismissOnMoveOn ?? false,
@@ -296,6 +297,7 @@ export async function executeSendMessage(
     }
     const waitingState: WaitingState = {
       version: 1,
+      interactionKind: 'question',
       prompt: args.widget.prompt,
       options,
       allowCustom: args.widget.allowCustom ?? false,

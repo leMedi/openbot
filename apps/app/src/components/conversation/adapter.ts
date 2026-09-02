@@ -48,9 +48,10 @@ function toolCallFrom(row: ConversationMessage): ToolCall {
 type SendMessagePayloadView = {
   deliveryKind?: unknown
   type?: unknown
+  toolCallId?: unknown
   event?: unknown
   senderAgentName?: unknown
-  widget?: { prompt?: unknown; options?: unknown }
+  widget?: { prompt?: unknown; options?: unknown; interactionKind?: unknown }
   alt?: unknown
 }
 
@@ -101,7 +102,11 @@ function reactionsFrom(row: ConversationMessage) {
  * card that precedes it). `author` is the already-resolved identity for
  * agent-authored rows.
  */
-export function entryFromMessage(row: ConversationMessage, author: Author): Entry | null {
+export function entryFromMessage(
+  row: ConversationMessage,
+  author: Author,
+  approvalStatus: 'pending' | 'approved' | 'denied' = 'pending',
+): Entry | null {
   const time = timeLabel(row.createdAt)
   if (row.kind === 'message' && row.role === 'user') {
     return {
@@ -117,6 +122,28 @@ export function entryFromMessage(row: ConversationMessage, author: Author): Entr
   if (row.kind === 'message') {
     const payload = (row.payloadJson ?? {}) as SendMessagePayloadView
     if (payload.deliveryKind === 'send-message' && payload.type === 'widget') {
+      const title =
+        typeof payload.widget?.prompt === 'string'
+          ? payload.widget.prompt
+          : (row.bodyText ?? '')
+      if (payload.widget?.interactionKind === 'approval') {
+        return {
+          type: 'message',
+          id: row.id,
+          author,
+          time,
+          cards: [
+            {
+              kind: 'permission',
+              action: 'Plugin access request',
+              detail: title,
+              status: approvalStatus,
+              interactive: false,
+            },
+          ],
+          reactions: reactionsFrom(row),
+        }
+      }
       const options = Array.isArray(payload.widget?.options) ? payload.widget.options : []
       const labels = options
         .map((option: { label?: unknown }) =>
@@ -131,10 +158,7 @@ export function entryFromMessage(row: ConversationMessage, author: Author): Entr
         cards: [
           {
             kind: 'text',
-            title:
-              typeof payload.widget?.prompt === 'string'
-                ? payload.widget.prompt
-                : (row.bodyText ?? ''),
+            title,
             body: labels.join('\n'),
           },
         ],
@@ -216,9 +240,29 @@ export function entriesFromMessages(
   /** Known agent identities by sender id (falls back to persisted provenance). */
   membersById?: Map<string, Author>,
 ): Entry[] {
+  const approvalResponses = new Map<string, 'approved' | 'denied'>()
+  for (const row of rows) {
+    const payload = row.payloadJson as {
+      event?: unknown
+      optionId?: unknown
+      toolCallId?: unknown
+    }
+    if (payload.event === 'turn_response' && typeof payload.toolCallId === 'string') {
+      approvalResponses.set(
+        payload.toolCallId,
+        payload.optionId === 'approve' ? 'approved' : 'denied',
+      )
+    }
+  }
   const out: Entry[] = []
   for (const row of rows) {
-    const entry = entryFromMessage(row, authorForMessage(row, agent, membersById))
+    const payload = row.payloadJson as SendMessagePayloadView
+    const entry = entryFromMessage(
+      row,
+      authorForMessage(row, agent, membersById),
+      (typeof payload.toolCallId === 'string' && approvalResponses.get(payload.toolCallId)) ||
+        'pending',
+    )
     if (entry) out.push(entry)
   }
   return out

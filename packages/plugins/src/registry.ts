@@ -52,6 +52,8 @@ export type McpAccountPreparer = (
   account: RuntimeMcpAccount,
 ) => Promise<RuntimeMcpAccount>
 
+export type McpAccountAuthorizer = (accountId: string) => Promise<boolean>
+
 type AccountStatus = 'not_connected' | 'cached' | 'connected' | 'failed'
 
 type AccountRuntime = {
@@ -72,76 +74,6 @@ export type McpToolRegistry = {
 }
 
 const metadataCache = new Map<string, MetadataCacheEntry>()
-
-const gatewayDefinitions: ToolDefinition[] = [
-  {
-    type: 'function',
-    function: {
-      name: 'McpSearch',
-      description:
-        'Search tools available through the MCP accounts connected to this agent. Returns compact tool references and explicit status for every account.',
-      parameters: {
-        type: 'object',
-        properties: {
-          query: {
-            type: 'string',
-            description: 'Case-insensitive text to match against tool names and descriptions.',
-          },
-          refresh: {
-            type: 'boolean',
-            description: 'Ignore cached metadata and fetch current tool catalogs.',
-          },
-        },
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'McpDescribe',
-      description: 'Return the current input schema for one MCP tool reference.',
-      parameters: {
-        type: 'object',
-        properties: {
-          tool: {
-            type: 'string',
-            description: 'Exact tool reference returned by McpSearch.',
-          },
-          refresh: {
-            type: 'boolean',
-            description: 'Refresh the owning account catalog before describing the tool.',
-          },
-        },
-        required: ['tool'],
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'McpCall',
-      description: 'Invoke one MCP tool using an exact tool reference returned by McpSearch.',
-      parameters: {
-        type: 'object',
-        properties: {
-          tool: {
-            type: 'string',
-            description: 'Exact tool reference returned by McpSearch.',
-          },
-          arguments: {
-            type: 'object',
-            description: 'Arguments matching the schema returned by McpDescribe.',
-            additionalProperties: true,
-          },
-        },
-        required: ['tool', 'arguments'],
-        additionalProperties: false,
-      },
-    },
-  },
-]
 
 function credentialHeader(account: RuntimeMcpAccount) {
   if (account.authType === 'oauth') {
@@ -178,7 +110,12 @@ async function connectMcpAccount(
       },
     },
   })
-  await client.connect(transport, { signal })
+  try {
+    await client.connect(transport, { signal })
+  } catch (error) {
+    await client.close().catch(() => {})
+    throw error
+  }
   return {
     async listTools(cursor, requestSignal) {
       const result = await client.listTools(
@@ -220,20 +157,11 @@ function redactValue(value: unknown, secrets: string[]): unknown {
 function toolReference(account: RuntimeMcpAccount, originalName: string) {
   const server = account.serverKey.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 24)
   const tool = originalName.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 48)
-  const accountHash = createHash('sha256').update(account.accountId).digest('hex').slice(0, 10)
-  const toolHash = createHash('sha256')
+  const hash = createHash('sha256')
     .update(`${account.accountId}\0${originalName}`)
     .digest('hex')
-    .slice(0, 10)
-  return `${server}:${accountHash}:${toolHash}:${tool}`
-}
-
-function referenceAccountHash(reference: string) {
-  return reference.split(':', 3)[1]
-}
-
-function runtimeAccountHash(runtime: AccountRuntime) {
-  return createHash('sha256').update(runtime.account.accountId).digest('hex').slice(0, 10)
+    .slice(0, 8)
+  return `mcp_${server}_${hash}_${tool}`.slice(0, 64)
 }
 
 function accountFingerprint(account: RuntimeMcpAccount) {
@@ -279,21 +207,12 @@ function stringifyResult(value: unknown, secrets: string[]) {
   })
 }
 
-function accountSummary(runtime: AccountRuntime) {
-  return {
-    server: runtime.account.serverName,
-    account: runtime.account.accountLabel,
-    status: runtime.status,
-    ...(runtime.tools ? { toolCount: runtime.tools.length } : {}),
-    ...(runtime.error ? { error: runtime.error } : {}),
-  }
-}
-
-export function createMcpToolRegistry(
+export async function createMcpToolRegistry(
   accounts: RuntimeMcpAccount[],
   connector: McpConnector = connectMcpAccount,
   prepareAccount: McpAccountPreparer = async (account) => account,
-): McpToolRegistry {
+  authorizeAccount: McpAccountAuthorizer = async () => true,
+): Promise<McpToolRegistry> {
   let closed = false
   const now = Date.now()
   for (const [accountId, cached] of metadataCache) {
@@ -419,28 +338,31 @@ export function createMcpToolRegistry(
     }
   }
 
-  async function findTool(reference: string, signal?: AbortSignal, refresh = false) {
-    const accountHash = referenceAccountHash(reference)
-    const candidates = accountHash
-      ? runtimes.filter((runtime) => runtimeAccountHash(runtime) === accountHash)
-      : []
-    for (const runtime of candidates) {
-      if (refresh || !runtime.tools) {
-        try {
-          await loadMetadata(runtime, signal, refresh)
-        } catch {
-          continue
-        }
-      }
-      const tool = runtime.tools?.find((candidate) => candidate.reference === reference)
-      if (tool) return { runtime, tool }
+  await Promise.allSettled(runtimes.map((runtime) => loadMetadata(runtime)))
+  await Promise.allSettled(runtimes.map((runtime) => discardConnection(runtime)))
+
+  const registered = new Map<string, { runtime: AccountRuntime; tool: CachedTool }>()
+  const definitions: ToolDefinition[] = []
+  for (const runtime of runtimes) {
+    for (const tool of runtime.tools ?? []) {
+      if (registered.has(tool.reference)) continue
+      registered.set(tool.reference, { runtime, tool })
+      definitions.push({
+        type: 'function',
+        function: {
+          name: tool.reference,
+          description: `[${runtime.account.serverName} / ${runtime.account.accountLabel}] ${tool.description || 'MCP tool'}`,
+          parameters: tool.inputSchema,
+        },
+      })
     }
-    return undefined
   }
 
   return {
-    definitions: gatewayDefinitions,
+    definitions,
     async execute(call, signal) {
+      const found = registered.get(call.function.name)
+      if (!found) return JSON.stringify({ error: `Unknown MCP tool: ${call.function.name}` })
       let args: unknown
       try {
         args = JSON.parse(call.function.arguments || '{}')
@@ -451,117 +373,23 @@ export function createMcpToolRegistry(
         return JSON.stringify({ error: 'Tool arguments must be an object' })
       }
       const input = args as Record<string, unknown>
-
-      if (call.function.name === 'McpSearch') {
-        const query = typeof input.query === 'string' ? input.query.trim().toLowerCase() : ''
-        const refresh = input.refresh === true
-        await Promise.allSettled(
-          runtimes.map((runtime) => loadMetadata(runtime, signal, refresh)),
+      try {
+        if (!(await authorizeAccount(found.runtime.account.accountId))) {
+          return JSON.stringify({ error: 'This MCP account is no longer granted to the agent' })
+        }
+        const connection = await ensureConnection(found.runtime, signal)
+        const result = await connection.callTool(
+          found.tool.originalName,
+          input,
+          requestSignal(signal),
         )
-        const tools = runtimes.flatMap((runtime) =>
-          (runtime.tools ?? [])
-            .filter((tool) =>
-              !query || `${tool.name}\n${tool.description ?? ''}`.toLowerCase().includes(query),
-            )
-            .map((tool) => ({
-              tool: tool.reference,
-              name: tool.name,
-              description: tool.description,
-              server: runtime.account.serverName,
-              account: runtime.account.accountLabel,
-            })),
-        )
-        return stringifyResult(
-          { accounts: runtimes.map(accountSummary), tools },
-          secrets,
-        )
+        return stringifyResult(result, secrets)
+      } catch (error) {
+        found.runtime.status = 'failed'
+        found.runtime.error = errorMessage(error)
+        await discardConnection(found.runtime)
+        return stringifyResult({ error: found.runtime.error }, secrets)
       }
-
-      if (call.function.name === 'McpDescribe') {
-        if (typeof input.tool !== 'string' || !input.tool) {
-          return JSON.stringify({ error: 'McpDescribe requires a tool reference' })
-        }
-        const found = await findTool(input.tool, signal, input.refresh === true)
-        if (!found) {
-          return stringifyResult(
-            {
-              error: `Unknown MCP tool: ${input.tool}`,
-              accounts: runtimes.map(accountSummary),
-            },
-            secrets,
-          )
-        }
-        return stringifyResult(
-          {
-            tool: found.tool.reference,
-            name: found.tool.name,
-            description: found.tool.description,
-            inputSchema: found.tool.inputSchema,
-            server: found.runtime.account.serverName,
-            account: found.runtime.account.accountLabel,
-            status: found.runtime.status,
-          },
-          secrets,
-        )
-      }
-
-      if (call.function.name === 'McpCall') {
-        if (typeof input.tool !== 'string' || !input.tool) {
-          return JSON.stringify({ error: 'McpCall requires a tool reference' })
-        }
-        if (!input.arguments || typeof input.arguments !== 'object' || Array.isArray(input.arguments)) {
-          return JSON.stringify({ error: 'McpCall arguments must be an object' })
-        }
-        const found = await findTool(input.tool, signal)
-        if (!found) {
-          return stringifyResult(
-            {
-              error: `Unknown MCP tool: ${input.tool}`,
-              accounts: runtimes.map(accountSummary),
-            },
-            secrets,
-          )
-        }
-        try {
-          const connection = await ensureConnection(found.runtime, signal)
-          const result = await connection.callTool(
-            found.tool.originalName,
-            input.arguments as Record<string, unknown>,
-            requestSignal(signal),
-          )
-          const toolFailed =
-            result !== null &&
-            typeof result === 'object' &&
-            'isError' in result &&
-            result.isError === true
-          return stringifyResult(
-            {
-              server: found.runtime.account.serverName,
-              account: found.runtime.account.accountLabel,
-              status: found.runtime.status,
-              toolStatus: toolFailed ? 'failed' : 'succeeded',
-              ...(toolFailed ? { error: 'MCP tool reported a failure' } : {}),
-              result,
-            },
-            secrets,
-          )
-        } catch (error) {
-          found.runtime.status = 'failed'
-          found.runtime.error = errorMessage(error)
-          await discardConnection(found.runtime)
-          return stringifyResult(
-            {
-              server: found.runtime.account.serverName,
-              account: found.runtime.account.accountLabel,
-              status: found.runtime.status,
-              error: found.runtime.error,
-            },
-            secrets,
-          )
-        }
-      }
-
-      return JSON.stringify({ error: `Unknown MCP gateway tool: ${call.function.name}` })
     },
     async close() {
       closed = true
@@ -575,10 +403,14 @@ export function createMcpToolRegistry(
   }
 }
 
-export async function createMcpGatewayForTurn(agentId: string) {
+export async function createMcpToolsForTurn(agentId: string) {
   return createMcpToolRegistry(
     await listRuntimeMcpAccountsForAgent(agentId),
     connectMcpAccount,
     refreshExpiredMcpOauthAccountOnce,
+    async (accountId) =>
+      (await listRuntimeMcpAccountsForAgent(agentId)).some(
+        (account) => account.accountId === accountId,
+      ),
   )
 }

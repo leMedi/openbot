@@ -195,6 +195,7 @@ function SecretCard({ name, value }: { name: string; value: string }) {
 
 function PermissionCard({ card }: { card: Extract<Card, { kind: 'permission' }> }) {
   const [status, setStatus] = useState(card.status)
+  const displayedStatus = card.interactive === false ? card.status : status
 
   return (
     <CardShell>
@@ -207,7 +208,7 @@ function PermissionCard({ card }: { card: Extract<Card, { kind: 'permission' }> 
       <div className="px-3 py-2 text-[11px] leading-normal text-muted-foreground">
         {card.detail}
       </div>
-      {status === 'pending' ? (
+      {displayedStatus === 'pending' && card.interactive !== false ? (
         <div className="flex gap-2 border-t px-3 py-2">
           <Button size="xs" onClick={() => setStatus('approved')}>
             Approve
@@ -221,16 +222,28 @@ function PermissionCard({ card }: { card: Extract<Card, { kind: 'permission' }> 
           <span
             className={cn(
               'size-1.5 rounded-full',
-              status === 'approved' ? 'bg-success' : 'bg-destructive',
+              displayedStatus === 'approved'
+                ? 'bg-success'
+                : displayedStatus === 'denied'
+                  ? 'bg-destructive'
+                  : 'bg-warning',
             )}
           />
           <span
             className={cn(
               'text-[11px] font-medium',
-              status === 'approved' ? 'text-success' : 'text-destructive',
+              displayedStatus === 'approved'
+                ? 'text-success'
+                : displayedStatus === 'denied'
+                  ? 'text-destructive'
+                  : 'text-warning',
             )}
           >
-            {status === 'approved' ? 'Approved' : 'Denied'}
+            {displayedStatus === 'approved'
+              ? 'Approved'
+              : displayedStatus === 'denied'
+                ? 'Denied'
+                : 'Pending'}
           </span>
         </div>
       )}

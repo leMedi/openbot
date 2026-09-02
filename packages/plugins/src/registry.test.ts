@@ -35,125 +35,86 @@ function call(name: string, args: Record<string, unknown>): ModelToolCall {
   }
 }
 
-describe('MCP gateway', () => {
-  it('connects lazily and reuses cached metadata in a later registry', async () => {
-    const connect = vi.fn(async () => ({
-      listTools: vi.fn(async () => ({
-        tools: [{
-          name: 'issue.create',
-          description: 'Create an issue',
-          inputSchema: { type: 'object' as const, properties: { title: { type: 'string' } } },
-        }],
-      })),
-      callTool: vi.fn(async () => ({ content: [{ type: 'text', text: 'created' }] })),
-      close: vi.fn(async () => {}),
-    }))
-    const first = createMcpToolRegistry([account('lazy-cache')], connect)
+describe('direct MCP tools', () => {
+  it('discovers schemas, closes discovery, and reconnects lazily for invocation', async () => {
+    const discoveryClose = vi.fn(async () => {})
+    const invoke = vi.fn(async () => ({ ok: true }))
+    let connection = 0
+    const connect = vi.fn(async () => {
+      connection++
+      return {
+        listTools: async () => ({
+          tools: [{
+            name: 'issue.create',
+            description: 'Create an issue',
+            inputSchema: { type: 'object' as const, required: ['title'] },
+          }],
+        }),
+        callTool: invoke,
+        close: connection === 1 ? discoveryClose : async () => {},
+      }
+    })
+    const registry = await createMcpToolRegistry([account('direct-lazy')], connect)
 
-    expect(first.definitions.map((definition) => definition.function.name)).toEqual([
-      'McpSearch',
-      'McpDescribe',
-      'McpCall',
-    ])
-    expect(connect).not.toHaveBeenCalled()
-
-    const searched = JSON.parse(await first.execute(call('McpSearch', { query: 'issue' })))
     expect(connect).toHaveBeenCalledOnce()
-    expect(searched.accounts).toEqual([
-      expect.objectContaining({ account: 'Account lazy-cache', status: 'connected', toolCount: 1 }),
-    ])
-    expect(searched.tools).toHaveLength(1)
-    await first.close()
+    expect(discoveryClose).toHaveBeenCalledOnce()
+    expect(registry.definitions).toHaveLength(1)
+    expect(registry.definitions[0]?.function).toEqual(expect.objectContaining({
+      description: '[Linear / Account direct-lazy] Create an issue',
+      parameters: { type: 'object', required: ['title'] },
+    }))
 
-    connect.mockClear()
-    const second = createMcpToolRegistry([account('lazy-cache')], connect)
-    const cached = JSON.parse(await second.execute(call('McpSearch', { query: 'issue' })))
-    expect(connect).not.toHaveBeenCalled()
-    expect(cached.accounts[0].status).toBe('cached')
+    const toolName = registry.definitions[0]!.function.name
+    expect(JSON.parse(await registry.execute(call(toolName, { title: 'One' })))).toEqual({ ok: true })
+    expect(connect).toHaveBeenCalledTimes(2)
+    expect(invoke).toHaveBeenCalledWith('issue.create', { title: 'One' }, expect.any(AbortSignal))
   })
 
-  it('returns account-specific references and describes their schemas', async () => {
-    const connect = vi.fn(async () => ({
+  it('uses cached metadata without reconnecting on a later turn', async () => {
+    const id = 'metadata-cache-direct'
+    const firstConnect = vi.fn(async () => ({
       listTools: async () => ({
-        tools: [{
-          name: 'search',
-          description: 'Search this account',
-          inputSchema: { type: 'object' as const, required: ['query'] },
-        }],
+        tools: [{ name: 'search', inputSchema: { type: 'object' as const } }],
       }),
       callTool: async () => ({}),
       close: async () => {},
     }))
-    const registry = createMcpToolRegistry(
-      [account('work-reference'), account('personal-reference')],
-      connect,
-    )
-    const searched = JSON.parse(await registry.execute(call('McpSearch', { query: 'search' })))
+    await createMcpToolRegistry([account(id)], firstConnect)
 
-    expect(searched.tools).toHaveLength(2)
-    expect(searched.tools[0].tool).not.toBe(searched.tools[1].tool)
-    const described = JSON.parse(await registry.execute(call('McpDescribe', {
-      tool: searched.tools[1].tool,
-    })))
-    expect(described).toEqual(expect.objectContaining({
-      account: 'Account personal-reference',
-      name: 'search',
-      inputSchema: { type: 'object', required: ['query'] },
-    }))
+    const secondConnect = vi.fn(async () => { throw new Error('should stay lazy') })
+    const second = await createMcpToolRegistry([account(id)], secondConnect)
+    expect(secondConnect).not.toHaveBeenCalled()
+    expect(second.definitions).toHaveLength(1)
   })
 
-  it('reports discovery failures instead of hiding the account', async () => {
-    const registry = createMcpToolRegistry(
-      [account('failed-discovery')],
-      async () => { throw new Error('service unavailable') },
-    )
-    const result = JSON.parse(await registry.execute(call('McpSearch', {})))
-
-    expect(result.tools).toEqual([])
-    expect(result.accounts).toEqual([{
-      server: 'Linear',
-      account: 'Account failed-discovery',
-      status: 'failed',
-      error: 'service unavailable',
-    }])
-  })
-
-  it('discards a failed connection and retries the account on the next call', async () => {
-    const closeFirst = vi.fn(async () => {})
-    const callFirst = vi.fn(async () => { throw new Error('session expired') })
-    const callSecond = vi.fn(async () => ({ ok: true }))
-    let attempt = 0
-    const registry = createMcpToolRegistry([account('call-retry')], async () => {
-      attempt++
-      return {
+  it('creates distinct direct tool names for multiple accounts', async () => {
+    const registry = await createMcpToolRegistry(
+      [account('work-direct'), account('personal-direct')],
+      async () => ({
         listTools: async () => ({
-          tools: [{ name: 'create_issue', inputSchema: { type: 'object' } }],
+          tools: [{ name: 'search', inputSchema: { type: 'object' as const } }],
         }),
-        callTool: attempt === 1 ? callFirst : callSecond,
-        close: attempt === 1 ? closeFirst : async () => {},
-      }
-    })
-    const searched = JSON.parse(await registry.execute(call('McpSearch', {})))
-    const tool = searched.tools[0].tool
-
-    const failed = JSON.parse(await registry.execute(call('McpCall', {
-      tool,
-      arguments: { title: 'One' },
-    })))
-    expect(failed).toEqual(expect.objectContaining({ status: 'failed', error: 'session expired' }))
-    expect(closeFirst).toHaveBeenCalledOnce()
-
-    const succeeded = JSON.parse(await registry.execute(call('McpCall', {
-      tool,
-      arguments: { title: 'One' },
-    })))
-    expect(succeeded).toEqual(expect.objectContaining({ status: 'connected', result: { ok: true } }))
-    expect(callSecond).toHaveBeenCalledWith('create_issue', { title: 'One' }, expect.any(AbortSignal))
+        callTool: async () => ({}),
+        close: async () => {},
+      }),
+    )
+    expect(registry.definitions).toHaveLength(2)
+    expect(registry.definitions[0]?.function.name).not.toBe(
+      registry.definitions[1]?.function.name,
+    )
   })
 
-  it('redacts account credentials from metadata, errors, and results', async () => {
+  it('omits accounts whose metadata discovery fails', async () => {
+    const registry = await createMcpToolRegistry(
+      [account('failed-direct')],
+      async () => { throw new Error('unavailable') },
+    )
+    expect(registry.definitions).toEqual([])
+  })
+
+  it('redacts credentials from schemas and results', async () => {
     const secret = 'do-not-leak'
-    const registry = createMcpToolRegistry([account('redaction', secret)], async () => ({
+    const registry = await createMcpToolRegistry([account('redaction-direct', secret)], async () => ({
       listTools: async () => ({
         tools: [{
           name: 'inspect',
@@ -164,141 +125,43 @@ describe('MCP gateway', () => {
       callTool: async () => ({ token: secret }),
       close: async () => {},
     }))
-    const searchedText = await registry.execute(call('McpSearch', {}))
-    const searched = JSON.parse(searchedText)
-    const describedText = await registry.execute(call('McpDescribe', { tool: searched.tools[0].tool }))
-    const calledText = await registry.execute(call('McpCall', {
-      tool: searched.tools[0].tool,
-      arguments: {},
-    }))
-
-    expect(`${searchedText}${describedText}${calledText}`).not.toContain(secret)
-    expect(`${searchedText}${describedText}${calledText}`).toContain('[REDACTED]')
+    const definitionText = JSON.stringify(registry.definitions)
+    const resultText = await registry.execute(call(registry.definitions[0]!.function.name, {}))
+    expect(`${definitionText}${resultText}`).not.toContain(secret)
+    expect(`${definitionText}${resultText}`).toContain('[REDACTED]')
   })
 
-  it('prepares OAuth-style credentials lazily and reports preparation failures', async () => {
-    const prepare = vi.fn(async () => { throw new Error('authorization expired') })
-    const connect = vi.fn(async () => ({
-      listTools: async () => ({ tools: [] }),
-      callTool: async () => ({}),
-      close: async () => {},
-    }))
-    const registry = createMcpToolRegistry(
-      [account('lazy-auth')],
-      connect,
-      prepare,
-    )
-
-    expect(prepare).not.toHaveBeenCalled()
-    const searched = JSON.parse(await registry.execute(call('McpSearch', {})))
-    expect(prepare).toHaveBeenCalledOnce()
-    expect(connect).not.toHaveBeenCalled()
-    expect(searched.accounts[0]).toEqual(expect.objectContaining({
-      status: 'failed',
-      error: 'authorization expired',
-    }))
-  })
-
-  it('does not return stale tools after an explicit refresh fails', async () => {
-    let listAttempt = 0
-    const registry = createMcpToolRegistry([account('refresh-failure')], async () => ({
-      listTools: async () => {
-        listAttempt++
-        if (listAttempt > 1) throw new Error('refresh failed')
-        return { tools: [{ name: 'stale_tool', inputSchema: { type: 'object' } }] }
-      },
-      callTool: async () => ({}),
-      close: async () => {},
-    }))
-    const initial = JSON.parse(await registry.execute(call('McpSearch', {})))
-    expect(initial.tools).toHaveLength(1)
-
-    const refreshed = JSON.parse(await registry.execute(call('McpSearch', { refresh: true })))
-    expect(refreshed.tools).toEqual([])
-    expect(refreshed.accounts[0]).toEqual(expect.objectContaining({
-      status: 'failed',
-      error: 'refresh failed',
-    }))
-  })
-
-  it('shares concurrent connection and metadata work for one account', async () => {
-    let release: (() => void) | undefined
-    const blocked = new Promise<void>((resolve) => { release = resolve })
-    const listTools = vi.fn(async () => {
-      await blocked
-      return { tools: [{ name: 'shared_tool', inputSchema: { type: 'object' as const } }] }
-    })
-    const connect = vi.fn(async () => ({
-      listTools,
-      callTool: async () => ({}),
-      close: async () => {},
-    }))
-    const registry = createMcpToolRegistry([account('concurrent')], connect)
-    const first = registry.execute(call('McpSearch', {}))
-    const second = registry.execute(call('McpSearch', {}))
-    release?.()
-    await Promise.all([first, second])
-
-    expect(connect).toHaveBeenCalledOnce()
-    expect(listTools).toHaveBeenCalledOnce()
-  })
-
-  it('surfaces protocol-level MCP tool failures', async () => {
-    const registry = createMcpToolRegistry([account('protocol-error')], async () => ({
+  it('keeps oversized results valid JSON', async () => {
+    const registry = await createMcpToolRegistry([account('large-direct')], async () => ({
       listTools: async () => ({
-        tools: [{ name: 'fail_tool', inputSchema: { type: 'object' } }],
-      }),
-      callTool: async () => ({ isError: true, content: [{ type: 'text', text: 'denied' }] }),
-      close: async () => {},
-    }))
-    const searched = JSON.parse(await registry.execute(call('McpSearch', {})))
-    const result = JSON.parse(await registry.execute(call('McpCall', {
-      tool: searched.tools[0].tool,
-      arguments: {},
-    })))
-
-    expect(result).toEqual(expect.objectContaining({
-      status: 'connected',
-      toolStatus: 'failed',
-      error: 'MCP tool reported a failure',
-    }))
-  })
-
-  it('keeps oversized gateway responses valid JSON', async () => {
-    const registry = createMcpToolRegistry([account('large-result')], async () => ({
-      listTools: async () => ({
-        tools: [{ name: 'large_tool', inputSchema: { type: 'object' } }],
+        tools: [{ name: 'large', inputSchema: { type: 'object' } }],
       }),
       callTool: async () => ({ content: 'x'.repeat(60_000) }),
       close: async () => {},
     }))
-    const searched = JSON.parse(await registry.execute(call('McpSearch', {})))
-    const text = await registry.execute(call('McpCall', {
-      tool: searched.tools[0].tool,
-      arguments: {},
-    }))
-
-    expect(() => JSON.parse(text)).not.toThrow()
+    const text = await registry.execute(call(registry.definitions[0]!.function.name, {}))
     expect(JSON.parse(text)).toEqual(expect.objectContaining({ truncated: true }))
   })
 
-  it('closes a connection that finishes opening during shutdown', async () => {
-    let release: (() => void) | undefined
-    const blocked = new Promise<void>((resolve) => { release = resolve })
-    const close = vi.fn(async () => {})
-    const registry = createMcpToolRegistry([account('closing')], async () => {
-      await blocked
-      return {
-        listTools: async () => ({ tools: [] }),
-        callTool: async () => ({}),
-        close,
-      }
-    })
-    const search = registry.execute(call('McpSearch', {}))
-    const closing = registry.close()
-    release?.()
-    await Promise.all([search, closing])
+  it('revalidates the account grant before invoking a direct tool', async () => {
+    const invoke = vi.fn(async () => ({ ok: true }))
+    const registry = await createMcpToolRegistry(
+      [account('revoked-direct')],
+      async () => ({
+        listTools: async () => ({
+          tools: [{ name: 'private_tool', inputSchema: { type: 'object' } }],
+        }),
+        callTool: invoke,
+        close: async () => {},
+      }),
+      async (value) => value,
+      async () => false,
+    )
+    const result = JSON.parse(
+      await registry.execute(call(registry.definitions[0]!.function.name, {})),
+    )
 
-    expect(close).toHaveBeenCalledOnce()
+    expect(result.error).toContain('no longer granted')
+    expect(invoke).not.toHaveBeenCalled()
   })
 })

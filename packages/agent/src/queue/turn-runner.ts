@@ -31,7 +31,11 @@ import {
   DefaultResourceLoader,
   SettingsManager,
 } from '@earendil-works/pi-coding-agent'
-import { createMcpGatewayForTurn, type McpToolRegistry } from '@openbot/plugins'
+import {
+  createMcpManagementTools,
+  createMcpToolsForTurn,
+  type McpToolRegistry,
+} from '@openbot/plugins'
 import { getAiConfig, getOpenbotModel, piAgentDirectory } from '../ai'
 import { prepareConversationTurn } from '../prompt/assembly'
 import type { ConversationPromptContext } from '../prompt/system'
@@ -169,32 +173,15 @@ async function executeTurn(turnId: string) {
       : undefined
     const builtInToolDefinitions =
       claimed.lane !== 'background' ? agentToolDefinitions : backgroundToolDefinitions
-    const currentMcpRegistry = await createMcpGatewayForTurn(agent.id)
+    const hasMcpAccess = claimed.lane !== 'background' && claimed.source !== 'subagent'
+    const currentMcpRegistry = !hasMcpAccess
+      ? {
+          definitions: [],
+          execute: async () => JSON.stringify({ error: 'MCP tools are unavailable' }),
+          close: async () => {},
+        }
+      : await createMcpToolsForTurn(agent.id)
     mcpRegistry = currentMcpRegistry
-    // Historical snapshot of what this execution actually used.
-    await recordTurnExecution(turnId, {
-      modelProvider: 'pi',
-      modelId: config.model,
-      effectiveTools: {
-        version: 1,
-        tools: [
-          ...builtInToolDefinitions.map((tool) => tool.function.name),
-          ...currentMcpRegistry.definitions.map((tool) => tool.function.name),
-        ],
-      },
-      effectivePermissions: { version: 1, approvalMode: agent.approvalMode },
-      runtimeContext: {
-        ...claimed.runtimeContextJson,
-        version: 1,
-        baseUrl: config.baseUrl,
-        lane: claimed.lane,
-        mode: claimed.mode,
-        ...(waitingState && {
-          originatingToolCall: waitingState.originatingToolCall,
-          response: waitingState.response,
-        }),
-      },
-    })
 
     // Rows an earlier claim of this turn already delivered (a crashed attempt
     // or the pre-suspension half of a widget turn): they let the SendMessage
@@ -281,6 +268,54 @@ async function executeTurn(turnId: string) {
         return delivery
       },
     }
+    const resumeData = waitingState?.resumeData
+    const pluginApproval =
+      waitingState?.originatingToolCall.name === 'InstallPlugin' &&
+      waitingState.interactionKind === 'approval' &&
+      waitingState.response &&
+      resumeData &&
+      typeof resumeData === 'object' &&
+      !Array.isArray(resumeData) &&
+      typeof resumeData.pluginId === 'string' &&
+      typeof resumeData.valuesHash === 'string'
+        ? {
+            pluginId: resumeData.pluginId,
+            valuesHash: resumeData.valuesHash,
+            approved: waitingState.response.optionId === 'approve',
+          }
+        : undefined
+    const managementTools = hasMcpAccess
+      ? createMcpManagementTools(agent.id, {
+          approval: pluginApproval,
+          suspend: toolContext.suspend,
+        })
+      : undefined
+
+    // Historical snapshot of what this execution actually used.
+    await recordTurnExecution(turnId, {
+      modelProvider: 'pi',
+      modelId: config.model,
+      effectiveTools: {
+        version: 1,
+        tools: [
+          ...builtInToolDefinitions.map((tool) => tool.function.name),
+          ...(managementTools?.definitions.map((tool) => tool.function.name) ?? []),
+          ...currentMcpRegistry.definitions.map((tool) => tool.function.name),
+        ],
+      },
+      effectivePermissions: { version: 1, approvalMode: agent.approvalMode },
+      runtimeContext: {
+        ...claimed.runtimeContextJson,
+        version: 1,
+        baseUrl: config.baseUrl,
+        lane: claimed.lane,
+        mode: claimed.mode,
+        ...(waitingState && {
+          originatingToolCall: waitingState.originatingToolCall,
+          response: waitingState.response,
+        }),
+      },
+    })
 
     const agentDir = piAgentDirectory()
     const resourceLoader = new DefaultResourceLoader({
@@ -297,6 +332,7 @@ async function executeTurn(turnId: string) {
 
     const customTools = [
       ...toPiBuiltinTools(agent, builtInToolDefinitions, toolContext),
+      ...(managementTools ? toPiMcpTools(managementTools) : []),
       ...toPiMcpTools(currentMcpRegistry),
     ]
     const { runtime, model } = await getOpenbotModel(config)

@@ -103,6 +103,7 @@ export const effectiveToolsSchema = z.object({
 
 export const waitingStateSchema = z.object({
   version: z.literal(1),
+  interactionKind: z.enum(['question', 'approval']).default('question'),
   prompt: z.string().min(1),
   options: z.array(
     z.object({
@@ -141,6 +142,7 @@ export const sendMessagePayloadSchema = z.object({
   widget: z
     .object({
       prompt: z.string().min(1),
+      interactionKind: z.enum(['question', 'approval']).default('question'),
       options: z.array(
         z.object({
           id: z.string().min(1),

@@ -6,7 +6,7 @@ import {
   type ToolDefinition as PiToolDefinition,
 } from '@earendil-works/pi-coding-agent'
 import type { Agent, ModelToolCall, ToolDefinition } from '@openbot/db'
-import type { McpToolRegistry } from '@openbot/plugins'
+import type { McpManagementTools, McpToolRegistry } from '@openbot/plugins'
 import type { TSchema } from 'typebox'
 import { executeAgentToolCall, type ToolTurnContext } from './index'
 
@@ -59,7 +59,9 @@ export function toPiBuiltinTools(
 }
 
 /** Wraps a turn's MCP gateway tools so pi dispatches into the registry. */
-export function toPiMcpTools(registry: McpToolRegistry): PiToolDefinition[] {
+export function toPiMcpTools(
+  registry: McpToolRegistry | McpManagementTools,
+): PiToolDefinition[] {
   return registry.definitions.map((definition) =>
     defineTool({
       name: definition.function.name,
@@ -67,7 +69,7 @@ export function toPiMcpTools(registry: McpToolRegistry): PiToolDefinition[] {
       description: definition.function.description,
       parameters: definition.function.parameters as TSchema,
       async execute(toolCallId, params, signal) {
-        console.info('[agent tool]', { tool: definition.function.name, arguments: params })
+        console.info('[agent tool]', { tool: definition.function.name })
         const result = await registry.execute(
           asToolCall(toolCallId, definition.function.name, params),
           signal,

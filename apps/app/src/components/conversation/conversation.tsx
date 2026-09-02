@@ -660,7 +660,19 @@ export function Conversation({
           )}
         </div>
         {waiting && (
-          <div className="mx-4 mb-2 rounded-xl border border-warning/40 bg-warning/5 p-3">
+          <div
+            className={cn(
+              'mx-4 mb-2 rounded-xl border p-3',
+              waiting.state.interactionKind === 'approval'
+                ? 'border-primary/40 bg-primary/5'
+                : 'border-warning/40 bg-warning/5',
+            )}
+          >
+            {waiting.state.interactionKind === 'approval' && (
+              <Badge variant="outline" className="mb-2 text-[9px] font-bold tracking-widest">
+                APPROVAL REQUIRED
+              </Badge>
+            )}
             <div className="text-xs font-semibold">{waiting.state.prompt}</div>
             <div className="mt-2 flex flex-wrap gap-2">
               {waiting.state.options.map((option) => (
@@ -684,20 +696,22 @@ export function Conversation({
                   {option.label}
                 </Button>
               ))}
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() =>
-                  void respondToServer(
-                    { prompt: 'Question dismissed.', attachments: [] },
-                    null,
-                    undefined,
-                    true,
-                  )
-                }
-              >
-                Dismiss
-              </Button>
+              {waiting.state.interactionKind !== 'approval' && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    void respondToServer(
+                      { prompt: 'Question dismissed.', attachments: [] },
+                      null,
+                      undefined,
+                      true,
+                    )
+                  }
+                >
+                  Dismiss
+                </Button>
+              )}
               {onCancelTurn && (
                 <Button
                   variant="ghost"

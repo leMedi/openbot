@@ -52,6 +52,7 @@ export type Card =
       action: string
       detail: string
       status: 'pending' | 'approved' | 'denied'
+      interactive?: boolean
     }
   | {
       kind: 'cloud-agent'
