@@ -32,11 +32,13 @@ export const sendMessageArgsSchema = z.discriminatedUnion('type', [
     type: z.literal('widget'),
     widget: z.object({
       prompt: z.string().trim().min(1).max(2_000),
+      helpText: z.string().trim().min(1).max(2_000).optional(),
       options: z
         .array(
           z.object({
             label: z.string().trim().min(1).max(200),
             value: z.string().trim().min(1).max(200).optional(),
+            description: z.string().trim().min(1).max(500).optional(),
             style: z.enum(['primary', 'danger']).optional(),
           }),
         )
@@ -85,6 +87,10 @@ export const sendMessageToolDefinition: ToolDefinition = {
           description: 'The question to ask. Required for type "widget".',
           properties: {
             prompt: { type: 'string', description: 'The question shown to the user.' },
+            helpText: {
+              type: 'string',
+              description: 'Optional supporting text shown below the question.',
+            },
             options: {
               type: 'array',
               minItems: 1,
@@ -97,6 +103,11 @@ export const sendMessageToolDefinition: ToolDefinition = {
                   value: {
                     type: 'string',
                     description: 'Optional stable id reported back on selection.',
+                  },
+                  description: {
+                    type: 'string',
+                    description:
+                      'Optional one-line consequence of picking this option, shown under the label.',
                   },
                   style: {
                     type: 'string',
@@ -277,6 +288,7 @@ export async function executeSendMessage(
     const options = args.widget.options.map((option, index) => ({
       id: option.value ?? `opt_${index + 1}`,
       label: option.label,
+      ...(option.description && { description: option.description }),
       ...(option.style && { style: option.style }),
     }))
     if (new Set(options.map((option) => option.id)).size !== options.length) {
@@ -289,6 +301,7 @@ export async function executeSendMessage(
       toolCallId: call.id,
       widget: {
         prompt: args.widget.prompt,
+        ...(args.widget.helpText && { helpText: args.widget.helpText }),
         interactionKind: 'question',
         options,
         allowCustom: args.widget.allowCustom ?? false,
@@ -299,6 +312,7 @@ export async function executeSendMessage(
       version: 1,
       interactionKind: 'question',
       prompt: args.widget.prompt,
+      ...(args.widget.helpText && { helpText: args.widget.helpText }),
       options,
       allowCustom: args.widget.allowCustom ?? false,
       dismissOnMoveOn: args.widget.dismissOnMoveOn ?? false,

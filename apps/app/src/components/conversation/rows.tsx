@@ -21,6 +21,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
+import { ActionCard } from './action-card'
 import { AgentMarkdown } from './agent-markdown'
 import { SendMessageCard } from './cards'
 import { ReactionPicker, ReactionPills } from './reactions'
@@ -32,6 +33,7 @@ import type {
   ThinkingEntry,
   TimelineEntry,
   ToolEntry,
+  WidgetResponse,
 } from './types'
 
 export function TypingDots() {
@@ -120,6 +122,10 @@ export type MessageRowHandlers = {
   onDelete: (id: string) => void
   onCancelSend: (id: string) => void
   findEntry: (id: string) => Entry | undefined
+  /** True when this entry's widget belongs to the currently suspended turn. */
+  isWidgetActive?: (entry: MessageEntry) => boolean
+  /** Sends the user's answer for the entry's widget. */
+  onWidgetRespond?: (id: string, response: WidgetResponse) => void
 }
 
 export function MessageRow({
@@ -254,6 +260,14 @@ export function MessageRow({
               )
             })}
           </div>
+        )}
+
+        {entry.widget && (
+          <ActionCard
+            widget={entry.widget}
+            interactive={!readOnly && (handlers.isWidgetActive?.(entry) ?? false)}
+            onRespond={(response) => handlers.onWidgetRespond?.(entry.id, response)}
+          />
         )}
 
         {entry.cards && entry.cards.length > 0 && (

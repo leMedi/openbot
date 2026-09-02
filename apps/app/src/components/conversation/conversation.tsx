@@ -12,7 +12,15 @@ import { FullConversationDialog } from './full-conversation'
 import { GroupAvatar, type MessageRowHandlers } from './rows'
 import { Transcript } from './transcript'
 import { streamTurn } from './turn-stream'
-import type { ActivityTab, Author, Draft, Entry, MessageEntry } from './types'
+import type {
+  ActivityTab,
+  Author,
+  Draft,
+  Entry,
+  MessageEntry,
+  WidgetResponse,
+  WidgetView,
+} from './types'
 
 let seq = 100
 const nextId = () => `local-${seq++}`
@@ -289,67 +297,57 @@ export function Conversation({
     await consumeTurnStream(accepted.turn.id)
   }
 
-  async function respondToServer(
-    draft: Draft,
-    optionId: string | null = null,
-    retryIdempotencyKey?: string,
-    dismissed = false,
-  ) {
+  /** Patch the inline widget state of one message entry. */
+  const patchWidget = useCallback((entryId: string, patch: Partial<WidgetView>) => {
+    setEntries((all) =>
+      mapMessages(all, (message) =>
+        message.id === entryId && message.widget
+          ? { ...message, widget: { ...message.widget, ...patch } }
+          : message,
+      ),
+    )
+  }, [])
+
+  /** The entry carrying the widget for the given originating tool call. */
+  function widgetEntryIdFor(toolCallId: string) {
+    for (const entry of entries) {
+      if (entry.type === 'message' && entry.widget?.toolCallId === toolCallId) {
+        return entry.id
+      }
+    }
+    return null
+  }
+
+  /**
+   * Resolve the suspended turn's widget from its inline card: patch the card
+   * optimistically, post the response, then stream the resumed turn. On
+   * failure the card returns to pending and a retry reuses the same key.
+   */
+  async function respondToWidget(entryId: string, response: WidgetResponse) {
     if (!waiting || !onRespondToTurn) return
     const interaction = waiting
-    const localId = nextId()
     const requestId = crypto.randomUUID()
-    const idempotencyKey =
-      retryIdempotencyKey ?? interaction.responseIdempotencyKey ?? crypto.randomUUID()
-    setEntries((all) => [
-      ...all.filter(
-        (entry) =>
-          entry.type !== 'message' ||
-          entry.waitingResponse?.turnId !== interaction.turnId ||
-          entry.delivery !== 'failed',
-      ),
-      {
-        type: 'message',
-        id: localId,
-        author: YOU,
-        time: nowTime(),
-        text: draft.prompt,
-        delivery: 'queued',
-        waitingResponse: {
-          turnId: interaction.turnId,
-          toolCallId: interaction.state.originatingToolCall.id,
-          optionId,
-          dismissed,
-          idempotencyKey,
-        },
-      },
-    ])
+    const idempotencyKey = interaction.responseIdempotencyKey ?? crypto.randomUUID()
+    patchWidget(entryId, {
+      status: response.dismissed ? 'dismissed' : 'resolved',
+      response,
+      dismissReason: response.dismissed ? 'manual' : undefined,
+    })
     setWaiting(null)
     try {
       const resumed = await onRespondToTurn({
         turnId: interaction.turnId,
-        text: draft.prompt,
-        optionId,
-        dismissed,
+        text: response.text,
+        optionId: response.optionId,
+        dismissed: response.dismissed,
         toolCallId: interaction.state.originatingToolCall.id,
         requestId,
         idempotencyKey,
       })
-      setEntries((all) =>
-        mapMessages(all, (message) =>
-          message.id === localId
-            ? { ...message, id: resumed.message.id, delivery: 'delivered' }
-            : message,
-        ),
-      )
       await consumeTurnStream(resumed.turn.id)
     } catch {
       setWaiting({ ...interaction, responseIdempotencyKey: idempotencyKey })
-      setEntries((all) =>
-        mapMessages(all, (message) =>
-          message.id === localId ? { ...message, delivery: 'failed' } : message,
-        ),
-      )
+      patchWidget(entryId, { status: 'pending', response: undefined, dismissReason: undefined })
     }
   }
 
@@ -431,9 +429,19 @@ export function Conversation({
   function send(draft: Draft, toThread?: string) {
     // Threads are not persisted yet; thread sends stay client-local.
     if (!toThread && waiting && onRespondToTurn) {
+      const widgetEntryId = widgetEntryIdFor(waiting.state.originatingToolCall.id)
       if (waiting.state.allowCustom) {
-        void respondToServer(draft)
+        if (widgetEntryId) {
+          void respondToWidget(widgetEntryId, {
+            optionId: null,
+            text: draft.prompt,
+            dismissed: false,
+          })
+        }
       } else if (waiting.state.dismissOnMoveOn) {
+        if (widgetEntryId) {
+          patchWidget(widgetEntryId, { status: 'dismissed', dismissReason: 'moveOn' })
+        }
         setWaiting(null)
         void sendToServer(draft)
       }
@@ -471,22 +479,6 @@ export function Conversation({
   // sendToServer, whose props may change between renders.
   function resend(entryId: string) {
     const entry = findEntry(entryId)
-    if (entry?.type === 'message' && entry.text && entry.waitingResponse) {
-      if (
-        waiting &&
-        entry.waitingResponse.turnId === waiting.turnId &&
-        entry.waitingResponse.toolCallId === waiting.state.originatingToolCall.id &&
-        onRespondToTurn
-      ) {
-        void respondToServer(
-          { prompt: entry.text, attachments: entry.attachments ?? [] },
-          entry.waitingResponse.optionId,
-          entry.waitingResponse.idempotencyKey,
-          entry.waitingResponse.dismissed ?? false,
-        )
-      }
-      return
-    }
     if (onSendMessage && entry?.type === 'message' && entry.text) {
       setEntries((all) => all.filter((e) => e.id !== entryId))
       void sendToServer({
@@ -513,6 +505,9 @@ export function Conversation({
     onDelete: removeEntry,
     onCancelSend: removeEntry,
     findEntry,
+    isWidgetActive: (entry) =>
+      !!waiting && entry.widget?.toolCallId === waiting.state.originatingToolCall.id,
+    onWidgetRespond: (entryId, response) => void respondToWidget(entryId, response),
   }
 
   const threadHandlers: MessageRowHandlers = {
@@ -659,78 +654,22 @@ export function Conversation({
             />
           )}
         </div>
-        {waiting && (
-          <div
-            className={cn(
-              'mx-4 mb-2 rounded-xl border p-3',
-              waiting.state.interactionKind === 'approval'
-                ? 'border-primary/40 bg-primary/5'
-                : 'border-warning/40 bg-warning/5',
-            )}
-          >
-            {waiting.state.interactionKind === 'approval' && (
-              <Badge variant="outline" className="mb-2 text-[9px] font-bold tracking-widest">
-                APPROVAL REQUIRED
-              </Badge>
-            )}
-            <div className="text-xs font-semibold">{waiting.state.prompt}</div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {waiting.state.options.map((option) => (
-                <Button
-                  key={option.id}
-                  variant={
-                    option.style === 'danger'
-                      ? 'destructive'
-                      : option.style === 'primary'
-                        ? 'default'
-                        : 'outline'
-                  }
-                  size="sm"
-                  onClick={() =>
-                    void respondToServer(
-                      { prompt: option.label, attachments: [] },
-                      option.id,
-                    )
-                  }
-                >
-                  {option.label}
-                </Button>
-              ))}
-              {waiting.state.interactionKind !== 'approval' && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() =>
-                    void respondToServer(
-                      { prompt: 'Question dismissed.', attachments: [] },
-                      null,
-                      undefined,
-                      true,
-                    )
-                  }
-                >
-                  Dismiss
-                </Button>
-              )}
-              {onCancelTurn && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => void cancelTurn(waiting.turnId)}
-                >
-                  Cancel
-                </Button>
-              )}
-            </div>
-          </div>
-        )}
         {readOnly ? (
           <div className="mx-4 mb-4 flex items-center justify-center rounded-xl border border-dashed px-3 py-3 text-xs text-muted-foreground/70">
             This conversation is read-only.
           </div>
         ) : waiting && !waiting.state.allowCustom && !waiting.state.dismissOnMoveOn ? (
-          <div className="mx-4 mb-4 text-center text-xs text-muted-foreground">
+          <div className="mx-4 mb-4 flex items-center justify-center gap-2 text-xs text-muted-foreground">
             Select an option above to continue.
+            {onCancelTurn && (
+              <button
+                type="button"
+                onClick={() => void cancelTurn(waiting.turnId)}
+                className="font-medium text-info hover:opacity-80"
+              >
+                Cancel the turn
+              </button>
+            )}
           </div>
         ) : (
           <Composer

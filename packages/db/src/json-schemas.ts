@@ -101,19 +101,28 @@ export const effectiveToolsSchema = z.object({
   tools: z.array(z.string().min(1)),
 })
 
+const widgetOptionSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  description: z.string().min(1).optional(),
+  style: z.enum(['primary', 'danger']).optional(),
+})
+
+/** Plugin identity carried by widgets that ask to enable a plugin. */
+const widgetPluginSchema = z.object({
+  key: z.string().min(1),
+  name: z.string().min(1),
+})
+
 export const waitingStateSchema = z.object({
   version: z.literal(1),
   interactionKind: z.enum(['question', 'approval']).default('question'),
   prompt: z.string().min(1),
-  options: z.array(
-    z.object({
-      id: z.string().min(1),
-      label: z.string().min(1),
-      style: z.enum(['primary', 'danger']).optional(),
-    }),
-  ),
+  helpText: z.string().min(1).optional(),
+  options: z.array(widgetOptionSchema),
   allowCustom: z.boolean().default(false),
   dismissOnMoveOn: z.boolean().default(false),
+  plugin: widgetPluginSchema.optional(),
   originatingToolCall: z.object({
     id: z.string().min(1),
     name: z.string().min(1),
@@ -142,16 +151,12 @@ export const sendMessagePayloadSchema = z.object({
   widget: z
     .object({
       prompt: z.string().min(1),
+      helpText: z.string().min(1).optional(),
       interactionKind: z.enum(['question', 'approval']).default('question'),
-      options: z.array(
-        z.object({
-          id: z.string().min(1),
-          label: z.string().min(1),
-          style: z.enum(['primary', 'danger']).optional(),
-        }),
-      ),
+      options: z.array(widgetOptionSchema),
       allowCustom: z.boolean().default(false),
       dismissOnMoveOn: z.boolean().default(false),
+      plugin: widgetPluginSchema.optional(),
     })
     .optional(),
   alt: z.string().optional(),

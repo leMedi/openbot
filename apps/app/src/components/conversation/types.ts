@@ -61,6 +61,37 @@ export type Card =
       status: 'running' | 'done' | 'error'
     }
 
+export type WidgetOption = {
+  id: string
+  label: string
+  /** One-line consequence of picking this option, under the label. */
+  description?: string
+  style?: 'primary' | 'danger'
+}
+
+/** What the user sent back for a widget (or that they dismissed it). */
+export type WidgetResponse = {
+  optionId: string | null
+  text: string
+  dismissed: boolean
+}
+
+/** Inline interaction attached to an agent message (SendMessage widget). */
+export type WidgetView = {
+  toolCallId: string
+  kind: 'question' | 'approval'
+  helpText?: string
+  options: WidgetOption[]
+  allowCustom: boolean
+  dismissOnMoveOn: boolean
+  /** Present when the widget asks to enable a plugin. */
+  plugin?: { key: string; name: string }
+  status: 'pending' | 'resolved' | 'dismissed'
+  response?: WidgetResponse
+  /** Distinguishes the "Expired — you moved on" label from a manual dismiss. */
+  dismissReason?: 'manual' | 'moveOn'
+}
+
 export type ToolCall = {
   name: string
   preview: string
@@ -97,6 +128,8 @@ export type MessageEntry = {
   channel?: string
   attachments?: Attachment[]
   cards?: Card[]
+  /** Inline interaction (question or plugin ask) rendered under the body. */
+  widget?: WidgetView
   reactions?: Reaction[]
   /** Entry id this message replies to; missing targets render "(deleted)". */
   replyTo?: string
@@ -104,13 +137,6 @@ export type MessageEntry = {
   delivery?: DeliveryState
   /** Stable across a retry of the same logical send. */
   idempotencyKey?: string
-  waitingResponse?: {
-    turnId: string
-    toolCallId: string
-    optionId: string | null
-    dismissed?: boolean
-    idempotencyKey: string
-  }
 }
 
 export type TimelineEntry = {

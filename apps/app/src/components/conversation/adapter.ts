@@ -12,6 +12,9 @@ import type {
   Author,
   Entry,
   ToolCall,
+  WidgetOption,
+  WidgetResponse,
+  WidgetView,
 } from './types'
 
 function timeLabel(epochMs: number) {
@@ -51,8 +54,62 @@ type SendMessagePayloadView = {
   toolCallId?: unknown
   event?: unknown
   senderAgentName?: unknown
-  widget?: { prompt?: unknown; options?: unknown; interactionKind?: unknown }
+  widget?: {
+    prompt?: unknown
+    helpText?: unknown
+    options?: unknown
+    interactionKind?: unknown
+    allowCustom?: unknown
+    dismissOnMoveOn?: unknown
+    plugin?: { key?: unknown; name?: unknown }
+  }
   alt?: unknown
+}
+
+function widgetOptionsFrom(raw: unknown): WidgetOption[] {
+  if (!Array.isArray(raw)) return []
+  const options: WidgetOption[] = []
+  for (const item of raw as {
+    id?: unknown
+    label?: unknown
+    description?: unknown
+    style?: unknown
+  }[]) {
+    if (typeof item.id !== 'string' || typeof item.label !== 'string') continue
+    options.push({
+      id: item.id,
+      label: item.label,
+      ...(typeof item.description === 'string' && { description: item.description }),
+      ...((item.style === 'primary' || item.style === 'danger') && { style: item.style }),
+    })
+  }
+  return options
+}
+
+function widgetViewFrom(
+  payload: SendMessagePayloadView,
+  response: WidgetResponse | undefined,
+): WidgetView | null {
+  const widget = payload.widget
+  if (!widget || typeof payload.toolCallId !== 'string') return null
+  const plugin =
+    widget.plugin &&
+    typeof widget.plugin.key === 'string' &&
+    typeof widget.plugin.name === 'string'
+      ? { key: widget.plugin.key, name: widget.plugin.name }
+      : undefined
+  return {
+    toolCallId: payload.toolCallId,
+    kind: widget.interactionKind === 'approval' ? 'approval' : 'question',
+    ...(typeof widget.helpText === 'string' && { helpText: widget.helpText }),
+    options: widgetOptionsFrom(widget.options),
+    allowCustom: widget.allowCustom === true,
+    dismissOnMoveOn: widget.dismissOnMoveOn === true,
+    ...(plugin && { plugin }),
+    status: response ? (response.dismissed ? 'dismissed' : 'resolved') : 'pending',
+    ...(response && { response }),
+    ...(response?.dismissed && { dismissReason: 'manual' as const }),
+  }
 }
 
 function formatBytes(byteSize: number) {
@@ -99,16 +156,19 @@ function reactionsFrom(row: ConversationMessage) {
 /**
  * One persisted row as a renderable entry, or null for rows the transcript
  * deliberately hides (the internal turn_waiting status duplicates the widget
- * card that precedes it). `author` is the already-resolved identity for
- * agent-authored rows.
+ * card, and turn_response rows surface as the widget's answer line instead).
+ * `author` is the already-resolved identity for agent-authored rows;
+ * `widgetResponse` is this row's answer when it is a widget delivery.
  */
 export function entryFromMessage(
   row: ConversationMessage,
   author: Author,
-  approvalStatus: 'pending' | 'approved' | 'denied' = 'pending',
+  widgetResponse?: WidgetResponse,
 ): Entry | null {
   const time = timeLabel(row.createdAt)
   if (row.kind === 'message' && row.role === 'user') {
+    const payload = (row.payloadJson ?? {}) as SendMessagePayloadView
+    if (payload.event === 'turn_response') return null
     return {
       type: 'message',
       id: row.id,
@@ -122,46 +182,17 @@ export function entryFromMessage(
   if (row.kind === 'message') {
     const payload = (row.payloadJson ?? {}) as SendMessagePayloadView
     if (payload.deliveryKind === 'send-message' && payload.type === 'widget') {
-      const title =
-        typeof payload.widget?.prompt === 'string'
-          ? payload.widget.prompt
-          : (row.bodyText ?? '')
-      if (payload.widget?.interactionKind === 'approval') {
-        return {
-          type: 'message',
-          id: row.id,
-          author,
-          time,
-          cards: [
-            {
-              kind: 'permission',
-              action: 'Plugin access request',
-              detail: title,
-              status: approvalStatus,
-              interactive: false,
-            },
-          ],
-          reactions: reactionsFrom(row),
-        }
-      }
-      const options = Array.isArray(payload.widget?.options) ? payload.widget.options : []
-      const labels = options
-        .map((option: { label?: unknown }) =>
-          typeof option.label === 'string' ? `- ${option.label}` : undefined,
-        )
-        .filter((line): line is string => !!line)
+      const widget = widgetViewFrom(payload, widgetResponse)
       return {
         type: 'message',
         id: row.id,
         author,
         time,
-        cards: [
-          {
-            kind: 'text',
-            title,
-            body: labels.join('\n'),
-          },
-        ],
+        markdown:
+          typeof payload.widget?.prompt === 'string'
+            ? payload.widget.prompt
+            : (row.bodyText ?? ''),
+        ...(widget && { widget }),
         reactions: reactionsFrom(row),
       }
     }
@@ -240,32 +271,41 @@ export function entriesFromMessages(
   /** Known agent identities by sender id (falls back to persisted provenance). */
   membersById?: Map<string, Author>,
 ): Entry[] {
-  const approvalResponses = new Map<string, 'approved' | 'denied'>()
-  for (const row of rows) {
-    const payload = row.payloadJson as {
-      event?: unknown
-      optionId?: unknown
-      toolCallId?: unknown
-    }
-    if (payload.event === 'turn_response' && typeof payload.toolCallId === 'string') {
-      approvalResponses.set(
-        payload.toolCallId,
-        payload.optionId === 'approve' ? 'approved' : 'denied',
-      )
-    }
-  }
+  const widgetResponses = widgetResponsesFromMessages(rows)
   const out: Entry[] = []
   for (const row of rows) {
     const payload = row.payloadJson as SendMessagePayloadView
     const entry = entryFromMessage(
       row,
       authorForMessage(row, agent, membersById),
-      (typeof payload.toolCallId === 'string' && approvalResponses.get(payload.toolCallId)) ||
-        'pending',
+      typeof payload.toolCallId === 'string'
+        ? widgetResponses.get(payload.toolCallId)
+        : undefined,
     )
     if (entry) out.push(entry)
   }
   return out
+}
+
+/** Widget answers by originating tool-call id, from persisted turn_response rows. */
+export function widgetResponsesFromMessages(rows: ConversationMessage[]) {
+  const responses = new Map<string, WidgetResponse>()
+  for (const row of rows) {
+    const payload = row.payloadJson as {
+      event?: unknown
+      optionId?: unknown
+      dismissed?: unknown
+      toolCallId?: unknown
+    }
+    if (payload.event === 'turn_response' && typeof payload.toolCallId === 'string') {
+      responses.set(payload.toolCallId, {
+        optionId: typeof payload.optionId === 'string' ? payload.optionId : null,
+        text: row.bodyText ?? '',
+        dismissed: payload.dismissed === true,
+      })
+    }
+  }
+  return responses
 }
 
 /** Root activity tab derived from the persisted transcript. */
