@@ -16,6 +16,7 @@ export type McpCatalogEntry = {
   key: string
   name: string
   description: string
+  searchTerms?: readonly string[]
   auth: readonly McpCatalogAuth[]
   url: string
   icon: {
@@ -30,6 +31,7 @@ export const MCP_CATALOG = [
     key: 'linear',
     name: 'Linear',
     description: 'Plan product work and keep engineering projects moving.',
+    searchTerms: ['tickets', 'issue tracker', 'project management'],
     auth: [
       { type: 'oauth' },
       { type: 'apiKey', header: 'Authorization', prefix: 'Bearer' },
@@ -42,6 +44,7 @@ export const MCP_CATALOG = [
     key: 'clickup',
     name: 'ClickUp',
     description: 'Work with tasks, docs, chat, and time tracking across your workspace.',
+    searchTerms: ['tickets', 'issues', 'issue tracker', 'project management'],
     auth: [{ type: 'oauth' }],
     url: 'https://mcp.clickup.com/mcp',
     icon: { path: siClickup.path, color: `#${siClickup.hex}` },

@@ -32,6 +32,7 @@ import {
   SettingsManager,
 } from '@earendil-works/pi-coding-agent'
 import {
+  applyApprovedPlugin,
   createMcpManagementTools,
   createMcpToolsForTurn,
   type McpToolRegistry,
@@ -171,9 +172,31 @@ async function executeTurn(turnId: string) {
     const waitingState = claimed.waitingStateJson
       ? waitingStateSchema.parse(claimed.waitingStateJson)
       : undefined
+    const resumeData = waitingState?.resumeData
+    const pluginApproval =
+      waitingState?.originatingToolCall.name === 'InstallPlugin' &&
+      waitingState.interactionKind === 'approval' &&
+      waitingState.response &&
+      resumeData &&
+      typeof resumeData === 'object' &&
+      !Array.isArray(resumeData) &&
+      typeof resumeData.pluginId === 'string' &&
+      typeof resumeData.valuesHash === 'string' &&
+      Array.isArray(resumeData.accountIds) &&
+      resumeData.accountIds.every((accountId) => typeof accountId === 'string')
+        ? {
+            pluginId: resumeData.pluginId,
+            valuesHash: resumeData.valuesHash,
+            accountIds: resumeData.accountIds,
+            approved: waitingState.response.optionId === 'approve',
+          }
+        : undefined
     const builtInToolDefinitions =
       claimed.lane !== 'background' ? agentToolDefinitions : backgroundToolDefinitions
     const hasMcpAccess = claimed.lane !== 'background' && claimed.source !== 'subagent'
+    if (hasMcpAccess && pluginApproval?.approved) {
+      await applyApprovedPlugin(agent.id, pluginApproval)
+    }
     const currentMcpRegistry = !hasMcpAccess
       ? {
           definitions: [],
@@ -224,7 +247,11 @@ async function executeTurn(turnId: string) {
       turnId,
       workspace,
       resumedText: waitingState?.response
-        ? waitingState.response.dismissed
+        ? pluginApproval?.approved
+          ? pluginApproval.accountIds.length > 0
+            ? `[The user approved ${pluginApproval.pluginId}. Access is enabled and its MCP tools are available now. Continue the user's original request using them.]`
+            : `[The user approved installing ${pluginApproval.pluginId}, but it has no connected account yet. Explain that they must connect an account in Plugins before you can continue the original request.]`
+          : waitingState.response.dismissed
           ? `[The user moved on without answering the pending question.]\n\n${waitingState.response.text}`
           : waitingState.response.text
         : undefined,
@@ -268,22 +295,6 @@ async function executeTurn(turnId: string) {
         return delivery
       },
     }
-    const resumeData = waitingState?.resumeData
-    const pluginApproval =
-      waitingState?.originatingToolCall.name === 'InstallPlugin' &&
-      waitingState.interactionKind === 'approval' &&
-      waitingState.response &&
-      resumeData &&
-      typeof resumeData === 'object' &&
-      !Array.isArray(resumeData) &&
-      typeof resumeData.pluginId === 'string' &&
-      typeof resumeData.valuesHash === 'string'
-        ? {
-            pluginId: resumeData.pluginId,
-            valuesHash: resumeData.valuesHash,
-            approved: waitingState.response.optionId === 'approve',
-          }
-        : undefined
     const managementTools = hasMcpAccess
       ? createMcpManagementTools(agent.id, {
           approval: pluginApproval,
@@ -364,20 +375,25 @@ async function executeTurn(turnId: string) {
     // custom tools above, and stops when a round makes no tool calls.
     // Ordinary SendMessage calls do not end the run. A decision widget is the
     // exception: its tool callback durably suspends the turn and aborts Pi.
-    try {
-      await created.session.prompt(prepared.promptText)
-    } catch (error) {
-      if (!suspendedState) throw error
+    const promptAllowingSuspension = async (text: string) => {
+      try {
+        await created.session.prompt(text)
+      } catch (error) {
+        if (!suspendedState) throw error
+      }
     }
-
-    if (suspendedState) {
+    const finishSuspension = () => {
+      if (!suspendedState) return false
       if (active.controller.signal.aborted) {
         emitTerminal({ type: 'error', message: 'Cancelled by user', status: 'cancelled' })
-        return
+      } else {
+        emitTerminal({ type: 'waiting', turnId, state: suspendedState })
       }
-      emitTerminal({ type: 'waiting', turnId, state: suspendedState })
-      return
+      return true
     }
+
+    await promptAllowingSuspension(prepared.promptText)
+    if (finishSuspension()) return
 
     throwOnModelError(created.session.state.messages)
     if (
@@ -389,9 +405,10 @@ async function executeTurn(turnId: string) {
         agent: { id: agent.id, name: agent.name },
         turnId,
       })
-      await created.session.prompt(
+      await promptAllowingSuspension(
         'You finished without sending the person a visible response. Use SendMessage now to deliver your response, then finish with a short assistant message.',
       )
+      if (finishSuspension()) return
       throwOnModelError(created.session.state.messages)
       if (active.delivered.length === 0) {
         throw new Error('Agent completed without delivering a message')
