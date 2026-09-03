@@ -2,6 +2,7 @@ export { db } from './client'
 export { dataDirectory } from './env'
 export * from './ids'
 export * from './json-schemas'
+export * from './settings'
 export * from './agents'
 export * from './avatars'
 export * from './groups'
@@ -14,6 +15,7 @@ export * from './files'
 export * from './memory'
 export * from './mcp'
 export {
+  setting,
   agents,
   groups,
   conversations,
@@ -26,6 +28,7 @@ export {
   agentMcpAccounts,
 } from './schema'
 export type {
+  Setting,
   Agent,
   NewAgent,
   Group,

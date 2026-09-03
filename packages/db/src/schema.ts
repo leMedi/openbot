@@ -26,6 +26,14 @@ const emptyAttachments = sql`'{"version":1,"items":[]}'`
 const emptyReactions = sql`'{"version":1,"items":[]}'`
 const emptyTools = sql`'{"version":1,"tools":[]}'`
 
+export const setting = sqliteTable('setting', {
+  id: integer('id').primaryKey().default(1),
+  defaultAgentModel: text('default_agent_model').notNull().default('hy3'),
+  orchestratorModel: text('orchestrator_model').notNull().default('gpt-5.6-luna'),
+}, (table) => [
+  check('setting_singleton_check', sql`${table.id} = 1`),
+])
+
 export const managedFiles = sqliteTable('managed_files', {
   id: text('id').primaryKey(),
   relativePath: text('relative_path').notNull().unique(),
@@ -361,6 +369,7 @@ export const agentMcpAccounts = sqliteTable('agent_mcp_accounts', {
 
 export type ManagedFile = typeof managedFiles.$inferSelect
 export type NewManagedFile = typeof managedFiles.$inferInsert
+export type Setting = typeof setting.$inferSelect
 export type Agent = typeof agents.$inferSelect
 export type NewAgent = typeof agents.$inferInsert
 export type Group = typeof groups.$inferSelect

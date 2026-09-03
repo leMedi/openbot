@@ -65,10 +65,13 @@ One database stores all MVP domain data for all agents and groups. Files such
 as avatars and attachments remain in an application-owned directory; the
 database stores their relative paths and serving metadata.
 
-The MVP schema has these tables:
+The MVP schema has these tables. The singleton `setting` row stores `hy3` as
+the default agent model and `gpt-5.6-luna` as the orchestrator model. Runtime
+consumption of the orchestrator setting lands with the decision layer.
 
 | Table | Responsibility |
 | --- | --- |
+| `setting` | Singleton installation-wide model configuration. |
 | `managed_files` | Metadata for application-owned files on disk. |
 | `agents` | Agent identity, appearance, stable defaults, and UI settings. |
 | `groups` | Group identity and versioned JSON membership. |
@@ -416,6 +419,7 @@ Remaining implementation slices are:
 ## Source Map
 
 - `packages/db/src/schema.ts`: canonical Drizzle table and constraint model.
+- `packages/db/src/settings.ts`: singleton installation-wide model configuration.
 - `packages/db/src/json-schemas.ts`: versioned durable JSON contracts.
 - `packages/db/src/ids.ts`: prefixed server ID generation.
 - `packages/db/src/client.ts`: database startup (pragmas, migrations, turn recovery).
