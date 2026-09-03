@@ -57,6 +57,11 @@ export const getConversationMessages = createServerFn({ method: 'GET' })
 export const sendConversationMessage = createServerFn({ method: 'POST' })
   .validator((input: unknown) => sendMessageInput.parse(input))
   .handler(async ({ data }) => {
+    // A new user message supersedes the current turn. Cancel it before
+    // accepting the replacement so the scheduler cannot start both turns.
+    const unsettled = await findUnsettledTurn(data.conversationId)
+    if (unsettled) await cancelTurnExecution(unsettled.id)
+
     const accepted = await acceptUserMessage({
       conversationId: data.conversationId,
       text: data.text,
