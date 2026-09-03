@@ -62,11 +62,19 @@ export type PreparedMcpOauthFlow = {
   issuerRequired?: boolean
 }
 
+export type McpOauthContinuation = {
+  turnId: string
+  toolCallId: string
+  agentId: string
+  pluginKey: string
+}
+
 type PendingMcpOauthFlow = PreparedMcpOauthFlow & {
   serverId: string
   serverUrl: string
   label: string
   redirectUrl: string
+  continuation?: McpOauthContinuation
   expiresAt: number
   timeout: NodeJS.Timeout
 }
@@ -305,7 +313,12 @@ export function createMcpOauthCoordinator(options: McpOauthCoordinatorOptions) {
   let preparing = 0
 
   return {
-    async begin(input: { serverId: string; label: string; redirectUrl: string }) {
+    async begin(input: {
+      serverId: string
+      label: string
+      redirectUrl: string
+      continuation?: McpOauthContinuation
+    }) {
       for (const [state, flow] of pending) {
         if (flow.expiresAt < now()) {
           clearTimeout(flow.timeout)
@@ -346,6 +359,7 @@ export function createMcpOauthCoordinator(options: McpOauthCoordinatorOptions) {
         serverUrl: server.configurationJson.url,
         label,
         redirectUrl: redirectUrl.toString(),
+        continuation: input.continuation,
         expiresAt: now() + OAUTH_FLOW_TTL_MS,
         timeout,
       })
@@ -376,7 +390,7 @@ export function createMcpOauthCoordinator(options: McpOauthCoordinatorOptions) {
         const tokens = await options.exchange(flow, input.code)
         const tokenEndpoint =
           flow.tokenEndpoint ?? new URL('/token', flow.authorizationServerUrl).toString()
-        return await createMcpOauthAccount({
+        const account = await createMcpOauthAccount({
           serverId: flow.serverId,
           label: flow.label,
           credentials: credentialsFromTokens(
@@ -392,6 +406,7 @@ export function createMcpOauthCoordinator(options: McpOauthCoordinatorOptions) {
             },
           ),
         })
+        return { account, continuation: flow.continuation }
       } catch {
         throw new Error('Could not complete MCP OAuth authorization')
       }

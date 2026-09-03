@@ -4,8 +4,11 @@ import {
   mcpOauthPublicUrl,
   rejectMcpOauthAuthorization,
 } from '@openbot/plugins'
+import { ensureDrainForTurn } from '@openbot/agent'
+import { grantAgentMcpAccount, respondToWaitingTurn } from '@openbot/db'
+import { randomUUID } from 'node:crypto'
 
-function resultRedirect(requestUrl: string, result: 'success' | 'error') {
+function resultRedirect(requestUrl: string, result: 'success' | 'error' | 'resumed') {
   const url = mcpOauthPublicUrl(requestUrl)
   url.searchParams.set('mcpOAuth', result)
   return Response.redirect(url)
@@ -24,11 +27,27 @@ export const Route = createFileRoute('/api/mcp/oauth/callback')({
             rejectMcpOauthAuthorization(state)
             return resultRedirect(request.url, 'error')
           }
-          await finishMcpOauthAuthorization({
+          const completed = await finishMcpOauthAuthorization({
             state,
             code,
             issuer: url.searchParams.get('iss') ?? undefined,
           })
+          if (completed.continuation) {
+            await grantAgentMcpAccount(
+              completed.continuation.agentId,
+              completed.account.id,
+            )
+            const resumed = await respondToWaitingTurn({
+              turnId: completed.continuation.turnId,
+              toolCallId: completed.continuation.toolCallId,
+              text: `Connected ${completed.continuation.pluginKey}`,
+              optionId: 'approve',
+              requestId: `req_${randomUUID()}`,
+              idempotencyKey: `idem_${randomUUID()}`,
+            })
+            ensureDrainForTurn(resumed.turn)
+            return resultRedirect(request.url, 'resumed')
+          }
           return resultRedirect(request.url, 'success')
         } catch {
           try {

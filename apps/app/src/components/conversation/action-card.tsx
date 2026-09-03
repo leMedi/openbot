@@ -219,7 +219,7 @@ function PluginConnectCard({
             }
             className="rounded-md bg-primary px-3.5 py-1.5 text-[11.5px] font-semibold text-white hover:opacity-90"
           >
-            Connect
+            {connect.label}
           </button>
         </span>
       ) : widget.status === 'pending' ? (

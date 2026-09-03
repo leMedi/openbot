@@ -313,7 +313,11 @@ export function createMcpManagementTools(
             : `install ${entry.name}; connecting and granting an account will still be required in Plugins`
           const prompt = `Allow OpenBot to ${action}?`
           const options = [
-            { id: 'approve', label: `Connect ${entry.name}`, style: 'primary' as const },
+            {
+              id: 'approve',
+              label: selected.length > 0 ? `Enable ${entry.name}` : `Install ${entry.name}`,
+              style: 'primary' as const,
+            },
             { id: 'deny', label: 'Not now' },
           ]
           const plugin = { key: entry.key, name: entry.name }

@@ -99,8 +99,9 @@ function OpenBot() {
 
   useEffect(() => {
     const url = new URL(window.location.href)
-    if (!url.searchParams.has('mcpOAuth')) return
-    setPluginsOpen(true)
+    const result = url.searchParams.get('mcpOAuth')
+    if (!result) return
+    if (result !== 'resumed') setPluginsOpen(true)
     url.searchParams.delete('mcpOAuth')
     window.history.replaceState(null, '', url)
   }, [])

@@ -17,6 +17,7 @@ import {
   listConversationMessages,
   listAgents,
   listPromptMemoryForAgent,
+  listRuntimeMcpAccountsForAgent,
   listQueuedTurns,
   deliverWidgetAndMarkTurnWaiting,
   enqueueBackgroundAgentTurn,
@@ -197,6 +198,11 @@ async function executeTurn(turnId: string) {
     if (hasMcpAccess && pluginApproval?.approved) {
       await applyApprovedPlugin(agent.id, pluginApproval)
     }
+    const approvedPluginHasAccount = pluginApproval?.approved
+      ? (await listRuntimeMcpAccountsForAgent(agent.id)).some(
+          (account) => account.serverKey === pluginApproval.pluginId,
+        )
+      : false
     const currentMcpRegistry = !hasMcpAccess
       ? {
           definitions: [],
@@ -248,7 +254,7 @@ async function executeTurn(turnId: string) {
       workspace,
       resumedText: waitingState?.response
         ? pluginApproval?.approved
-          ? pluginApproval.accountIds.length > 0
+          ? approvedPluginHasAccount
             ? `[The user approved ${pluginApproval.pluginId}. Access is enabled and its MCP tools are available now. Continue the user's original request using them.]`
             : `[The user approved installing ${pluginApproval.pluginId}, but it has no connected account yet. Explain that they must connect an account in Plugins before you can continue the original request.]`
           : waitingState.response.dismissed

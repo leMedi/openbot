@@ -338,6 +338,24 @@ export function Conversation({
   async function respondToWidget(entryId: string, response: WidgetResponse) {
     if (!waiting || !onRespondToTurn) return
     const interaction = waiting
+    const resumeData = interaction.state.resumeData
+    const requiresOauth =
+      interaction.state.interactionKind === 'approval' &&
+      response.optionId === 'approve' &&
+      interaction.state.plugin &&
+      resumeData &&
+      typeof resumeData === 'object' &&
+      !Array.isArray(resumeData) &&
+      Array.isArray(resumeData.accountIds) &&
+      resumeData.accountIds.length === 0
+    if (requiresOauth) {
+      const authorization = new URL('/api/mcp/oauth/start', window.location.origin)
+      authorization.searchParams.set('pluginKey', interaction.state.plugin!.key)
+      authorization.searchParams.set('turnId', interaction.turnId)
+      authorization.searchParams.set('toolCallId', interaction.state.originatingToolCall.id)
+      window.location.assign(authorization)
+      return
+    }
     const requestId = crypto.randomUUID()
     const idempotencyKey = interaction.responseIdempotencyKey ?? crypto.randomUUID()
     patchWidget(entryId, {

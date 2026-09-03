@@ -58,6 +58,9 @@ describe('MCP management tools', () => {
       valuesHash: expect.any(String),
       accountIds: expect.any(Array),
     }))
+    expect(waiting?.options.find((option) => option.id === 'approve')?.label).toBe(
+      'Install Linear',
+    )
   })
 
   it('installs and atomically grants an existing account after approval', async () => {
@@ -120,6 +123,9 @@ describe('MCP management tools', () => {
     await initial.execute(call('InstallPlugin', args))
 
     expect(waiting?.prompt).toContain('"Only account" account')
+    expect(waiting?.options.find((option) => option.id === 'approve')?.label).toBe(
+      'Enable ClickUp',
+    )
     const resumeData = waiting!.resumeData as ApprovalData
     await applyApprovedPlugin(agent.id, { ...resumeData, approved: true })
     expect(await listAgentMcpAccounts(agent.id)).toEqual([
