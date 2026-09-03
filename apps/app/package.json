@@ -46,6 +46,7 @@
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
+    "srvx": "0.11.22",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "4.3.3",
     "zod": "4.4.3"

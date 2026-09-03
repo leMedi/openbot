@@ -1,0 +1,87 @@
+name: Build Debian artifact
+
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm build
+
+      - name: Assemble artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/openbot"
+          pnpm --filter @openbot/app deploy --prod --legacy "$out"
+          cp -a apps/app/dist "$out/dist"
+          mkdir -p "$out/packages/db" "$out/runtime/bin"
+          cp -a packages/db/drizzle "$out/packages/db/drizzle"
+          cp pnpm-workspace.yaml "$out/pnpm-workspace.yaml"
+          cp scripts/run-debian.sh "$out/run"
+          cp scripts/install-debian.sh "$out/install-debian.sh"
+          cp "$(command -v node)" "$out/runtime/bin/node"
+          # libsql selects its native binding with a dynamic require, so Vite
+          # cannot express this runtime dependency in the generated bundle.
+          mkdir -p "$out/node_modules/@libsql"
+          native_binding=$(find node_modules/.pnpm \
+            -path '*/node_modules/@libsql/linux-x64-gnu' -type d -print -quit)
+          test -n "$native_binding"
+          cp -aL "$native_binding" "$out/node_modules/@libsql/linux-x64-gnu"
+          printf '%s\n' "$GITHUB_SHA" > "$out/VERSION"
+          chmod 0755 "$out/run" "$out/install-debian.sh" "$out/runtime/bin/node"
+
+          mkdir -p artifact
+          tar -C "$RUNNER_TEMP" -czf artifact/openbot-debian-x64.tar.gz openbot
+          (cd artifact && sha256sum openbot-debian-x64.tar.gz > openbot-debian-x64.tar.gz.sha256)
+
+      - name: Smoke test artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/openbot"
+          export OPENBOT_DATA_DIR="$RUNNER_TEMP/openbot-data"
+          export OPENBOT_PUBLIC_URL=http://127.0.0.1:3000
+          export HOST=127.0.0.1
+          export PORT=3000
+          "$app/run" >"$RUNNER_TEMP/openbot.log" 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3000/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/openbot.log"
+          exit 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openbot-debian-x64
+          path: artifact/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30

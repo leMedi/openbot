@@ -110,6 +110,9 @@ importers:
       remark-math:
         specifier: ^6.0.0
         version: 6.0.0
+      srvx:
+        specifier: 0.11.22
+        version: 0.11.22
       tailwind-merge:
         specifier: ^3.6.0
         version: 3.6.0
