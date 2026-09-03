@@ -117,6 +117,7 @@ export function Conversation({
     responseIdempotencyKey?: string
   } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const stickToBottom = useRef(true)
   const cancellingTurns = useRef(new Set<string>())
   const reactionQueues = useRef(new Map<string, Promise<void>>())
 
@@ -125,8 +126,19 @@ export function Conversation({
 
   useEffect(() => {
     const el = scrollRef.current
+    if (el && stickToBottom.current) el.scrollTop = el.scrollHeight
+  }, [entries])
+
+  useEffect(() => {
+    stickToBottom.current = true
+    const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [entries, threadRootId])
+  }, [threadRootId])
+
+  const handleScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    const el = event.currentTarget
+    stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 32
+  }, [])
 
   useEffect(() => {
     if (!onRefreshEntries) return
@@ -632,7 +644,11 @@ export function Conversation({
 
       {/* Transcript — the thread view replaces the conversation in place */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 pt-4 pb-8">
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className="min-h-0 flex-1 overflow-y-auto px-3 pt-4 pb-8"
+        >
           {inThreadView ? (
             <Transcript
               entries={threadEntries}

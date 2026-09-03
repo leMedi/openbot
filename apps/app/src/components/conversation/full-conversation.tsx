@@ -109,6 +109,7 @@ export function FullConversationDialog({
     null,
   )
   const scrollRef = useRef<HTMLDivElement>(null)
+  const stickToBottom = useRef(true)
 
   useHotkeys('escape', onClose, { enableOnFormTags: true, enableOnContentEditable: true })
 
@@ -142,8 +143,19 @@ export function FullConversationDialog({
 
   useEffect(() => {
     const el = scrollRef.current
+    if (el && stickToBottom.current) el.scrollTop = el.scrollHeight
+  }, [active?.items.length])
+
+  useEffect(() => {
+    stickToBottom.current = true
+    const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [active?.items.length, activeId])
+  }, [activeId])
+
+  function onScroll(event: React.UIEvent<HTMLDivElement>) {
+    const el = event.currentTarget
+    stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 32
+  }
 
   function onDragStart(e: React.PointerEvent) {
     drag.current = { startX: e.clientX, startY: e.clientY, baseX: pos.x, baseY: pos.y }
@@ -205,7 +217,7 @@ export function FullConversationDialog({
         ))}
       </div>
 
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-2">
+      <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto p-2">
         {!active || active.items.length === 0 ? (
           <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
             No conversation activity yet.
