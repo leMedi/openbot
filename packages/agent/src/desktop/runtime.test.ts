@@ -55,7 +55,10 @@ function runtimeOptions(
   driver: {
     getDisplay: () => Promise<typeof display>
     captureScreenshot: () => Promise<ReturnType<typeof image>>
-    execute: (actions: readonly unknown[]) => Promise<{ screenshot?: ReturnType<typeof image> }>
+    execute: (
+      actions: readonly unknown[],
+      signal?: AbortSignal,
+    ) => Promise<{ screenshot?: ReturnType<typeof image> }>
   },
   approvalMode = 'off',
 ) {
@@ -100,6 +103,7 @@ test('validates bounded sequences and dynamic desktop coordinates', () => {
 test('executes a normalized sequence and persists its automatic final screenshot', async () => {
   const context = await turnContext()
   let executed: readonly unknown[] = []
+  let executionCount = 0
   const finalImage = image('final state')
   const driver = {
     async getDisplay() {
@@ -109,6 +113,7 @@ test('executes a normalized sequence and persists its automatic final screenshot
       return image('initial state')
     },
     async execute(actions: readonly unknown[]) {
+      executionCount += 1
       executed = actions
       return { screenshot: finalImage }
     },
@@ -130,6 +135,9 @@ test('executes a normalized sequence and persists its automatic final screenshot
     ['click', 'type', 'screenshot'],
   )
   assert.ok(result.screenshot?.fileId)
+  const replayed = await runtime.computer('call-1', args)
+  assert.equal(executionCount, 1)
+  assert.equal(replayed.screenshot?.fileId, result.screenshot?.fileId)
   const rows = await listConversationMessages(context.conversation.id)
   const row = rows.find((candidate) => candidate.payloadJson.event === 'computer-use')
   assert.equal(row?.kind, 'tool_result')
@@ -286,4 +294,62 @@ test('keeps Screenshot read-only and persists discovered dimensions and state', 
   assert.equal(result.display?.width, 100)
   assert.ok(result.screenshot?.stateId)
   assert.equal(executions, 0)
+})
+
+test('normalizes cancellation and timeout and releases their leases', async () => {
+  async function runInterrupted(kind: 'cancelled' | 'timeout') {
+    const context = await turnContext()
+    const controller = new AbortController()
+    let entered!: () => void
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const driver = {
+      async getDisplay() {
+        return display
+      },
+      async captureScreenshot() {
+        return image(`${kind} state`)
+      },
+      async execute(_actions: readonly unknown[], signal?: AbortSignal) {
+        entered()
+        return new Promise<never>((_resolve, reject) => {
+          signal?.addEventListener(
+            'abort',
+            () => reject(new DesktopDriverError('cancelled', 'interrupted')),
+            { once: true },
+          )
+        })
+      },
+    }
+    const runtime = new DesktopToolRuntime({
+      ...runtimeOptions(context, driver),
+      signal: controller.signal,
+      timeoutMs: kind === 'timeout' ? 20 : 10_000,
+    })
+    const args = schema.computerArgsSchema.parse({ action: 'key', key: 'TAB' })
+    const pending = runtime.computer(`${kind}-call`, args)
+    await started
+    if (kind === 'cancelled') controller.abort()
+    assert.equal((await pending).status, kind)
+  }
+
+  await runInterrupted('cancelled')
+  await runInterrupted('timeout')
+
+  const context = await turnContext()
+  const driver = {
+    async getDisplay() {
+      return display
+    },
+    async captureScreenshot() {
+      return image('after interruption')
+    },
+    async execute() {
+      return { screenshot: image('released') }
+    },
+  }
+  const runtime = new DesktopToolRuntime(runtimeOptions(context, driver))
+  const args = schema.computerArgsSchema.parse({ action: 'key', key: 'TAB' })
+  assert.equal((await runtime.computer('after-interruption-call', args)).status, 'success')
 })

@@ -219,6 +219,7 @@ export const REVIEWED_ACTIONS = new Set<DesktopAction['action']>([
 
 export const SCREEN_CHANGING_ACTIONS = new Set<DesktopAction['action']>([
   'click',
+  'move',
   'drag',
   'type',
   'key',

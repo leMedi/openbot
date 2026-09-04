@@ -162,6 +162,69 @@ export const sendMessagePayloadSchema = z.object({
   alt: z.string().optional(),
 })
 
+const computerDisplaySchema = z.object({
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  sessionId: z.string().min(1),
+})
+
+const computerCursorSchema = z.object({
+  x: z.number().int().nonnegative(),
+  y: z.number().int().nonnegative(),
+})
+
+const computerScreenshotSchema = z.object({
+  fileId: z.string().min(1),
+  url: z.string().min(1),
+  mediaType: z.enum(['image/png', 'image/jpeg', 'image/webp']),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  stateId: z.string().min(1),
+  cursor: computerCursorSchema.optional(),
+})
+
+export const computerOutcomeSchema = z.enum([
+  'success',
+  'invalid_input',
+  'approval_required',
+  'review_blocked',
+  'stale_desktop',
+  'desktop_unavailable',
+  'desktop_busy',
+  'timeout',
+  'cancelled',
+  'driver_failure',
+])
+
+/** Durable, client-safe result/audit projections for server-side Computer Use. */
+export const computerUsePayloadSchema = z.discriminatedUnion('event', [
+  z.object({
+    version: z.literal(1),
+    event: z.literal('computer-use'),
+    toolCallId: z.string().min(1),
+    name: z.enum(['Screenshot', 'Computer']),
+    preview: z.string(),
+    status: z.enum(['success', 'failed']),
+    outcome: computerOutcomeSchema,
+    detail: z.string(),
+    display: computerDisplaySchema.optional(),
+    cursor: computerCursorSchema.optional(),
+    fingerprint: z.string().min(1).optional(),
+    stateId: z.string().min(1).optional(),
+    screenshot: computerScreenshotSchema.optional(),
+  }),
+  z.object({
+    version: z.literal(1),
+    event: z.literal('computer-use-audit'),
+    toolCallId: z.string().min(1),
+    fingerprint: z.string().min(1),
+    stage: z.enum(['review_decision', 'execution_started']),
+    decision: z.enum(['allowed', 'blocked', 'approval_required', 'approved']).optional(),
+    actions: z.array(z.string().min(1)).min(1).max(10),
+    summary: z.string().min(1),
+  }),
+])
+
 export const directAgentMessagePayloadSchema = z.object({
   version: z.literal(1),
   event: z.literal('direct-agent-message'),

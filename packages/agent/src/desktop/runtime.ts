@@ -1,12 +1,14 @@
 import { createHash } from 'node:crypto'
 import {
   appendConversationMessage,
+  computerUsePayloadSchema,
   createManagedFile,
   type ConversationMessage,
+  listConversationMessages,
   type SendMessagePayload,
   type WaitingState,
 } from '@openbot/db'
-import type { ZodError } from 'zod'
+import * as z from 'zod'
 import {
   actionSummary,
   type ComputerArgs,
@@ -240,6 +242,79 @@ export class DesktopToolRuntime {
     this.timeoutMs = options.timeoutMs ?? computerTimeoutMs()
   }
 
+  private async priorResult(toolCallId: string): Promise<ComputerResult | undefined> {
+    const rows = await listConversationMessages(this.options.conversationId)
+    const row = rows.find(
+      (candidate) =>
+        candidate.turnId === this.options.turnId &&
+        candidate.payloadJson.event === 'computer-use' &&
+        candidate.payloadJson.toolCallId === toolCallId,
+    )
+    if (!row) return undefined
+    const parsed = computerUsePayloadSchema.safeParse(row.payloadJson)
+    if (!parsed.success || parsed.data.event !== 'computer-use') return undefined
+    return {
+      ok: parsed.data.status === 'success',
+      status: parsed.data.outcome,
+      summary: parsed.data.detail,
+      ...(parsed.data.display && { display: parsed.data.display }),
+      ...(parsed.data.screenshot && { screenshot: parsed.data.screenshot }),
+      ...(parsed.data.cursor && { cursor: parsed.data.cursor }),
+      ...(parsed.data.fingerprint && { fingerprint: parsed.data.fingerprint }),
+      ...(parsed.data.stateId && { stateId: parsed.data.stateId }),
+    }
+  }
+
+  private async hasUnsettledExecution(toolCallId: string) {
+    const rows = await listConversationMessages(this.options.conversationId)
+    return rows.some(
+      (candidate) =>
+        candidate.turnId === this.options.turnId &&
+        candidate.payloadJson.event === 'computer-use-audit' &&
+        candidate.payloadJson.toolCallId === toolCallId &&
+        candidate.payloadJson.stage === 'execution_started',
+    )
+  }
+
+  private async audit(
+    toolCallId: string,
+    fingerprint: string,
+    stage: 'review_decision' | 'execution_started',
+    actions: readonly DesktopAction[],
+    summary: string,
+    decision?: 'allowed' | 'blocked' | 'approval_required' | 'approved',
+  ) {
+    const payload = computerUsePayloadSchema.parse({
+      version: 1,
+      event: 'computer-use-audit',
+      toolCallId,
+      fingerprint,
+      stage,
+      ...(decision && { decision }),
+      actions: actions.map((action) => action.action),
+      summary,
+    })
+    await appendConversationMessage({
+      conversationId: this.options.conversationId,
+      turnId: this.options.turnId,
+      senderAgentId: this.options.senderAgentId,
+      kind: 'status',
+      direction: 'internal',
+      bodyText: summary,
+      payload,
+    })
+    console.info('[computer audit]', {
+      agentId: this.options.agentId,
+      conversationId: this.options.conversationId,
+      turnId: this.options.turnId,
+      toolCallId,
+      fingerprint,
+      stage,
+      decision,
+      actions: actions.map((action) => action.action),
+    })
+  }
+
   private async persist(
     toolCallId: string,
     toolName: 'Screenshot' | 'Computer',
@@ -287,6 +362,21 @@ export class DesktopToolRuntime {
     const finalResult = persistedScreenshot
       ? { ...result, screenshot: persistedScreenshot }
       : result
+    const payload = computerUsePayloadSchema.parse({
+      version: 1,
+      event: 'computer-use',
+      toolCallId,
+      name: toolName,
+      preview: finalResult.summary,
+      status: finalResult.ok ? 'success' : 'failed',
+      outcome: finalResult.status,
+      detail: finalResult.summary,
+      ...(finalResult.display && { display: finalResult.display }),
+      ...(finalResult.cursor && { cursor: finalResult.cursor }),
+      ...(finalResult.fingerprint && { fingerprint: finalResult.fingerprint }),
+      ...(finalResult.stateId && { stateId: finalResult.stateId }),
+      ...(persistedScreenshot && { screenshot: persistedScreenshot }),
+    })
     const message = await appendConversationMessage({
       conversationId: this.options.conversationId,
       turnId: this.options.turnId,
@@ -295,21 +385,7 @@ export class DesktopToolRuntime {
       role: 'tool',
       direction: 'outbound',
       bodyText: safeSummary(finalResult.status, finalResult.summary),
-      payload: {
-        version: 1,
-        event: 'computer-use',
-        toolCallId,
-        name: toolName,
-        preview: finalResult.summary,
-        status: finalResult.ok ? 'success' : 'failed',
-        outcome: finalResult.status,
-        detail: finalResult.summary,
-        ...(finalResult.display && { display: finalResult.display }),
-        ...(finalResult.cursor && { cursor: finalResult.cursor }),
-        ...(finalResult.fingerprint && { fingerprint: finalResult.fingerprint }),
-        ...(finalResult.stateId && { stateId: finalResult.stateId }),
-        ...(persistedScreenshot && { screenshot: persistedScreenshot }),
-      },
+      payload,
       ...(attachment && {
         attachments: {
           version: 1,
@@ -340,21 +416,39 @@ export class DesktopToolRuntime {
     return finalResult
   }
 
-  async persistInvalid(toolCallId: string, toolName: 'Screenshot' | 'Computer', error: ZodError) {
+  async persistInvalid(
+    toolCallId: string,
+    toolName: 'Screenshot' | 'Computer',
+    error: z.ZodError,
+  ) {
     return this.persist(toolCallId, toolName, {
       ok: false,
       status: 'invalid_input',
-      summary: error.issues.map((issue) => issue.message).join('; '),
+      summary: z.prettifyError(error),
     })
   }
 
   async screenshot(toolCallId: string): Promise<ComputerResult> {
+    const prior = await this.priorResult(toolCallId)
+    if (prior) return prior
     const operation = combinedSignal(this.options.signal, this.timeoutMs)
     try {
-      const [display, screenshot] = await Promise.all([
-        this.options.driver.getDisplay(operation.signal),
-        this.options.driver.captureScreenshot(operation.signal),
-      ])
+      const display = await this.options.driver.getDisplay(operation.signal)
+      const owner = `${this.options.turnId}:${toolCallId}:screenshot`
+      if (!tryAcquireDesktop(display.sessionId, owner)) {
+        return await this.persist(toolCallId, 'Screenshot', {
+          ok: false,
+          status: 'desktop_busy',
+          summary: 'The Remote Desktop is changing under another Computer sequence',
+          display,
+        })
+      }
+      let screenshot: DesktopScreenshot
+      try {
+        screenshot = await this.options.driver.captureScreenshot(operation.signal)
+      } finally {
+        releaseDesktop(display.sessionId, owner)
+      }
       if (screenshot.width !== display.width || screenshot.height !== display.height) {
         return await this.persist(toolCallId, 'Screenshot', {
           ok: false,
@@ -389,6 +483,8 @@ export class DesktopToolRuntime {
   }
 
   async computer(toolCallId: string, args: ComputerArgs): Promise<ComputerResult> {
+    const prior = await this.priorResult(toolCallId)
+    if (prior) return prior
     const operation = combinedSignal(this.options.signal, this.timeoutMs)
     let display: DesktopDisplay | undefined
     let owner: string | undefined
@@ -418,7 +514,21 @@ export class DesktopToolRuntime {
         })
       }
 
-      const before = await this.options.driver.captureScreenshot(operation.signal)
+      const observationOwner = `${this.options.turnId}:${toolCallId}:review`
+      if (!tryAcquireDesktop(display.sessionId, observationOwner)) {
+        return await this.persist(toolCallId, 'Computer', {
+          ok: false,
+          status: 'desktop_busy',
+          summary: 'Another agent is currently controlling the Remote Desktop',
+          display,
+        })
+      }
+      let before: DesktopScreenshot
+      try {
+        before = await this.options.driver.captureScreenshot(operation.signal)
+      } finally {
+        releaseDesktop(display.sessionId, observationOwner)
+      }
       if (before.width !== display.width || before.height !== display.height) {
         return await this.persist(toolCallId, 'Computer', {
           ok: false,
@@ -450,6 +560,14 @@ export class DesktopToolRuntime {
         this.options.approved?.fingerprint === fingerprint &&
         this.options.approved.stateId === stateId
       if (this.options.approved && !hasApproval) {
+        await this.audit(
+          toolCallId,
+          fingerprint,
+          'review_decision',
+          normalized.actions,
+          'Rejected stale one-shot approval',
+          'blocked',
+        )
         return await this.persist(toolCallId, 'Computer', {
           ok: false,
           status: 'stale_desktop',
@@ -460,6 +578,14 @@ export class DesktopToolRuntime {
         })
       }
       if (review.decision === 'block') {
+        await this.audit(
+          toolCallId,
+          fingerprint,
+          'review_decision',
+          normalized.actions,
+          review.reason,
+          'blocked',
+        )
         return await this.persist(toolCallId, 'Computer', {
           ok: false,
           status: 'review_blocked',
@@ -490,6 +616,14 @@ export class DesktopToolRuntime {
           },
           response: null,
         }
+        await this.audit(
+          toolCallId,
+          fingerprint,
+          'review_decision',
+          normalized.actions,
+          review.reason,
+          'approval_required',
+        )
         await this.options.suspend(state, {
           bodyText: state.prompt,
           payload: {
@@ -516,6 +650,15 @@ export class DesktopToolRuntime {
         }
       }
 
+      await this.audit(
+        toolCallId,
+        fingerprint,
+        'review_decision',
+        normalized.actions,
+        review.reason ?? 'Allowed by Computer Use policy',
+        hasApproval ? 'approved' : 'allowed',
+      )
+
       const actions = [...normalized.actions]
       const needsFinalScreenshot =
         actions.some((action) => SCREEN_CHANGING_ACTIONS.has(action.action)) &&
@@ -528,6 +671,17 @@ export class DesktopToolRuntime {
           ok: false,
           status: 'desktop_busy',
           summary: 'Another agent is currently controlling the Remote Desktop',
+          display,
+          fingerprint,
+        })
+      }
+
+      if (await this.hasUnsettledExecution(toolCallId)) {
+        return await this.persist(toolCallId, 'Computer', {
+          ok: false,
+          status: 'driver_failure',
+          summary:
+            'A previous execution of this exact tool call has an unknown outcome; it was not repeated',
           display,
           fingerprint,
         })
@@ -546,6 +700,15 @@ export class DesktopToolRuntime {
           fingerprint,
         })
       }
+
+
+      await this.audit(
+        toolCallId,
+        fingerprint,
+        'execution_started',
+        normalized.actions,
+        `Executing ${actionSummary(normalized.actions)}`,
+      )
 
       const executed = await this.options.driver.execute(actions, operation.signal)
       let finalScreenshot = executed.screenshot

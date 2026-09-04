@@ -277,6 +277,9 @@ export function entryFromMessage(
   if (row.kind === 'status' && row.payloadJson.event === 'turn_waiting') {
     return null
   }
+  if (row.kind === 'status' && row.payloadJson.event === 'computer-use-audit') {
+    return null
+  }
   // status / system / other display events
   return {
     type: 'timeline',
@@ -362,23 +365,25 @@ export function activityFromMessages(
   rows: ConversationMessage[],
   agent: Author,
 ): ActivityTab[] {
-  const items: ActivityItem[] = rows.map((row): ActivityItem => {
-    if (row.kind === 'tool_call' || row.kind === 'tool_result') {
-      const call = toolCallFrom(row)
-      return {
-        kind: 'tool',
-        text: call.preview,
-        toolName: call.name,
-        toolStatus: call.status,
+  const items: ActivityItem[] = rows
+    .filter((row) => row.payloadJson.event !== 'computer-use-audit')
+    .map((row): ActivityItem => {
+      if (row.kind === 'tool_call' || row.kind === 'tool_result') {
+        const call = toolCallFrom(row)
+        return {
+          kind: 'tool',
+          text: call.preview,
+          toolName: call.name,
+          toolStatus: call.status,
+        }
       }
-    }
-    if (row.kind === 'message' && row.role === 'user') {
-      return { kind: 'you', text: row.bodyText ?? '' }
-    }
-    if (row.kind === 'message') {
-      return { kind: 'agent', text: row.bodyText ?? '' }
-    }
-    return { kind: 'message', text: row.bodyText ?? '' }
-  })
+      if (row.kind === 'message' && row.role === 'user') {
+        return { kind: 'you', text: row.bodyText ?? '' }
+      }
+      if (row.kind === 'message') {
+        return { kind: 'agent', text: row.bodyText ?? '' }
+      }
+      return { kind: 'message', text: row.bodyText ?? '' }
+    })
   return [{ id: 'root', title: agent.name, items }]
 }
