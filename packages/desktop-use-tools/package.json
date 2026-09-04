@@ -1,0 +1,20 @@
+{
+  "name": "@openbot/desktop-use-tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "start-window": "dist/start-window.cjs"
+  },
+  "scripts": {
+    "build": "esbuild src/agent-window-management/start-window.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/start-window.cjs && chmod +x dist/start-window.cjs",
+    "test": "node --import tsx --test src/**/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "26.4.0",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.12",
+    "typescript": "7.0.2"
+  }
+}
