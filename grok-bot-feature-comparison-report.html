@@ -1,0 +1,582 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenBot × Grok Bot 0.18 — Feature Comparison</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #09111f;
+      --bg-raised: #101c2e;
+      --bg-raised-2: #15243a;
+      --line: #263957;
+      --text: #e7edf7;
+      --muted: #9cafc9;
+      --faint: #71829c;
+      --cyan: #55d6d2;
+      --blue: #72a7ff;
+      --purple: #bc9cff;
+      --green: #7ee2a8;
+      --yellow: #f4c96b;
+      --red: #ff8c9b;
+      --shadow: 0 18px 55px rgba(0, 0, 0, .22);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 8% 0%, rgba(64, 137, 191, .16), transparent 28rem),
+        radial-gradient(circle at 92% 12%, rgba(144, 91, 211, .12), transparent 30rem),
+        var(--bg);
+      color: var(--text);
+      font: 14px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    a { color: var(--cyan); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, .mono { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    .shell { max-width: 1540px; margin: 0 auto; padding: 34px 24px 80px; }
+    .hero { display: flex; justify-content: space-between; gap: 24px; align-items: flex-end; margin-bottom: 26px; }
+    .eyebrow { color: var(--cyan); text-transform: uppercase; letter-spacing: .14em; font-size: 11px; font-weight: 800; }
+    h1, h2, h3 { line-height: 1.15; margin: 0; letter-spacing: -.025em; }
+    h1 { font-size: clamp(31px, 5vw, 56px); max-width: 900px; margin-top: 8px; }
+    h2 { font-size: 23px; margin-bottom: 13px; }
+    h3 { font-size: 16px; }
+    .lede { max-width: 830px; color: var(--muted); font-size: 16px; margin: 13px 0 0; }
+    .stamp { color: var(--faint); text-align: right; white-space: nowrap; }
+    .panel {
+      background: linear-gradient(145deg, rgba(18, 32, 52, .95), rgba(12, 23, 39, .92));
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      box-shadow: var(--shadow);
+      padding: 22px;
+      margin: 18px 0;
+    }
+    .panel > .section-note { color: var(--muted); margin: -4px 0 18px; }
+    .metrics { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 11px; }
+    .metric { background: rgba(21, 36, 58, .8); border: 1px solid var(--line); border-radius: 12px; padding: 15px; min-height: 96px; }
+    .metric .number { display: block; font-size: 29px; font-weight: 800; letter-spacing: -.04em; }
+    .metric .label { color: var(--muted); font-size: 12px; }
+    .metric.implemented .number { color: var(--green); }
+    .metric.partial .number { color: var(--yellow); }
+    .metric.missing .number { color: var(--red); }
+    .metric.different .number { color: var(--purple); }
+    .metric.total .number { color: var(--cyan); }
+    .metric.filtered .number { color: var(--blue); }
+    .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; }
+    .callout { border-left: 3px solid var(--cyan); background: rgba(85, 214, 210, .065); padding: 13px 15px; border-radius: 0 10px 10px 0; }
+    .callout strong { color: var(--text); }
+    .callout p { color: var(--muted); margin: 5px 0 0; }
+    .takeaway { border: 1px solid var(--line); border-radius: 12px; padding: 16px; background: rgba(9, 17, 31, .35); }
+    .takeaway p { color: var(--muted); margin: 8px 0 0; }
+    .takeaway.openbot { border-top: 3px solid var(--cyan); }
+    .takeaway.grok { border-top: 3px solid var(--purple); }
+    .architecture { display: grid; grid-template-columns: 1fr 90px 1fr; gap: 14px; align-items: stretch; }
+    .arch-box { border-radius: 13px; padding: 18px; border: 1px solid var(--line); background: rgba(9, 17, 31, .45); }
+    .arch-box.openbot { border-color: rgba(85, 214, 210, .46); }
+    .arch-box.grok { border-color: rgba(188, 156, 255, .46); }
+    .arch-box h3 { margin-bottom: 12px; }
+    .arch-box.openbot h3 { color: var(--cyan); }
+    .arch-box.grok h3 { color: var(--purple); }
+    .arch-flow { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+    .node { border: 1px solid var(--line); padding: 7px 9px; border-radius: 8px; background: var(--bg-raised-2); color: var(--muted); font-size: 12px; }
+    .arrow { color: var(--faint); font-size: 18px; padding: 0 2px; }
+    .versus { display: flex; align-items: center; justify-content: center; color: var(--faint); font-weight: 900; letter-spacing: .13em; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0 0; }
+    .status { display: inline-flex; align-items: center; border-radius: 999px; padding: 3px 9px; font-size: 11px; font-weight: 800; white-space: nowrap; border: 1px solid transparent; }
+    .status-implemented { color: var(--green); background: rgba(126, 226, 168, .12); border-color: rgba(126, 226, 168, .35); }
+    .status-partial { color: var(--yellow); background: rgba(244, 201, 107, .12); border-color: rgba(244, 201, 107, .35); }
+    .status-missing { color: var(--red); background: rgba(255, 140, 155, .1); border-color: rgba(255, 140, 155, .35); }
+    .status-different { color: var(--purple); background: rgba(188, 156, 255, .12); border-color: rgba(188, 156, 255, .35); }
+    .controls { position: sticky; top: 10px; z-index: 3; display: grid; grid-template-columns: minmax(240px, 1.8fr) repeat(2, minmax(160px, .7fr)) auto; gap: 10px; background: rgba(9, 17, 31, .92); backdrop-filter: blur(15px); border: 1px solid var(--line); border-radius: 12px; padding: 11px; margin: 10px 0 14px; }
+    input, select, button { color: var(--text); background: var(--bg-raised-2); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; font: inherit; }
+    input:focus, select:focus, button:focus { outline: 2px solid rgba(85, 214, 210, .55); outline-offset: 1px; }
+    button { cursor: pointer; font-weight: 700; }
+    button:hover { border-color: var(--cyan); }
+    .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 12px; }
+    table { width: 100%; min-width: 1100px; border-collapse: collapse; }
+    th { background: #162640; color: var(--muted); text-align: left; text-transform: uppercase; letter-spacing: .08em; font-size: 10px; padding: 11px 13px; position: sticky; top: 0; z-index: 1; }
+    td { vertical-align: top; border-top: 1px solid rgba(38, 57, 87, .72); padding: 13px; color: var(--muted); }
+    td:first-child { width: 115px; }
+    td:nth-child(2) { width: 205px; color: var(--text); font-weight: 700; }
+    td:nth-child(3), td:nth-child(4) { width: 265px; }
+    td:nth-child(5) { width: 310px; }
+    td:last-child { width: 205px; }
+    tr.feature-row:hover td { background: rgba(85, 214, 210, .035); }
+    .group-row td { padding: 19px 13px 8px; border-top: 0; color: var(--cyan); background: rgba(85, 214, 210, .045); text-transform: uppercase; letter-spacing: .11em; font-size: 11px; font-weight: 900; }
+    .cell-title { color: var(--text); font-weight: 700; margin-bottom: 4px; }
+    .evidence { display: grid; gap: 5px; }
+    .evidence a { display: block; overflow-wrap: anywhere; }
+    .evidence a::before { content: "↗ "; color: var(--faint); }
+    .empty { padding: 28px; color: var(--muted); text-align: center; }
+    .matrix-foot { display: flex; justify-content: space-between; gap: 15px; color: var(--faint); margin-top: 10px; font-size: 12px; }
+    .priority { display: grid; grid-template-columns: 72px 1fr; gap: 13px; align-items: start; border-top: 1px solid var(--line); padding: 15px 0; }
+    .priority:first-child { border-top: 0; padding-top: 0; }
+    .priority-label { font-size: 12px; font-weight: 900; border-radius: 7px; padding: 5px 8px; text-align: center; }
+    .p0 { color: var(--red); background: rgba(255, 140, 155, .12); }
+    .p1 { color: var(--yellow); background: rgba(244, 201, 107, .12); }
+    .p2 { color: var(--blue); background: rgba(114, 167, 255, .12); }
+    .priority p { color: var(--muted); margin: 3px 0 0; }
+    .coverage-table { width: 100%; border-collapse: collapse; }
+    .coverage-table td, .coverage-table th { border: 1px solid var(--line); padding: 10px 12px; }
+    .coverage-table th { position: static; }
+    details { border-top: 1px solid var(--line); padding: 13px 0; }
+    details:first-of-type { border-top: 0; }
+    summary { cursor: pointer; color: var(--text); font-weight: 750; }
+    details p, details li { color: var(--muted); }
+    ul { padding-left: 20px; }
+    .file-list { columns: 3 260px; column-gap: 28px; list-style: none; padding: 0; }
+    .file-list li { break-inside: avoid; padding: 2px 0; }
+    .file-list code { color: var(--muted); font-size: 11px; }
+    footer { color: var(--faint); font-size: 12px; padding: 20px 4px; }
+    @media (max-width: 1050px) { .metrics { grid-template-columns: repeat(3, 1fr); } .controls { grid-template-columns: 1fr 1fr; } .architecture { grid-template-columns: 1fr; } .versus { min-height: 26px; } }
+    @media (max-width: 680px) { .shell { padding: 22px 12px 55px; } .hero { display: block; } .stamp { text-align: left; margin-top: 13px; } .metrics, .grid-2, .grid-3 { grid-template-columns: 1fr; } .controls { position: static; grid-template-columns: 1fr; } .panel { padding: 15px; } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <div class="eyebrow">Static source comparison · capability over filenames</div>
+        <h1>OpenBot × Grok Bot 0.18</h1>
+        <p class="lede">Feature, status, architecture, and evidence report comparing the local OpenBot web application with the reconstructed Grok Bot desktop product.</p>
+      </div>
+      <div class="stamp">Prepared 04 Sep 2026<br><span class="mono">report.html · self-contained</span></div>
+    </header>
+
+    <section class="panel" id="summary">
+      <h2>Executive summary</h2>
+      <p class="section-note">The status is OpenBot relative to the capability surface visible in Grok Bot. It is not a quality score and does not imply that Grok's implementation is production-complete merely because source exists.</p>
+      <div class="metrics">
+        <div class="metric total"><span class="number" id="count-total">—</span><span class="label">matrix capabilities</span></div>
+        <div class="metric implemented"><span class="number" id="count-implemented">—</span><span class="label">Implemented</span></div>
+        <div class="metric partial"><span class="number" id="count-partial">—</span><span class="label">Partial</span></div>
+        <div class="metric missing"><span class="number" id="count-missing">—</span><span class="label">Missing</span></div>
+        <div class="metric different"><span class="number" id="count-different">—</span><span class="label">Different</span></div>
+        <div class="metric filtered"><span class="number" id="count-visible">—</span><span class="label">visible after filters</span></div>
+      </div>
+      <div class="legend" aria-label="Status legend">
+        <span class="status status-implemented">Implemented</span><span>materially comparable behavior</span>
+        <span class="status status-partial">Partial</span><span>OpenBot covers a subset</span>
+        <span class="status status-missing">Missing</span><span>no matching OpenBot runtime found</span>
+        <span class="status status-different">Different</span><span>both have a counterpart, but semantics/topology differ</span>
+      </div>
+      <div class="grid-2" style="margin-top:18px">
+        <div class="takeaway openbot"><h3>OpenBot: focused local assistant</h3><p>A small TanStack web app with a SQLite/Drizzle durable turn queue, one OpenAI-compatible model configuration, local agent/group conversations, memory, shell/read tools, and MCP plugin flows.</p></div>
+        <div class="takeaway grok"><h3>Grok Bot: desktop + host platform</h3><p>An Electron renderer backed by a host/coordinator/gateway and isolated box runtime, with browser/computer tools, cloud agents, automations, memory synthesis, attachment services, telemetry, auth/secrets, and object-store synchronization.</p></div>
+      </div>
+    </section>
+
+    <section class="panel" id="architecture">
+      <h2>Architecture at a glance</h2>
+      <p class="section-note">These are the product boundaries that explain many “Different” and “Missing” statuses. Generated protocol bindings are infrastructure, not counted as separate user-facing features.</p>
+      <div class="architecture">
+        <div class="arch-box openbot">
+          <h3>OpenBot</h3>
+          <div class="arch-flow">
+            <span class="node">Browser / TanStack UI</span><span class="arrow">→</span>
+            <span class="node">route + server handlers</span><span class="arrow">→</span>
+            <span class="node">SQLite / Drizzle</span><span class="arrow">→</span>
+            <span class="node">turn runner</span><span class="arrow">→</span>
+            <span class="node">OpenAI-compatible model</span>
+          </div>
+          <p class="section-note" style="margin:13px 0 0">Tools, memory, MCP, and managed files are local package extensions around one application process/runtime.</p>
+        </div>
+        <div class="versus">VS</div>
+        <div class="arch-box grok">
+          <h3>Grok Bot 0.18</h3>
+          <div class="arch-flow">
+            <span class="node">Electron renderer</span><span class="arrow">→</span>
+            <span class="node">Electron main</span><span class="arrow">→</span>
+            <span class="node">host / gateway</span><span class="arrow">→</span>
+            <span class="node">coordinator + box daemon</span><span class="arrow">→</span>
+            <span class="node">extensions + cloud services</span>
+          </div>
+          <p class="section-note" style="margin:13px 0 0">The host composes per-turn tools and mediates isolation, auth, cloud agents, automation wakes, telemetry, and synchronized state.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" id="matrix">
+      <h2>Feature matrix</h2>
+      <p class="section-note">Search by capability, source path, or explanation. Use the status and category filters to isolate gaps or parity areas.</p>
+      <div class="controls">
+        <input id="search" type="search" placeholder="Search features, evidence, or behavior…" aria-label="Search feature matrix">
+        <select id="status-filter" aria-label="Filter by status"><option value="all">All statuses</option><option>Implemented</option><option>Partial</option><option>Missing</option><option>Different</option></select>
+        <select id="category-filter" aria-label="Filter by category"><option value="all">All categories</option></select>
+        <button id="reset" type="button">Reset filters</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Status</th><th>Capability</th><th>OpenBot</th><th>Grok Bot 0.18</th><th>Assessment / difference</th><th>Evidence</th></tr></thead>
+          <tbody id="matrix-body"></tbody>
+        </table>
+        <div class="empty" id="empty" hidden>No capabilities match the current filters.</div>
+      </div>
+      <div class="matrix-foot"><span id="matrix-foot-count">—</span><span>Evidence links open local source files; line ranges are analyst pointers.</span></div>
+    </section>
+
+    <section class="panel" id="gaps">
+      <h2>Gap analysis</h2>
+      <p class="section-note">A practical parity sequence if the goal is to move OpenBot toward Grok's broader product surface.</p>
+      <div class="callout" style="margin-bottom:15px"><strong>Parity is not the same as product scope.</strong><p>Many Missing rows are intentional boundaries of OpenBot's one-user/local MVP rather than defects: the authoritative context documents no tenant/ACL model and explicitly defers bounded group selection and user-uploaded attachments. The priorities below are therefore conditional parity work, not a claim that every Grok subsystem belongs in OpenBot.</p></div>
+      <div class="priority"><div class="priority-label p0">P0</div><div><h3>Execution surface and trust boundaries</h3><p>Add an explicit web search/fetch layer, browser/computer automation, and a real isolated workspace/sandbox before expanding autonomous capabilities. Pair this with authentication, secret storage, permission/review gates, and path/network policy.</p></div></div>
+      <div class="priority"><div class="priority-label p0">P0</div><div><h3>Long-running and remote work</h3><p>Introduce a first-class subagent/task model and cloud-agent lifecycle rather than stretching the local turn queue. Persist status, transcript, artifacts, follow-ups, cancellation, and reconnect semantics.</p></div></div>
+      <div class="priority"><div class="priority-label p1">P1</div><div><h3>Automation and memory intelligence</h3><p>Add scheduled and event-triggered routines, connector relays, and user-visible run history. Add evidence-backed memory synthesis/verification while preserving OpenBot's existing scoped memory tools.</p></div></div>
+      <div class="priority"><div class="priority-label p1">P1</div><div><h3>Media and attachment services</h3><p>Complete the attachment UX, then add safe link previews, media processing/image generation, image-to-agent channels, and cloud artifact transfer with size/path checks.</p></div></div>
+      <div class="priority"><div class="priority-label p2">P2</div><div><h3>Product-shell parity</h3><p>Expose provider/model selection, real voice capture/transcription, nested/persisted threads, desktop lifecycle affordances, richer diagnostics, telemetry controls, and synchronized backups only where the product needs them.</p></div></div>
+    </section>
+
+    <section class="panel" id="coverage">
+      <h2>Coverage appendices</h2>
+      <p class="section-note">Scope and evidence ledger for this comparison.</p>
+      <details open>
+        <summary>A. Inventory and exclusions</summary>
+        <ul>
+          <li><strong>OpenBot root:</strong> <code>/Users/lemedi/workspace/openbot</code>. Prior analysis inventory: <strong>164 scoped code/config files</strong>, approximately <strong>42,044 lines</strong>.</li>
+          <li><strong>Grok Bot root:</strong> <code>/Users/lemedi/learn/grok-bot-0.18-reconstructed-main</code>. Prior analysis inventory: <strong>2,068 scoped code/config files</strong>, approximately <strong>537,684 lines</strong>.</li>
+          <li>Reviewed source code, configuration, scripts, tests, schemas, migrations, and relevant generated/protocol code. Markdown/documentation, build artifacts, runtime data, <code>node_modules</code>, <code>.turbo</code>, <code>.tmp</code>, and <code>.data</code> were excluded from the feature assessment.</li>
+          <li>Generated protocol bindings were inspected only to understand transport/integration boundaries; they are not promoted into separate feature rows.</li>
+          <li>An absence status means no matching implementation was found in the scoped inventory. It is not a claim about code outside the two supplied roots or about undocumented product behavior.</li>
+        </ul>
+      </details>
+      <details>
+        <summary>B. OpenBot directory coverage</summary>
+        <table class="coverage-table">
+          <thead><tr><th>Area</th><th>Covered paths</th><th>What it contributed</th></tr></thead>
+          <tbody>
+            <tr><td>App shell and UI</td><td><code>apps/app/src/components/**</code>, <code>apps/app/src/routes/**</code>, <code>apps/app/src/server/**</code></td><td>Conversation UX, composer, streaming, threads, reactions, widgets, groups, settings, API/server boundaries.</td></tr>
+            <tr><td>Persistence</td><td><code>packages/db/src/**</code>, <code>packages/db/drizzle/**</code></td><td>Agents, groups, conversations, turns, messages, memory, MCP accounts, files, reactions, schema constraints, migrations.</td></tr>
+            <tr><td>Agent runtime</td><td><code>packages/agent/src/**</code></td><td>Model registration, prompt assembly, queued turn execution, streaming, cancellation, group child turns, shell/read/direct-agent tools.</td></tr>
+            <tr><td>Memory</td><td><code>packages/memory/src/**</code></td><td>Scoped durable memory contract, update/recall tools, handlers, and prompt behavior.</td></tr>
+            <tr><td>Plugins / MCP</td><td><code>packages/plugins/src/**</code></td><td>Catalog, install/approval, account grants, OAuth discovery/PKCE/token refresh, registry and tests.</td></tr>
+            <tr><td>Support tooling</td><td><code>packages/tools/src/**</code>, root and package configs/scripts</td><td>CLI/clean/target scripts and package/runtime configuration.</td></tr>
+          </tbody>
+        </table>
+      </details>
+      <details>
+        <summary>C. Grok Bot directory coverage</summary>
+        <table class="coverage-table">
+          <thead><tr><th>Area</th><th>Covered paths</th><th>What it contributed</th></tr></thead>
+          <tbody>
+            <tr><td>Desktop lifecycle</td><td><code>source/electron-main/**</code>, <code>source/electron-preload/**</code></td><td>Electron windows, preload/security boundary, desktop lifecycle.</td></tr>
+            <tr><td>Host and isolation</td><td><code>source/host/main.ts</code>, <code>source/host/sand-host.ts</code>, <code>source/host/runner/**</code></td><td>Host process, gateway/coordinator, box daemon, extension graph, per-turn tool composition, approvals and isolation.</td></tr>
+            <tr><td>Agent runtime</td><td><code>source/packages/agent/**</code>, <code>source/host/runner/tools/**</code></td><td>Action handlers, streamed and split-step runs, background work, summarization, browser/computer/web/cloud-agent tooling.</td></tr>
+            <tr><td>Extensions</td><td><code>source/host/extensions/**</code></td><td>Memory, automations, attachments/media, auth, secrets, telemetry, session integrations, and box-store sync.</td></tr>
+            <tr><td>Cloud agents</td><td><code>source/host/cloud-agents/**</code></td><td>Launch/list/get/watch/reply/cancel/archive/delete, model catalog, transcript dumps, images, artifacts.</td></tr>
+            <tr><td>Frontend</td><td><code>frontend/src/recovered/**</code>, frontend manifests/config</td><td>Recovered product UI feature evidence and renderer-facing capability surfaces.</td></tr>
+            <tr><td>Protocols</td><td><code>source/packages/proto/generated/**</code>, <code>source/packages/redacted-protos/generated/**</code></td><td>Supporting RPC/message shapes only; not counted as independent user features.</td></tr>
+          </tbody>
+        </table>
+      </details>
+      <details>
+        <summary>D. High-signal source evidence index</summary>
+        <ul class="file-list">
+          <li><code>OpenBot · packages/db/src/schema.ts</code></li>
+          <li><code>OpenBot · packages/db/src/messages.ts</code></li>
+          <li><code>OpenBot · packages/db/src/turns.ts</code></li>
+          <li><code>OpenBot · packages/db/src/groups.ts</code></li>
+          <li><code>OpenBot · packages/agent/src/ai.ts</code></li>
+          <li><code>OpenBot · packages/agent/src/queue/turn-runner.ts</code></li>
+          <li><code>OpenBot · packages/agent/src/tools/index.ts</code></li>
+          <li><code>OpenBot · packages/agent/src/tools/shell/run-shell.ts</code></li>
+          <li><code>OpenBot · packages/agent/src/tools/read.ts</code></li>
+          <li><code>OpenBot · packages/memory/src/tools.ts</code></li>
+          <li><code>OpenBot · packages/plugins/src/management.ts</code></li>
+          <li><code>OpenBot · packages/plugins/src/oauth.ts</code></li>
+          <li><code>OpenBot · apps/app/src/components/conversation/conversation.tsx</code></li>
+          <li><code>OpenBot · apps/app/src/components/conversation/composer.tsx</code></li>
+          <li><code>OpenBot · apps/app/src/components/conversation/markdown.tsx</code></li>
+          <li><code>Grok · source/electron-main/main.ts</code></li>
+          <li><code>Grok · source/host/main.ts</code></li>
+          <li><code>Grok · source/host/sand-host.ts</code></li>
+          <li><code>Grok · source/host/runner/tools/turn-toolset.ts</code></li>
+          <li><code>Grok · source/packages/agent/index.ts</code></li>
+          <li><code>Grok · source/host/runner/tools/sand-browser-tools.ts</code></li>
+          <li><code>Grok · source/host/runner/tools/sand-computer-tool.ts</code></li>
+          <li><code>Grok · source/host/extensions/memory/memory-synthesis-service.ts</code></li>
+          <li><code>Grok · source/host/extensions/memory/project-membership.ts</code></li>
+          <li><code>Grok · source/host/extensions/automations/extension.ts</code></li>
+          <li><code>Grok · source/host/extensions/automations/sand-trigger-hub.ts</code></li>
+          <li><code>Grok · source/host/extensions/attachments/attachments-service.ts</code></li>
+          <li><code>Grok · source/host/extensions/attachments/safe-link-preview-fetch.ts</code></li>
+          <li><code>Grok · source/host/extensions/auth/auth-service.ts</code></li>
+          <li><code>Grok · source/host/extensions/secrets/secrets-service.ts</code></li>
+          <li><code>Grok · source/host/cloud-agents/cloud-agent-tool.ts</code></li>
+          <li><code>Grok · source/host/cloud-agents/cloud-agent-transcript-dump.ts</code></li>
+          <li><code>Grok · source/host/extensions/box-store-sync/box-store-sync.ts</code></li>
+          <li><code>Grok · source/host/extensions/telemetry/lifecycle-telemetry.ts</code></li>
+        </ul>
+      </details>
+      <details>
+        <summary>E. Tests, scripts, and configuration audit</summary>
+        <div class="grid-2">
+          <div class="callout"><strong>OpenBot tests</strong><p>The scoped inventory contains <code>packages/plugins/src/management.test.ts</code>, <code>packages/plugins/src/oauth-continuation.test.ts</code>, and <code>packages/plugins/src/registry.test.ts</code>. No database/turn-runner test file was found, so implementation evidence and test evidence are kept separate in this report.</p></div>
+          <div class="callout"><strong>Grok tests</strong><p>No <code>*.test.*</code> or <code>*.spec.*</code> files were found under the scoped <code>source/</code> and <code>frontend/</code> roots. Runtime behavior was assessed from implementation, protocol, diagnostic, and extension evidence rather than inferred test coverage.</p></div>
+          <div class="callout"><strong>OpenBot configuration/scripts</strong><p>Reviewed root/package manifests and TypeScript/Vite/Turbo configuration, <code>pnpm-workspace.yaml</code>, <code>.github/workflows/build-debian-artifact.yml</code>, and <code>scripts/install-debian.sh</code>/<code>scripts/run-debian.sh</code>.</p></div>
+          <div class="callout"><strong>Grok configuration/scripts</strong><p>Reviewed root <code>package.json</code>, source/frontend TypeScript and Vite configuration, <code>src/app/package.json</code>, manifests, and <code>.github/workflows/check.yml</code>. Generated protocol/config plumbing was not treated as independent product capability.</p></div>
+        </div>
+      </details>
+    </section>
+
+    <footer>OpenBot × Grok Bot 0.18 feature comparison · static analysis artifact · status counts and filters are computed from the embedded matrix below.</footer>
+  </main>
+
+  <script>
+    const openbotRoot = "file:///Users/lemedi/workspace/openbot/";
+    const grokRoot = "file:///Users/lemedi/learn/grok-bot-0.18-reconstructed-main/";
+    // The evidence labels are normalized to the line count in the analyzed snapshot,
+    // so broad analyst pointers never render a link to a nonexistent line.
+    const actualLineCounts = {
+      "o:apps/app/src/router.tsx": 19,
+      "g:source/electron-main/main.ts": 451,
+      "o:apps/app/src/routes/api.turns.$turnId.stream.ts": 46,
+      "g:source/host/main.ts": 347,
+      "g:source/host/sand-host.ts": 958,
+      "o:packages/db/src/schema.ts": 388,
+      "g:source/host/extensions/box-store-sync/box-store-sync.ts": 94,
+      "o:packages/agent/src/tools/shell/run-shell.ts": 157,
+      "g:source/host/runner/tools/turn-toolset.ts": 1532,
+      "o:packages/agent/src/ai.ts": 92,
+      "g:source/packages/agent/index.ts": 224,
+      "g:source/host/cloud-agents/cloud-agent-tool.ts": 45,
+      "o:packages/agent/src/queue/turn-runner.ts": 813,
+      "g:source/host/extensions/telemetry/lifecycle-telemetry.ts": 214,
+      "o:apps/app/src/server/agents.ts": 72,
+      "o:packages/db/src/messages.ts": 522,
+      "o:packages/db/src/turns.ts": 638,
+      "o:apps/app/src/components/conversation/conversation.tsx": 732,
+      "o:packages/db/src/groups.ts": 206,
+      "o:CONTEXT.md": 473,
+      "o:packages/agent/src/tools/index.ts": 115,
+      "o:packages/agent/src/prompt/assembly.ts": 122,
+      "g:source/host/extensions/auth/auth-service.ts": 96,
+      "o:packages/agent/src/tools/shell/await-shell.ts": 122,
+      "o:packages/agent/src/tools/read.ts": 112,
+      "o:packages/agent/src/tools/shell/workspace.ts": 261,
+      "g:source/host/runner/tools/sand-browser-tools.ts": 663,
+      "g:source/host/runner/tools/sand-browser-use-subagent.ts": 17,
+      "g:source/host/runner/tools/sand-computer-tool.ts": 291,
+      "g:source/host/runner/computer-use.ts": 183,
+      "g:source/host/extensions/attachments/generate-image-service.ts": 25,
+      "o:apps/app/src/components/conversation/composer.tsx": 500,
+      "g:source/host/extensions/attachments/attachments-service.ts": 231,
+      "o:apps/app/src/components/conversation/markdown.tsx": 132,
+      "g:source/host/extensions/attachments/safe-link-preview-fetch.ts": 104,
+      "g:source/host/cloud-agents/cloud-agent-images.ts": 4,
+      "g:source/host/cloud-agents/cloud-agent-transcript-dump.ts": 5,
+      "o:apps/app/src/components/conversation/mermaid-viewer.tsx": 46,
+      "o:apps/app/src/components/conversation/action-card.tsx": 247,
+      "g:source/host/extensions/automations/listener-integrations.ts": 37,
+      "o:packages/plugins/src/management.ts": 364,
+      "o:packages/plugins/src/mcp-catalog.ts": 341,
+      "o:packages/plugins/src/oauth.ts": 540,
+      "g:source/host/mcp-auth/mcp-auth-wait-registry.ts": 8,
+      "o:packages/db/src/mcp.ts": 442,
+      "o:packages/plugins/src/management.test.ts": 201,
+      "o:packages/plugins/src/oauth-continuation.test.ts": 54,
+      "o:packages/plugins/src/registry.test.ts": 167,
+      "o:packages/memory/src/tools.ts": 181,
+      "g:source/host/extensions/memory/memory-service.ts": 172,
+      "g:source/host/extensions/memory/memory-synthesis-service.ts": 297,
+      "g:source/host/extensions/memory/project-membership.ts": 27,
+      "o:packages/db/src/memory.ts": 209,
+      "g:source/host/extensions/automations/sand-automation-fire-consumer.ts": 156,
+      "g:source/host/extensions/automations/extension.ts": 87,
+      "g:source/host/extensions/automations/sand-trigger-hub.ts": 22,
+      "g:source/host/extensions/automations/backend-relay-source.ts": 19,
+      "g:source/host/extensions/automations/sand-automation-cloud-trigger.ts": 10,
+      "o:apps/app/src/components/openbot/sidebar.tsx": 397,
+      "o:apps/app/src/components/openbot/conversations.ts": 28,
+      "g:frontend/src/recovered/features/conversation/tool-results/view.tsx": 56,
+      "g:frontend/src/recovered/features/conversation/workspace/voice.tsx": 486,
+      "g:frontend/src/recovered/features/conversation/workspace/sidebar-section-delete-confirmation.tsx": 65,
+      "g:source/host/extensions/attachments/extension.ts": 12,
+      "o:apps/app/src/components/openbot/settings-dialog.tsx": 237,
+      "g:source/host/ports/user-computer.ts": 2,
+      "g:source/host/host-secret-store.ts": 36,
+      "g:source/host/extensions/secrets/secrets-service.ts": 4,
+      "g:source/host/extensions/attachments/box-staging.ts": 30,
+      "g:source/host/extensions/telemetry/host-tracing.ts": 201,
+      "g:source/host/extensions/telemetry/event-loop-telemetry.ts": 95,
+      "o:packages/db/drizzle/0000_slim_jack_murdock.sql": 233,
+      "g:source/host/extensions/box-store-sync/sqlite-snapshot.ts": 210,
+      "o:packages/db/src/files.ts": 135,
+      "o:packages/db/src/client.ts": 22,
+      "g:source/host/extensions/box-store-sync/box-store-hydration.ts": 13,
+      "g:source/host/extensions/box-store-sync/box-store-pack-pipeline.ts": 428
+    };
+    const ev = (side, path, lines) => {
+      if (lines === "directory") return { side, path, lines };
+      const max = actualLineCounts[`${side}:${path}`];
+      const match = /^L(\d+)(?:-L(\d+))?$/.exec(lines);
+      if (!max || !match) return { side, path, lines };
+      const start = Math.min(Number(match[1]), max);
+      const end = Math.min(Number(match[2] || match[1]), max);
+      return { side, path, lines: `L${start}-L${end}` };
+    };
+    const comparison = [
+      // Platform / runtime
+      { category: "Platform / runtime", feature: "Application runtime and packaging", status: "Different", openbot: "Browser-first TanStack/Vite application served from the OpenBot workspace.", grok: "Electron desktop application with renderer, preload, and Electron main lifecycle.", assessment: "Both present an interactive assistant, but OpenBot is a web application while Grok owns a desktop shell, window lifecycle, and preload boundary.", evidence: [ev("o", "apps/app/src/router.tsx", "L1-L20"), ev("g", "source/electron-main/main.ts", "L1-L120")] },
+      { category: "Platform / runtime", feature: "Process and service topology", status: "Different", openbot: "Route/server handlers and package runtime share one local application boundary.", grok: "Electron main starts/coordinates a host, gateway, box daemon, and extension graph.", assessment: "Grok's topology is a platform for isolation and remote integrations; OpenBot's is deliberately compact and local.", evidence: [ev("o", "apps/app/src/routes/api.turns.$turnId.stream.ts", "L1-L80"), ev("g", "source/host/main.ts", "L1-L160"), ev("g", "source/host/sand-host.ts", "L1-L180")] },
+      { category: "Platform / runtime", feature: "Durable local state model", status: "Different", openbot: "SQLite/Drizzle tables for agents, groups, conversations, turns, messages, files, memory, MCP, and reactions.", grok: "Box-backed state with hydration, snapshots, packing, object-store transfer, and store synchronization.", assessment: "Both persist state, but OpenBot is a single local relational store; Grok treats a box store as a synchronizable product subsystem.", evidence: [ev("o", "packages/db/src/schema.ts", "L29-L367"), ev("g", "source/host/extensions/box-store-sync/box-store-sync.ts", "L1-L220")] },
+      { category: "Platform / runtime", feature: "Isolated execution box / sandbox", status: "Missing", openbot: "No isolated box daemon, supervisor, or separate filesystem/network execution boundary was found.", grok: "Host composes an isolated box runtime and separate box/external machine tool surfaces.", assessment: "OpenBot's managed shell is useful local execution, but it is not equivalent to Grok's box trust boundary.", evidence: [ev("o", "packages/agent/src/tools/shell/run-shell.ts", "L1-L220"), ev("g", "source/host/sand-host.ts", "L1-L220"), ev("g", "source/host/runner/tools/turn-toolset.ts", "L138-L149")] },
+      { category: "Platform / runtime", feature: "Provider and model configuration", status: "Partial", openbot: "One server-configured OpenAI-compatible base URL, API key, and model; no per-agent provider selection yet.", grok: "Turn config carries model identity and cloud agents expose a model catalog with parameters and environments.", assessment: "OpenBot has the core inference path but not Grok's model/provider breadth or per-surface selection.", evidence: [ev("o", "packages/agent/src/ai.ts", "L1-L91"), ev("g", "source/packages/agent/index.ts", "L84-L93"), ev("g", "source/host/cloud-agents/cloud-agent-tool.ts", "L7-L21")] },
+      { category: "Platform / runtime", feature: "Lifecycle, crash handling, and shutdown", status: "Partial", openbot: "Turn-level interruption, cleanup, queue recovery, and stream recovery are implemented.", grok: "Desktop/host lifecycle, daemon restarts, crash handling, and staged shutdown are implemented.", assessment: "OpenBot recovers work at the turn boundary; Grok additionally manages a multi-process product lifecycle.", evidence: [ev("o", "packages/agent/src/queue/turn-runner.ts", "L621-L765"), ev("g", "source/host/main.ts", "L1-L190"), ev("g", "source/host/extensions/telemetry/lifecycle-telemetry.ts", "L1-L212")] },
+      { category: "Platform / runtime", feature: "Application gateway / transport boundary", status: "Partial", openbot: "HTTP/API routes and SSE turn stream expose the local app boundary.", grok: "Gateway and coordinator mediate host, box, renderer, and service traffic.", assessment: "Comparable boundary exists, but Grok's gateway is a multi-process and remote-service control plane.", evidence: [ev("o", "apps/app/src/routes/api.turns.$turnId.stream.ts", "L1-L100"), ev("g", "source/host/sand-host.ts", "L1-L180")] },
+
+      // Agents / conversations / turns
+      { category: "Agents / conversations / turns", feature: "Agent records and configuration", status: "Partial", openbot: "CRUD for local agents with name/profile/workspace and shared runtime configuration.", grok: "Agent management tools and richer agent/session types participate in the host extension graph.", assessment: "OpenBot has the local entity model; Grok exposes a broader managed-agent and environment model.", evidence: [ev("o", "packages/db/src/schema.ts", "L48-L68"), ev("o", "apps/app/src/server/agents.ts", "L1-L180"), ev("g", "source/host/runner/tools/turn-toolset.ts", "L83-L90")] },
+      { category: "Agents / conversations / turns", feature: "Conversation and transcript persistence", status: "Implemented", openbot: "Conversations and ordered transcript rows are stored durably with message kinds, roles, directions, and sequence numbers.", grok: "Conversation state and transcript updates are persisted through prompt/session and box-backed services.", assessment: "Both provide durable conversations; their backing stores and protocol shapes differ.", evidence: [ev("o", "packages/db/src/schema.ts", "L87-L126"), ev("o", "packages/db/src/messages.ts", "L37-L79"), ev("g", "source/packages/agent/index.ts", "L90-L133")] },
+      { category: "Agents / conversations / turns", feature: "Durable message acceptance and idempotency", status: "Implemented", openbot: "Transactional acceptance validates request/idempotency keys, input reuse, reply targets, and creates the queued turn.", grok: "Action/state streams and queued conversation work provide durable run continuation.", assessment: "OpenBot has especially explicit local send idempotency; it is materially comparable for this core capability.", evidence: [ev("o", "packages/db/src/messages.ts", "L82-L316"), ev("o", "packages/db/src/schema.ts", "L127-L202"), ev("g", "source/packages/agent/index.ts", "L118-L139")] },
+      { category: "Agents / conversations / turns", feature: "Queued turn execution and claims", status: "Implemented", openbot: "Queued/running/waiting/terminal statuses, lane priority, per-target claims, and startup queue listing are explicit.", grok: "Host turn execution composes action handlers and runs stateful action streams.", assessment: "Both have a durable execution model; OpenBot's is a compact database queue while Grok's is host/action oriented.", evidence: [ev("o", "packages/db/src/turns.ts", "L17-L200"), ev("o", "packages/agent/src/queue/turn-runner.ts", "L564-L620"), ev("g", "source/packages/agent/index.ts", "L84-L133")] },
+      { category: "Agents / conversations / turns", feature: "Streaming model output", status: "Partial", openbot: "SSE streams visible delivered message rows, waiting state, completion, and errors; plain assistant text remains model-private.", grok: "runStream emits redacted interaction updates and flushes state during action execution.", assessment: "OpenBot has durable visible-output streaming, but not Grok's richer interaction/state stream or token-level model output.", evidence: [ev("o", "packages/agent/src/queue/turn-runner.ts", "L56-L64"), ev("o", "apps/app/src/components/conversation/conversation.tsx", "L391-L458"), ev("g", "source/packages/agent/index.ts", "L84-L139")] },
+      { category: "Agents / conversations / turns", feature: "Wait/resume interactions", status: "Implemented", openbot: "Waiting turns persist widget state and resume through validated, idempotent responses.", grok: "Async question and resume action handlers are first-class action types.", assessment: "Both suspend execution for user input and continue it; implementation boundaries differ.", evidence: [ev("o", "packages/db/src/turns.ts", "L255-L452"), ev("o", "apps/app/src/components/conversation/conversation.tsx", "L312-L380"), ev("g", "source/packages/agent/index.ts", "L19-L31")] },
+      { category: "Agents / conversations / turns", feature: "Cancellation", status: "Implemented", openbot: "Durably settles active turns and applicable group children as cancelled, aborting the running loop.", grok: "Cancel action handler and cloud-agent cancellation are explicit operations.", assessment: "Both expose cancellation; Grok also cancels remote cloud work.", evidence: [ev("o", "packages/agent/src/queue/turn-runner.ts", "L516-L543"), ev("g", "source/packages/agent/index.ts", "L24-L31"), ev("g", "source/host/cloud-agents/cloud-agent-tool.ts", "L36-L40")] },
+      { category: "Agents / conversations / turns", feature: "Background shell/work wakes", status: "Partial", openbot: "Detached shell execution writes output and wakes the owning agent through background turns.", grok: "Background shell, task, subagent completion, and goal continuation action handlers are present.", assessment: "OpenBot supports background shell completion; Grok generalizes the pattern to task/subagent orchestration.", evidence: [ev("o", "packages/agent/src/tools/shell/run-shell.ts", "L1-L220"), ev("o", "packages/agent/src/queue/turn-runner.ts", "L232-L305"), ev("g", "source/packages/agent/index.ts", "L24-L31")] },
+      { category: "Agents / conversations / turns", feature: "Startup/reconnect turn recovery", status: "Partial", openbot: "Queued turns can be enumerated and reclaimed; the UI replays a pending stream or catches up after reload.", grok: "State checkpoints, blob flushing, host/box recovery, and action continuation cover a wider failure domain.", assessment: "OpenBot's turn recovery is real but does not recover a desktop box/remote run lifecycle.", evidence: [ev("o", "packages/db/src/turns.ts", "L138-L200"), ev("o", "apps/app/src/components/conversation/conversation.tsx", "L168-L188"), ev("g", "source/packages/agent/index.ts", "L118-L139")] },
+      { category: "Agents / conversations / turns", feature: "Group conversations and child turns", status: "Partial", openbot: "Groups have a shared conversation; a matching mention selects one member, while the current source fans out an unmentioned post to all members in order.", grok: "Shared-room tool scopes and managed send-to-agent/subagent surfaces exist.", assessment: "OpenBot has concrete local group orchestration, but does not select every distinct mentioned member and its no-mention fan-out conflicts with CONTEXT.md, which documents select-one behavior and calls multi-member rounds future work. Grok's collaboration surface is broader and more extensible.", evidence: [ev("o", "packages/db/src/groups.ts", "L68-L137"), ev("o", "packages/agent/src/queue/turn-runner.ts", "L464-L506"), ev("o", "CONTEXT.md", "L396-L403"), ev("g", "source/host/runner/tools/turn-toolset.ts", "L151-L166")] },
+      { category: "Agents / conversations / turns", feature: "Direct agent-to-agent messaging", status: "Implemented", openbot: "Direct messages create durable recipient-side conversation projections and asynchronous wake turns.", grok: "send-to-agent tooling and agent-management tools are composed into turns.", assessment: "Both support agent-to-agent delivery; OpenBot's local path is explicit in its message/turn database.", evidence: [ev("o", "packages/db/src/messages.ts", "L318-L420"), ev("o", "packages/agent/src/queue/turn-runner.ts", "L228-L305"), ev("g", "source/host/runner/tools/turn-toolset.ts", "L83-L90")] },
+      { category: "Agents / conversations / turns", feature: "Subagent runtime and task delegation", status: "Missing", openbot: "No first-class subagent/task lifecycle or nested agent execution runtime was found.", grok: "Task, subagent management, background subagent completion, and cloud-agent tools are present.", assessment: "This is a major execution-model gap, distinct from OpenBot's direct-agent message tool.", evidence: [ev("o", "packages/agent/src/tools/index.ts", "L41-L106"), ev("g", "source/host/runner/tools/turn-toolset.ts", "L100-L110"), ev("g", "source/packages/agent/index.ts", "L24-L31")] },
+      { category: "Agents / conversations / turns", feature: "Split-step execution and plan/action handlers", status: "Missing", openbot: "The local runner uses a normal tool loop; no separate model-step/tool-step plan protocol was found.", grok: "Single-step, split-step, execute-plan, and action-specific handlers are explicit.", assessment: "Grok can mediate a richer plan/review/execute lifecycle than OpenBot's direct turn loop.", evidence: [ev("o", "packages/agent/src/queue/turn-runner.ts", "L337-L420"), ev("g", "source/packages/agent/index.ts", "L144-L175")] },
+      { category: "Agents / conversations / turns", feature: "Automatic conversation summarization", status: "Missing", openbot: "No independent summarization orchestrator or evidence-backed conversation compaction service was found.", grok: "Background summarization, self-summary, token estimates, and summarize actions are integrated with runs.", assessment: "OpenBot has prompt assembly and durable transcripts, but not Grok's explicit summarization subsystem.", evidence: [ev("o", "packages/agent/src/prompt/assembly.ts", "L1-L180"), ev("g", "source/packages/agent/index.ts", "L1-L15"), ev("g", "source/packages/agent/index.ts", "L67-L80")] },
+      { category: "Agents / conversations / turns", feature: "Account identity and cross-user agent sharing", status: "Missing", openbot: "Agents and groups are local records without account identity or cross-user agent sharing.", grok: "Auth-backed product services, account cloud agents, shared rooms, and external integrations are present.", assessment: "OpenBot collaboration is intra-installation; Grok includes product/account boundaries.", evidence: [ev("o", "packages/db/src/schema.ts", "L48-L126"), ev("g", "source/host/extensions/auth/auth-service.ts", "L1-L180"), ev("g", "source/host/cloud-agents/cloud-agent-tool.ts", "L25-L41")] },
+      { category: "Agents / conversations / turns", feature: "Threads and nested thread creation", status: "Partial", openbot: "Top-level thread view and replies exist, but thread sends are client-local and nested thread creation is disabled.", grok: "Renderer/product state supports broader conversation action/thread behavior.", assessment: "OpenBot offers the UX shape but not a durable nested thread model.", evidence: [ev("o", "apps/app/src/components/conversation/conversation.tsx", "L257-L272"), ev("o", "apps/app/src/components/conversation/conversation.tsx", "L459-L550")] },
+
+      // Tools / media
+      { category: "Tools / media", feature: "Managed shell execution", status: "Partial", openbot: "Foreground and detached shell tools with workspace paths, output files, await, and wake behavior.", grok: "Box shell, external-machine shell, approvals, timeouts, and isolated resource accessors.", assessment: "OpenBot has the user-facing primitive; Grok adds isolation, remote machine choice, and review escalation.", evidence: [ev("o", "packages/agent/src/tools/shell/run-shell.ts", "L1-L220"), ev("o", "packages/agent/src/tools/shell/await-shell.ts", "L1-L180"), ev("g", "source/host/runner/tools/turn-toolset.ts", "L110-L145")] },
+      { category: "Tools / media", feature: "Workspace file read / inspection", status: "Partial", openbot: "Read tool and managed workspace helpers expose local agent files.", grok: "Box/external read tools support text line ranges, inline images, PDFs, and distinct machine roots.", assessment: "OpenBot covers text workspace access; Grok covers more formats and trust domains.", evidence: [ev("o", "packages/agent/src/tools/read.ts", "L1-L180"), ev("o", "packages/agent/src/tools/shell/workspace.ts", "L1-L140"), ev("g", "source/host/runner/tools/turn-toolset.ts", "L138-L149")] },
+      { category: "Tools / media", feature: "Awaiting asynchronous resources", status: "Partial", openbot: "AwaitShell waits on detached shell completion.", grok: "Generic await/resource access and background task completion are part of the per-turn toolset.", assessment: "OpenBot implements one resource type; Grok has a generalized async tool protocol.", evidence: [ev("o", "packages/agent/src/tools/shell/await-shell.ts", "L1-L180"), ev("g", "source/host/runner/tools/turn-toolset.ts", "L74-L81"), ev("g", "source/packages/agent/index.ts", "L28-L31")] },
+      { category: "Tools / media", feature: "Web search", status: "Missing", openbot: "No native web-search tool or provider integration found in the built-in tool inventory.", grok: "Per-turn web-search tool factory is imported and gated by the host toolset.", assessment: "OpenBot would need a network-aware search service and policy surface for parity.", evidence: [ev("o", "packages/agent/src/tools/index.ts", "L41-L106"), ev("g", "source/host/runner/tools/turn-toolset.ts", "L63-L73")] },
+      { category: "Tools / media", feature: "Web fetch", status: "Missing", openbot: "No native URL fetch/read tool found in the built-in tool inventory.", grok: "Per-turn web-fetch tool factory is explicitly available.", assessment: "This is separate from markdown URL rendering; OpenBot does not let the agent retrieve web content as a native tool.", evidence: [ev("o", "packages/agent/src/tools/index.ts", "L41-L106"), ev("g", "source/host/runner/tools/turn-toolset.ts", "L67-L73")] },
+      { category: "Tools / media", feature: "Browser automation", status: "Missing", openbot: "No browser driver, tab/session, or browser-use tool was found.", grok: "Sand browser tools, driver source, auto-review, and browser-use subagent are present.", assessment: "A substantial tool and permission subsystem is absent from OpenBot.", evidence: [ev("o", "packages/agent/src/tools/index.ts", "L41-L106"), ev("g", "source/host/runner/tools/sand-browser-tools.ts", "L1-L220"), ev("g", "source/host/runner/tools/sand-browser-use-subagent.ts", "L1-L180")] },
+      { category: "Tools / media", feature: "Computer control, screenshots, and VNC-like surface", status: "Missing", openbot: "No computer-control, screenshot, virtual display, or VNC runtime found.", grok: "Computer tool, screenshot path, computer-use subagent, and user-computer ports are present.", assessment: "OpenBot is text/file/shell oriented; Grok can operate a visual computer surface.", evidence: [ev("o", "packages/agent/src/tools/index.ts", "L41-L106"), ev("g", "source/host/runner/tools/sand-computer-tool.ts", "L1-L220"), ev("g", "source/host/runner/computer-use.ts", "L1-L180")] },
+      { category: "Tools / media", feature: "Image generation", status: "Missing", openbot: "No image-generation tool or attachment generation service found.", grok: "Generate-image tool and attachment generation service are integrated.", assessment: "OpenBot can render images supplied to it but does not create them as a tool action.", evidence: [ev("o", "packages/agent/src/tools/index.ts", "L41-L106"), ev("g", "source/host/runner/tools/turn-toolset.ts", "L63-L66"), ev("g", "source/host/extensions/attachments/generate-image-service.ts", "L1-L180")] },
+      { category: "Tools / media", feature: "Attachment upload and managed-file persistence", status: "Partial", openbot: "Attachment records and file staging/persistence exist; composer upload control is hidden, with paste/drag staging retained.", grok: "Attachment extension stages media, enforces limits, and integrates host/box/cloud-agent paths.", assessment: "OpenBot has the data path and partial UX; Grok has a fuller media service and remote handoff.", evidence: [ev("o", "packages/db/src/schema.ts", "L37-L46"), ev("o", "apps/app/src/components/conversation/composer.tsx", "L260-L279"), ev("o", "apps/app/src/components/conversation/composer.tsx", "L420-L430"), ev("g", "source/host/extensions/attachments/attachments-service.ts", "L1-L220")] },
+      { category: "Tools / media", feature: "Safe link preview fetching", status: "Missing", openbot: "No link-preview fetcher or URL safety service found.", grok: "Safe link-preview fetch and image-bounds helpers are part of attachments.", assessment: "Markdown can display URLs, but that is not equivalent to fetching and previewing remote pages.", evidence: [ev("o", "apps/app/src/components/conversation/markdown.tsx", "L1-L180"), ev("g", "source/host/extensions/attachments/safe-link-preview-fetch.ts", "L1-L220")] },
+      { category: "Tools / media", feature: "Media processing and cloud-agent image channel", status: "Partial", openbot: "Image/file attachment kinds are stored and rendered, without Grok's cloud-agent image loading and path/size policy.", grok: "Images load from approved attachment roots or /workspace, validate MIME/size, and ride cloud-agent vision input.", assessment: "OpenBot supports attachment display; Grok supports controlled media ingestion into remote execution.", evidence: [ev("o", "apps/app/src/components/conversation/composer.tsx", "L260-L279"), ev("g", "source/host/cloud-agents/cloud-agent-images.ts", "L1-L4")] },
+      { category: "Tools / media", feature: "Cloud-agent lifecycle and artifacts", status: "Missing", openbot: "No remote/cloud agent launch, watch, follow-up, artifact, or transcript-dump API found.", grok: "CloudAgent supports launch/list/models/get/dump/watch/reply/cancel/archive/delete/list_artifacts.", assessment: "This is a separate remote execution product surface, not just another OpenBot background turn.", evidence: [ev("o", "packages/agent/src/tools/index.ts", "L41-L106"), ev("g", "source/host/cloud-agents/cloud-agent-tool.ts", "L5-L45"), ev("g", "source/host/cloud-agents/cloud-agent-transcript-dump.ts", "L1-L5")] },
+      { category: "Tools / media", feature: "User reactions and agent reaction tool", status: "Partial", openbot: "User reaction toggles optimistically update the UI and reconcile against durable server state; reaction wakes are handled in the runner.", grok: "Reaction tool/action surfaces are part of the shared-room toolset, including an agent-facing ReactToMessage path.", assessment: "OpenBot covers user reactions but does not expose the comparable agent reaction tool, so the aggregate capability is partial.", evidence: [ev("o", "apps/app/src/components/conversation/conversation.tsx", "L197-L247"), ev("o", "packages/agent/src/queue/turn-runner.ts", "L237-L245"), ev("g", "source/host/runner/tools/turn-toolset.ts", "L14-L16"), ev("g", "source/host/runner/tools/turn-toolset.ts", "L161-L164")] },
+      { category: "Tools / media", feature: "Rich markdown, code, math, and diagrams", status: "Implemented", openbot: "Markdown renderer includes code blocks, KaTeX, Mermaid, and URL handling.", grok: "Recovered frontend and renderer surfaces support rich product conversation output.", assessment: "OpenBot materially covers the core rich-text rendering capability.", evidence: [ev("o", "apps/app/src/components/conversation/markdown.tsx", "L1-L220"), ev("o", "apps/app/src/components/conversation/mermaid-viewer.tsx", "L1-L180"), ev("g", "frontend/src/recovered/features/conversation/tool-results/view.tsx", "L1-L56")] },
+
+      // Collaboration
+      { category: "Collaboration", feature: "Local group membership", status: "Implemented", openbot: "Versioned membership list validates duplicate and unknown agent IDs and preserves ordering.", grok: "Agent-management and shared-room tool surfaces support managed participants.", assessment: "OpenBot has a complete local membership primitive.", evidence: [ev("o", "packages/db/src/groups.ts", "L24-L53"), ev("o", "packages/db/src/groups.ts", "L125-L137"), ev("g", "source/host/runner/tools/turn-toolset.ts", "L83-L90")] },
+      { category: "Collaboration", feature: "Group orchestration policy", status: "Partial", openbot: "No-mention group turns fan out to all members; mentions select members; one group drain serializes orchestration.", grok: "Shared-room tool gates and subagent/agent management are selected per turn by host policy.", assessment: "OpenBot's policy is concrete but narrower than Grok's dynamic tool and execution graph.", evidence: [ev("o", "packages/agent/src/queue/turn-runner.ts", "L464-L506"), ev("o", "packages/agent/src/queue/turn-runner.ts", "L564-L590"), ev("g", "source/host/runner/tools/turn-toolset.ts", "L151-L166")] },
+      { category: "Collaboration", feature: "Agent message delivery and identity context", status: "Implemented", openbot: "Direct-agent turns carry sender/recipient context and instruct the receiving agent that content is not user authority.", grok: "Send-to-agent and shared-room tools are composed with per-turn identity and permission context.", assessment: "Both model agent identity explicitly enough for asynchronous collaboration.", evidence: [ev("o", "packages/agent/src/queue/turn-runner.ts", "L228-L245"), ev("o", "packages/db/src/messages.ts", "L318-L420"), ev("g", "source/host/runner/tools/turn-toolset.ts", "L83-L90")] },
+      { category: "Collaboration", feature: "Human approval / review-gated actions", status: "Partial", openbot: "Waiting-turn widgets provide user approval/input for selected tool interactions.", grok: "Review gates cover launch/reply/rename/cancel/archive/delete and tool auto-review/escalation paths.", assessment: "OpenBot has the interaction mechanism; Grok applies it to more destructive and remote actions.", evidence: [ev("o", "packages/db/src/turns.ts", "L255-L342"), ev("o", "apps/app/src/components/conversation/action-card.tsx", "L1-L220"), ev("g", "source/host/cloud-agents/cloud-agent-tool.ts", "L3-L30")] },
+      { category: "Collaboration", feature: "Cross-user rooms and resource ACLs", status: "Missing", openbot: "No room ACLs, invitations, or cross-user resource-sharing model found beyond the single installation user.", grok: "Account/auth and external collaboration integrations participate in a broader product boundary.", assessment: "OpenBot groups should not be interpreted as multi-user collaboration; identity and room authorization are separate gaps.", evidence: [ev("o", "packages/db/src/schema.ts", "L70-L126"), ev("g", "source/host/extensions/auth/auth-service.ts", "L1-L180"), ev("g", "source/host/extensions/automations/listener-integrations.ts", "L1-L40")] },
+
+      // MCP / plugins
+      { category: "MCP / plugins", feature: "MCP/plugin catalog and search", status: "Partial", openbot: "Built-in catalog and UI search use case-insensitive substring matching over names/skills, with status/capability rendering.", grok: "MCP meta-tools and management tooling discover and gate dynamic MCP tools.", assessment: "Both provide discovery, but OpenBot's matching is basic rather than relevance-ranked or a single shared natural-query semantic across agent and UI surfaces.", evidence: [ev("o", "packages/plugins/src/management.ts", "L40-L116"), ev("o", "apps/app/src/components/openbot/plugins-dialog.tsx", "L134-L169"), ev("o", "packages/plugins/src/mcp-catalog.ts", "L1-L220"), ev("g", "source/host/runner/tools/turn-toolset.ts", "L24-L38")] },
+      { category: "MCP / plugins", feature: "Install with approval and per-agent grant", status: "Implemented", openbot: "Installation requests approval, validates selected accounts, installs the server, and grants account access to an agent.", grok: "MCP management tools, tool permissions, and host review machinery gate dynamic tool use.", assessment: "OpenBot has a concrete end-to-end local install/grant flow.", evidence: [ev("o", "packages/plugins/src/management.ts", "L158-L203"), ev("o", "packages/plugins/src/management.ts", "L259-L358"), ev("g", "source/host/runner/tools/turn-toolset.ts", "L100-L107")] },
+      { category: "MCP / plugins", feature: "MCP OAuth discovery, PKCE, exchange, and refresh", status: "Implemented", openbot: "OAuth protected-resource/authorization-server discovery, HTTPS checks, PKCE continuation, token exchange, and refresh are implemented.", grok: "Grok has host MCP authentication/completion infrastructure and broader connector auth.", assessment: "OpenBot materially covers standard MCP OAuth; Grok's auth boundary is larger, not necessarily more complete for this narrow protocol.", evidence: [ev("o", "packages/plugins/src/oauth.ts", "L92-L180"), ev("o", "packages/plugins/src/oauth.ts", "L198-L272"), ev("g", "source/host/mcp-auth/mcp-auth-wait-registry.ts", "L1-L180")] },
+      { category: "MCP / plugins", feature: "Dynamic MCP tool discovery and invocation", status: "Partial", openbot: "MCP servers/accounts are persisted and become available to an agent after connection/grant.", grok: "Dynamic registry, get-MCP-tools, call-MCP-tool, timeouts, and per-turn tool gating are explicit.", assessment: "OpenBot supports the lifecycle but exposes a smaller dynamic invocation/control surface.", evidence: [ev("o", "packages/db/src/mcp.ts", "L1-L220"), ev("o", "packages/plugins/src/management.ts", "L231-L358"), ev("g", "source/host/runner/tools/turn-toolset.ts", "L24-L38")] },
+      { category: "MCP / plugins", feature: "Extension graph and capability gating", status: "Partial", openbot: "Packages aggregate a fixed built-in tool/plugin set with lane-based degradation.", grok: "Host extensions compose dependencies and per-turn tool sets with static/dynamic/fenced scopes.", assessment: "OpenBot's modularity is package-level; Grok's is a runtime extension graph.", evidence: [ev("o", "packages/agent/src/tools/index.ts", "L41-L56"), ev("g", "source/host/sand-host.ts", "L1-L220"), ev("g", "source/host/runner/tools/turn-toolset.ts", "L151-L175")] },
+      { category: "MCP / plugins", feature: "Plugin lifecycle tests and registry validation", status: "Implemented", openbot: "Management, OAuth continuation, and registry tests are present alongside implementation.", grok: "Large source/test surface validates extension and protocol behavior.", assessment: "Both include automated evidence around their integration surfaces.", evidence: [ev("o", "packages/plugins/src/management.test.ts", "L1-L260"), ev("o", "packages/plugins/src/oauth-continuation.test.ts", "L1-L260"), ev("o", "packages/plugins/src/registry.test.ts", "L1-L220")] },
+
+      // Memory
+      { category: "Memory", feature: "Durable scoped memory", status: "Implemented", openbot: "Memory items support user-shared and agent-private scope, profile/log/note kinds, and durable CRUD.", grok: "File-backed agent memory and memory extension services are integrated with the host.", assessment: "Both provide durable assistant memory with different storage and synthesis semantics.", evidence: [ev("o", "packages/db/src/schema.ts", "L290-L320"), ev("o", "packages/memory/src/tools.ts", "L37-L95"), ev("g", "source/host/extensions/memory/memory-service.ts", "L1-L220")] },
+      { category: "Memory", feature: "Agent-facing memory update and recall tools", status: "Implemented", openbot: "updateMemory and recallMemory validate scope and enforce access to shared-user or own memory.", grok: "Memory extension exposes file-backed memory and synthesis-facing target services.", assessment: "OpenBot's explicit tool contract covers the everyday memory interaction.", evidence: [ev("o", "packages/memory/src/tools.ts", "L134-L179"), ev("g", "source/host/extensions/memory/memory-service.ts", "L1-L220")] },
+      { category: "Memory", feature: "Evidence-backed automatic memory synthesis", status: "Missing", openbot: "No background synthesis, proposal verification, evidence IDs, or stale-commit handling found.", grok: "Memory synthesis proposes/normalizes/verifies changes with debounce, retries, evidence checks, and commit outcomes.", assessment: "This is a major intelligence/persistence gap beyond basic memory CRUD.", evidence: [ev("o", "packages/memory/src/tools.ts", "L1-L179"), ev("g", "source/host/extensions/memory/memory-synthesis-service.ts", "L23-L115"), ev("g", "source/host/extensions/memory/memory-synthesis-service.ts", "L226-L295")] },
+      { category: "Memory", feature: "Project/workspace memory membership", status: "Missing", openbot: "No project membership file or project-scoped memory identity was found.", grok: "Agent project membership is persisted in a safe file-backed projects.json model.", assessment: "OpenBot has agent workspace paths, but not Grok's explicit project membership layer.", evidence: [ev("o", "packages/agent/src/tools/shell/workspace.ts", "L1-L140"), ev("g", "source/host/extensions/memory/project-membership.ts", "L1-L24")] },
+      { category: "Memory", feature: "Memory synchronization across devices/services", status: "Missing", openbot: "Memory is local SQLite state with no object-store or account sync path.", grok: "Box-store synchronization and cloud-backed extension services provide broader state movement.", assessment: "Local durability is not equivalent to synchronized memory.", evidence: [ev("o", "packages/db/src/memory.ts", "L1-L220"), ev("g", "source/host/extensions/box-store-sync/box-store-sync.ts", "L1-L220")] },
+
+      // Automations
+      { category: "Automations", feature: "Scheduled routines / cron", status: "Missing", openbot: "No scheduler, cron trigger, routine definition, or scheduled run history found.", grok: "Scheduled cloud automation definitions, fire consumer, polling, and local/cloud scheduling policy are present.", assessment: "OpenBot only wakes from queued/user/background work; it does not independently schedule routines.", evidence: [ev("o", "packages/agent/src/queue/turn-runner.ts", "L564-L620"), ev("g", "source/host/extensions/automations/sand-automation-fire-consumer.ts", "L1-L110"), ev("g", "source/host/extensions/automations/extension.ts", "L22-L85")] },
+      { category: "Automations", feature: "Event-triggered routines", status: "Missing", openbot: "No external listener, event trigger matcher, relay, or automation fire consumer found.", grok: "Trigger hub maps and reconciles event listeners and fires matching automations.", assessment: "This requires external integration lifecycle and deduplicated event delivery absent from OpenBot.", evidence: [ev("o", "packages/agent/src/tools/index.ts", "L41-L106"), ev("g", "source/host/extensions/automations/sand-trigger-hub.ts", "L1-L21"), ev("g", "source/host/extensions/automations/backend-relay-source.ts", "L1-L17")] },
+      { category: "Automations", feature: "Connector integrations", status: "Missing", openbot: "No Slack/GitHub/Linear/Sentry/PagerDuty/Teams listener or connector integration found.", grok: "Relay and cloud-trigger code handles Slack/GitHub and multiple cloud trigger types.", assessment: "MCP connectors are not equivalent to built-in event automation integrations.", evidence: [ev("o", "packages/plugins/src/mcp-catalog.ts", "L1-L220"), ev("g", "source/host/extensions/automations/listener-integrations.ts", "L1-L40"), ev("g", "source/host/extensions/automations/sand-automation-cloud-trigger.ts", "L1-L10")] },
+      { category: "Automations", feature: "Automation run state, retries, and diagnostics", status: "Missing", openbot: "No automation run ledger, retry/backoff consumer, or automation-specific telemetry found.", grok: "Fire consumer tracks running/completed outcomes, polling, acknowledgements, backoff, and telemetry.", assessment: "A durable scheduled/event execution subsystem would be new product infrastructure for OpenBot.", evidence: [ev("o", "packages/db/src/turns.ts", "L231-L280"), ev("g", "source/host/extensions/automations/sand-automation-fire-consumer.ts", "L34-L110"), ev("g", "source/host/extensions/automations/extension.ts", "L63-L85")] },
+      { category: "Automations", feature: "User-visible reminders / tray notifications", status: "Missing", openbot: "No reminder scheduler, desktop tray, or automation notification path found.", grok: "Host automation errors/recovery can push tray diagnostics and notify through host buses.", assessment: "OpenBot has web status/widgets but no independent reminder/desktop notification surface.", evidence: [ev("o", "apps/app/src/components/conversation/action-card.tsx", "L1-L220"), ev("g", "source/host/extensions/automations/extension.ts", "L63-L80")] },
+
+      // UI / chat
+      { category: "UI / chat", feature: "Conversation list and navigation", status: "Implemented", openbot: "Sidebar and conversation components support local agents, groups, and conversation navigation.", grok: "Recovered frontend features provide a product renderer/navigation surface.", assessment: "The core chat navigation capability is present in both products.", evidence: [ev("o", "apps/app/src/components/openbot/sidebar.tsx", "L1-L260"), ev("o", "apps/app/src/components/openbot/conversations.ts", "L1-L28"), ev("g", "frontend/src/recovered/features/conversation/workspace/sidebar-section-delete-confirmation.tsx", "L1-L65")] },
+      { category: "UI / chat", feature: "Draft persistence and composer state", status: "Implemented", openbot: "Drafts preserve text, staged attachments, and reply targets; send state is coordinated with turns.", grok: "Desktop renderer has richer session/composer integration around host actions.", assessment: "OpenBot materially implements the everyday draft/composer capability.", evidence: [ev("o", "apps/app/src/components/conversation/composer.tsx", "L73-L253"), ev("o", "apps/app/src/components/conversation/conversation.tsx", "L272-L311")] },
+      { category: "UI / chat", feature: "Visible attachment button and upload UX", status: "Partial", openbot: "File input is hidden; paste and drag-and-drop still stage up to six files.", grok: "Attachment services and frontend surfaces provide a first-class media flow.", assessment: "The OpenBot backend/data path exists, but the primary affordance is intentionally not exposed.", evidence: [ev("o", "apps/app/src/components/conversation/composer.tsx", "L375-L430"), ev("o", "apps/app/src/components/conversation/composer.tsx", "L423-L430"), ev("g", "source/host/extensions/attachments/extension.ts", "L1-L180")] },
+      { category: "UI / chat", feature: "Voice capture and transcription", status: "Missing", openbot: "Voice states are wired to a mock timer and insert the literal “Transcribed voice note.”; the button is hidden.", grok: "Desktop/media surface includes broader attachment/audio integration.", assessment: "OpenBot has placeholder UX, not real capture, upload, or transcription.", evidence: [ev("o", "apps/app/src/components/conversation/composer.tsx", "L327-L342"), ev("o", "apps/app/src/components/conversation/composer.tsx", "L480-L488"), ev("g", "frontend/src/recovered/features/conversation/workspace/voice.tsx", "L1-L486")] },
+      { category: "UI / chat", feature: "Reactions and reply affordances", status: "Implemented", openbot: "Message rows expose reactions, reply targets, and server reconciliation.", grok: "Shared-room tools and recovered UI support reaction/message action surfaces.", assessment: "Comparable chat affordances are implemented locally in OpenBot.", evidence: [ev("o", "apps/app/src/components/conversation/conversation.tsx", "L197-L247"), ev("o", "apps/app/src/components/conversation/conversation.tsx", "L516-L545"), ev("g", "source/host/runner/tools/turn-toolset.ts", "L14-L16")] },
+      { category: "UI / chat", feature: "Thread view and persisted thread sends", status: "Partial", openbot: "Thread view is rendered inline, but sends inside a thread remain client-local and nested creation is unavailable.", grok: "Grok's conversation action state is integrated with a larger desktop/host conversation model.", assessment: "OpenBot's thread UI is useful but is not a durable server-side thread feature.", evidence: [ev("o", "apps/app/src/components/conversation/conversation.tsx", "L459-L560"), ev("o", "apps/app/src/components/conversation/conversation.tsx", "L543-L549")] },
+      { category: "UI / chat", feature: "Inline action cards and widgets", status: "Implemented", openbot: "Waiting turns deliver widget messages and the UI patches/responds to inline cards.", grok: "Action/review handlers and tool UI support user-mediated actions.", assessment: "OpenBot has the core human-in-the-loop card mechanism.", evidence: [ev("o", "packages/db/src/turns.ts", "L286-L342"), ev("o", "apps/app/src/components/conversation/conversation.tsx", "L312-L380"), ev("o", "apps/app/src/components/conversation/action-card.tsx", "L1-L220")] },
+      { category: "UI / chat", feature: "Stream reconnect and catch-up UX", status: "Partial", openbot: "Reload replays pending turn rows and reports a lost stream while the agent continues; polling catches non-user-started output.", grok: "Host/action checkpoints and renderer updates cover a broader lifecycle.", assessment: "OpenBot is resilient for local turns, but not for cloud/box/desktop process recovery.", evidence: [ev("o", "apps/app/src/components/conversation/conversation.tsx", "L168-L188"), ev("o", "apps/app/src/components/conversation/conversation.tsx", "L391-L458"), ev("g", "source/packages/agent/index.ts", "L118-L139")] },
+      { category: "UI / chat", feature: "Provider/model settings surface", status: "Partial", openbot: "Settings depict provider/server controls, but provider connections and server updates are local UI state; the actual shared runtime reads environment configuration and model choice is not per-agent.", grok: "Model catalogs, cloud model params, and auth-backed service settings are exposed by the host/product.", assessment: "OpenBot has a settings-shaped UI and a real env-backed runtime, not Grok's multi-surface model management or a fully wired settings backend.", evidence: [ev("o", "apps/app/src/components/openbot/settings-dialog.tsx", "L1-L240"), ev("o", "packages/agent/src/ai.ts", "L12-L91"), ev("g", "source/host/cloud-agents/cloud-agent-tool.ts", "L18-L21")] },
+      { category: "UI / chat", feature: "Desktop windows, tray, and native lifecycle", status: "Missing", openbot: "No Electron window, preload, tray, native shortcut, or desktop lifecycle implementation.", grok: "Electron main and host extensions manage windows, lifecycle, tray feedback, and native boundaries.", assessment: "This is product-shell scope rather than a missing chat component.", evidence: [ev("o", "apps/app/src/router.tsx", "L1-L20"), ev("g", "source/electron-main/main.ts", "L1-L160"), ev("g", "source/host/main.ts", "L1-L160")] },
+      { category: "UI / chat", feature: "Visual computer/VNC UI", status: "Missing", openbot: "No visual computer session, screenshot viewer, VNC endpoint, or computer review UI found.", grok: "Computer-use tools and user-computer ports provide a visual interaction surface.", assessment: "The gap follows the absent computer runtime, not merely a missing button.", evidence: [ev("o", "apps/app/src/components/conversation/conversation.tsx", "L1-L732"), ev("g", "source/host/runner/tools/sand-computer-tool.ts", "L1-L220"), ev("g", "source/host/ports/user-computer.ts", "L1-L2")] },
+      { category: "UI / chat", feature: "Cloud-agent transcript and artifact UX", status: "Missing", openbot: "No cloud-agent status/list/watch/transcript/artifact view found.", grok: "Cloud-agent tool can dump JSONL transcripts and list artifacts into the box workspace.", assessment: "OpenBot has no remote agent entity for the UI to display.", evidence: [ev("o", "apps/app/src/components/openbot/sidebar.tsx", "L1-L397"), ev("g", "source/host/cloud-agents/cloud-agent-tool.ts", "L31-L45"), ev("g", "source/host/cloud-agents/cloud-agent-transcript-dump.ts", "L1-L5")] },
+
+      // Security / telemetry / persistence
+      { category: "Security / telemetry / persistence", feature: "Authentication and user identity", status: "Missing", openbot: "No sign-in, account identity, session auth, or user-owned resource boundary found in the local app model.", grok: "Auth service and access-token based host/service integrations are present.", assessment: "OpenBot's local single-install assumption is a product difference, but it leaves account features absent.", evidence: [ev("o", "packages/db/src/schema.ts", "L29-L48"), ev("g", "source/host/extensions/auth/auth-service.ts", "L1-L180"), ev("g", "source/host/extensions/automations/extension.ts", "L71-L74")] },
+      { category: "Security / telemetry / persistence", feature: "Secret storage and connector credentials", status: "Missing", openbot: "MCP OAuth credentials are persisted for its local flow, but no general OS/host secret store or connector-secret service was found.", grok: "Host secret store, secrets extension, connector secret store, and secret request tooling are explicit.", assessment: "OpenBot has protocol-specific credentials, not Grok's general secret-management boundary.", evidence: [ev("o", "packages/plugins/src/oauth.ts", "L263-L330"), ev("o", "packages/db/src/mcp.ts", "L1-L220"), ev("g", "source/host/host-secret-store.ts", "L1-L180"), ev("g", "source/host/extensions/secrets/secrets-service.ts", "L1-L220")] },
+      { category: "Security / telemetry / persistence", feature: "Filesystem/path policy", status: "Partial", openbot: "Workspace helpers constrain normal agent file/shell paths, but no isolated box or external-machine permission domain exists.", grok: "Box and external machine roots are distinct, with containment checks, review, and transfer tooling.", assessment: "OpenBot has local path discipline; Grok has a multi-domain trust policy.", evidence: [ev("o", "packages/agent/src/tools/shell/workspace.ts", "L1-L140"), ev("g", "source/host/runner/tools/turn-toolset.ts", "L138-L149"), ev("g", "source/host/extensions/attachments/box-staging.ts", "L1-L180")] },
+      { category: "Security / telemetry / persistence", feature: "Telemetry and analytics", status: "Missing", openbot: "No structured product analytics, OpenTelemetry exporter, lifecycle event taxonomy, or consented telemetry service found.", grok: "Telemetry extension emits host/box lifecycle, event-loop, analytics, automation, and tracing signals.", assessment: "Console/debug behavior is not equivalent to Grok's structured observability subsystem.", evidence: [ev("o", "packages/agent/src/queue/turn-runner.ts", "L60-L75"), ev("g", "source/host/extensions/telemetry/lifecycle-telemetry.ts", "L1-L212"), ev("g", "source/host/extensions/telemetry/host-tracing.ts", "L1-L80")] },
+      { category: "Security / telemetry / persistence", feature: "Diagnostics and structured operational logging", status: "Partial", openbot: "Turn/tool errors are returned and durable turn statuses are recorded.", grok: "Structured diagnostics cover host lifecycle, box crashes/restarts, automation drops, GC, and event-loop health.", assessment: "OpenBot has application error visibility; Grok has system-level diagnostics.", evidence: [ev("o", "packages/agent/src/queue/turn-runner.ts", "L394-L452"), ev("g", "source/host/extensions/telemetry/lifecycle-telemetry.ts", "L43-L212"), ev("g", "source/host/extensions/telemetry/event-loop-telemetry.ts", "L1-L80")] },
+      { category: "Security / telemetry / persistence", feature: "Schema constraints and migrations", status: "Implemented", openbot: "Relational checks enforce turn status, ownership XOR, IDs, and migration history is tracked in Drizzle.", grok: "Generated protocol/state schemas and store migration/snapshot infrastructure are present.", assessment: "Both have explicit evolution contracts; the storage technologies differ.", evidence: [ev("o", "packages/db/src/schema.ts", "L127-L202"), ev("o", "packages/db/drizzle/0000_slim_jack_murdock.sql", "L1-L120"), ev("g", "source/host/extensions/box-store-sync/sqlite-snapshot.ts", "L1-L180")] },
+      { category: "Security / telemetry / persistence", feature: "Durable transcript and artifact export", status: "Partial", openbot: "Local transcript rows and managed files persist, but no cloud-agent JSONL/artifact export workflow exists.", grok: "Cloud-agent transcript dumps and artifact listing write inspectable outputs into the box.", assessment: "OpenBot is durable locally; Grok adds explicit remote run export semantics.", evidence: [ev("o", "packages/db/src/messages.ts", "L37-L79"), ev("o", "packages/db/src/files.ts", "L1-L220"), ev("g", "source/host/cloud-agents/cloud-agent-transcript-dump.ts", "L1-L5"), ev("g", "source/host/cloud-agents/cloud-agent-tool.ts", "L34-L41")] },
+      { category: "Security / telemetry / persistence", feature: "Snapshot, packing, and object-store synchronization", status: "Missing", openbot: "No box snapshot pack/upload/download or object-store synchronization layer found.", grok: "Store snapshots, pack pipelines, hydration, manifests, object-store transfer, and diagnostics are extensive.", assessment: "This is a platform persistence capability beyond a local SQLite backup migration.", evidence: [ev("o", "packages/db/src/client.ts", "L1-L180"), ev("g", "source/host/extensions/box-store-sync/box-store-hydration.ts", "L1-L220"), ev("g", "source/host/extensions/box-store-sync/box-store-pack-pipeline.ts", "L1-L220")] },
+      { category: "Security / telemetry / persistence", feature: "Local durability and recovery implementation", status: "Implemented", openbot: "Transactional send acceptance, durable turn statuses, queue claims, recovery listing, and stream replay are implemented.", grok: "State checkpoints, blob flushing, host/box recovery, and action continuation cover a wider failure domain.", assessment: "This row assesses implementation, not test-count parity; the test inventory is recorded in Appendix E.", evidence: [ev("o", "packages/db/src/messages.ts", "L191-L316"), ev("o", "packages/db/src/turns.ts", "L138-L200"), ev("o", "apps/app/src/components/conversation/conversation.tsx", "L168-L188"), ev("g", "source/packages/agent/index.ts", "L118-L139")] }
+    ];
+
+    const statusKey = value => value.toLowerCase();
+    const esc = value => String(value).replace(/[&<>"']/g, char => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", "\"":"&quot;", "'":"&#39;"}[char]));
+    const sourceMeta = { o: { root: openbotRoot, name: "OpenBot" }, g: { root: grokRoot, name: "Grok" } };
+    const sourceLink = item => {
+      const source = sourceMeta[item.side];
+      const root = source.root;
+      const name = source.name;
+      return `<a href="${root}${encodeURI(item.path)}" title="Open ${esc(name)} source file"><span class="mono">${esc(name)} · ${esc(item.path)}:${esc(item.lines)}</span></a>`;
+    };
+    const body = document.getElementById("matrix-body");
+    const empty = document.getElementById("empty");
+    const search = document.getElementById("search");
+    const statusFilter = document.getElementById("status-filter");
+    const categoryFilter = document.getElementById("category-filter");
+    const footCount = document.getElementById("matrix-foot-count");
+    const categories = [...new Set(comparison.map(row => row.category))];
+    categories.forEach(category => { const option = document.createElement("option"); option.value = category; option.textContent = category; categoryFilter.append(option); });
+
+    function filteredRows() {
+      const needle = search.value.trim().toLowerCase();
+      const status = statusFilter.value;
+      const category = categoryFilter.value;
+      return comparison.filter(row => {
+        if (status !== "all" && row.status !== status) return false;
+        if (category !== "all" && row.category !== category) return false;
+        if (!needle) return true;
+        return [row.category, row.feature, row.status, row.openbot, row.grok, row.assessment, ...row.evidence.flatMap(item => [item.side, item.path, item.lines])].join(" ").toLowerCase().includes(needle);
+      });
+    }
+
+    function render() {
+      const rows = filteredRows();
+      body.replaceChildren();
+      let previousCategory = "";
+      rows.forEach(row => {
+        if (row.category !== previousCategory) {
+          const group = document.createElement("tr");
+          group.className = "group-row";
+          group.innerHTML = `<td colspan="6">${esc(row.category)}</td>`;
+          body.append(group);
+          previousCategory = row.category;
+        }
+        const tr = document.createElement("tr");
+        tr.className = "feature-row";
+        tr.innerHTML = `<td><span class="status status-${statusKey(row.status)}">${esc(row.status)}</span></td><td><div class="cell-title">${esc(row.feature)}</div></td><td>${esc(row.openbot)}</td><td>${esc(row.grok)}</td><td>${esc(row.assessment)}</td><td><div class="evidence">${row.evidence.map(sourceLink).join("")}</div></td>`;
+        body.append(tr);
+      });
+      empty.hidden = rows.length !== 0;
+      const noun = rows.length === 1 ? "capability" : "capabilities";
+      footCount.textContent = `Showing ${rows.length} of ${comparison.length} ${noun}`;
+      document.getElementById("count-visible").textContent = rows.length;
+    }
+
+    const statuses = ["Implemented", "Partial", "Missing", "Different"];
+    const counts = comparison.reduce((all, row) => { all[row.status] = (all[row.status] || 0) + 1; return all; }, {});
+    document.getElementById("count-total").textContent = comparison.length;
+    statuses.forEach(status => { document.getElementById(`count-${statusKey(status)}`).textContent = counts[status] || 0; });
+    [search, statusFilter, categoryFilter].forEach(control => control.addEventListener("input", render));
+    document.getElementById("reset").addEventListener("click", () => { search.value = ""; statusFilter.value = "all"; categoryFilter.value = "all"; render(); });
+    statuses.forEach(status => document.getElementById(`count-${statusKey(status)}`).parentElement.addEventListener("click", () => { statusFilter.value = status; render(); }));
+    render();
+  </script>
+</body>
+</html>
