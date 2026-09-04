@@ -18,7 +18,7 @@ export function ToolStatusIcon({
 
 /** Compact expandable tool-call row (not terminal-first output). */
 export function ToolCallRow({ call, result }: { call: ToolCall; result?: ToolResult }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(Boolean(result?.imageUrl))
 
   return (
     <div className="max-w-xl min-w-0 overflow-hidden rounded-lg border bg-card/50">
@@ -68,6 +68,22 @@ export function ToolResultCard({ result }: { result: ToolResult }) {
         <span className="ml-auto shrink-0 font-medium text-muted-foreground">{result.status}</span>
       </summary>
       <div className="border-t px-2.5 py-2">
+        {result.imageUrl && (
+          <a href={result.imageUrl} target="_blank" rel="noreferrer" className="block">
+            <img
+              src={result.imageUrl}
+              alt={result.imageAlt ?? 'Tool result'}
+              className="max-h-80 w-full rounded-md border object-contain"
+            />
+          </a>
+        )}
+        {(result.dimensions || result.cursor) && (
+          <div className="my-1.5 font-mono text-[10px] text-muted-foreground/70">
+            {result.dimensions && `${result.dimensions.width}×${result.dimensions.height}`}
+            {result.dimensions && result.cursor && ' · '}
+            {result.cursor && `cursor (${result.cursor.x}, ${result.cursor.y})`}
+          </div>
+        )}
         {result.cwd && (
           <div className="mb-1.5 font-mono text-[10px] text-muted-foreground/70">{result.cwd}</div>
         )}
@@ -91,7 +107,7 @@ export function ToolResultCard({ result }: { result: ToolResult }) {
             ))}
           </pre>
         )}
-        {!result.output && !result.diff && (
+        {!result.output && !result.diff && !result.imageUrl && (
           <p className="text-[11px] text-muted-foreground">No additional details.</p>
         )}
       </div>

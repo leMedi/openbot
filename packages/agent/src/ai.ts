@@ -54,7 +54,7 @@ function writeModelsConfig(config: AiConfig) {
             baseUrl: config.baseUrl,
             api: 'openai-completions',
             apiKey: '$OPENBOT_AI_API_KEY',
-            models: [{ id: config.model, name: config.model }],
+            models: [{ id: config.model, name: config.model, input: ['text', 'image'] }],
           },
         },
       },

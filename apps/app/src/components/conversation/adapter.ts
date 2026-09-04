@@ -12,6 +12,7 @@ import type {
   Author,
   Entry,
   ToolCall,
+  ToolResult,
   WidgetOption,
   WidgetResponse,
   WidgetView,
@@ -28,6 +29,10 @@ type ToolPayload = {
   preview?: unknown
   status?: unknown
   detail?: unknown
+  outcome?: unknown
+  display?: unknown
+  cursor?: unknown
+  screenshot?: unknown
 }
 
 function toolCallFrom(row: ConversationMessage): ToolCall {
@@ -42,6 +47,49 @@ function toolCallFrom(row: ConversationMessage): ToolCall {
         ? status
         : ('success' as const),
     detail: typeof payload.detail === 'string' ? payload.detail : undefined,
+  }
+}
+
+function toolResultFrom(row: ConversationMessage): ToolResult {
+  const payload = (row.payloadJson ?? {}) as ToolPayload
+  const screenshot =
+    payload.screenshot && typeof payload.screenshot === 'object'
+      ? (payload.screenshot as Record<string, unknown>)
+      : undefined
+  const display =
+    payload.display && typeof payload.display === 'object'
+      ? (payload.display as Record<string, unknown>)
+      : undefined
+  const cursor =
+    payload.cursor && typeof payload.cursor === 'object'
+      ? (payload.cursor as Record<string, unknown>)
+      : screenshot?.cursor && typeof screenshot.cursor === 'object'
+        ? (screenshot.cursor as Record<string, unknown>)
+        : undefined
+  const fileId = typeof screenshot?.fileId === 'string' ? screenshot.fileId : undefined
+  const width =
+    typeof screenshot?.width === 'number'
+      ? screenshot.width
+      : typeof display?.width === 'number'
+        ? display.width
+        : undefined
+  const height =
+    typeof screenshot?.height === 'number'
+      ? screenshot.height
+      : typeof display?.height === 'number'
+        ? display.height
+        : undefined
+  return {
+    kind: typeof payload.name === 'string' ? payload.name : 'Tool result',
+    status: typeof payload.outcome === 'string' ? payload.outcome.replaceAll('_', ' ') : 'complete',
+    output: row.bodyText ?? undefined,
+    ...(fileId && { imageUrl: `/api/files/${fileId}`, imageAlt: 'Remote Desktop screenshot' }),
+    ...(width !== undefined && height !== undefined
+      ? { dimensions: { width, height } }
+      : {}),
+    ...(typeof cursor?.x === 'number' && typeof cursor.y === 'number'
+      ? { cursor: { x: cursor.x, y: cursor.y } }
+      : {}),
   }
 }
 
@@ -223,6 +271,7 @@ export function entryFromMessage(
       author,
       time,
       call: toolCallFrom(row),
+      ...(row.kind === 'tool_result' && { result: toolResultFrom(row) }),
     }
   }
   if (row.kind === 'status' && row.payloadJson.event === 'turn_waiting') {

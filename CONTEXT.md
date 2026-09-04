@@ -304,6 +304,25 @@ database deletion first and then attempts disk deletion. A process failure can
 leave an orphaned disk file; this is an accepted MVP limitation. A maintenance
 command can later scan for and remove unreferenced files.
 
+## Remote Desktop Computer Use
+
+Screenshot and Computer Use execute on the same Remote Desktop machine as the
+OpenBot server and Shell. The web/mobile client only renders durable results
+and approval prompts; it never captures its own screen or injects input.
+
+One configured local desktop-driver boundary discovers the active display,
+captures screenshots, and executes normalized screenshot, click, move, drag,
+type, key, scroll, and wait actions. Coordinates are validated against current
+driver dimensions. A process-wide lease serializes Computer sequences on each
+graphical session, while read-only Screenshot calls remain independent.
+
+Screenshots are stored through `managed_files` and referenced by durable
+computer-use transcript rows. Reviewed actions carry a fingerprint over the
+agent, conversation, turn, exact normalized actions, display, and screen state.
+One-shot approvals are rejected when that target changes. Agent workspaces are
+organizational path boundaries, not separate desktops, machines, or security
+sandboxes.
+
 ## MCP
 
 MCP server definitions and accounts are global to the single user. Agents gain
@@ -452,6 +471,11 @@ Remaining implementation slices are:
 - `apps/app/src/server/ai.ts`: OpenAI-compatible streaming inference client.
 - `apps/app/src/server/agent-tools.ts`: agent tool definitions and executor,
   including the SendMessage delivery tool.
+- `packages/agent/src/desktop/driver.ts`: server-local desktop-driver boundary
+  and configured executable protocol.
+- `packages/agent/src/desktop/runtime.ts`: per-turn review, lease, execution,
+  screenshot persistence, audit, and normalized Computer Use outcomes.
+- `packages/agent/src/tools/computer.ts`: Screenshot and Computer model tools.
 - `apps/app/src/server/mcp-oauth.server.ts`: runtime-held OAuth authorization
   flows, PKCE callback exchange, credential persistence, and token refresh.
 - `apps/app/src/server/send-message-reminders.ts`: delivery accounting and

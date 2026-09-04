@@ -18,6 +18,7 @@ import {
   type WaitingState,
 } from '@openbot/db'
 import * as z from 'zod'
+import type { DesktopToolRuntime } from '../desktop/runtime'
 import { agentWorkspaceDirectory, resolveWorkspacePath } from './shell/workspace'
 
 export const SEND_MESSAGE_TOOL_NAME = 'SendMessage'
@@ -175,6 +176,8 @@ export type ToolTurnContext = {
   sendDirectAgentMessage: (
     input: Omit<DirectAgentMessageInput, 'senderAgentId'>,
   ) => Promise<{ deliveryId: string; turn: Turn }>
+  /** Fresh server-local Remote Desktop capability for this turn. */
+  desktop?: DesktopToolRuntime
 }
 
 const ATTACHMENT_SIZE_LIMIT = 25 * 1024 * 1024

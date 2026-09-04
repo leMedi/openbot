@@ -10,6 +10,14 @@ import {
   updateMemoryArgsSchema,
 } from '@openbot/memory'
 import * as z from 'zod'
+import {
+  computerToolDefinition,
+  COMPUTER_TOOL_NAME,
+  executeComputerTool,
+  executeScreenshotTool,
+  screenshotToolDefinition,
+  SCREENSHOT_TOOL_NAME,
+} from './computer'
 import { executeRead, readArgsSchema, readToolDefinition } from './read'
 import {
   executeSendAgentMessage,
@@ -45,6 +53,8 @@ export const agentToolDefinitions: ToolDefinition[] = [
   runShellToolDefinition,
   readToolDefinition,
   awaitShellToolDefinition,
+  screenshotToolDefinition,
+  computerToolDefinition,
 ]
 
 /** Degraded toolset for rounds after the tool budget runs out. */
@@ -53,7 +63,9 @@ export const sendMessageOnlyToolDefinitions: ToolDefinition[] = [
 ]
 
 /** Background wakes may stay silent, but can surface a material outcome. */
-export const backgroundToolDefinitions: ToolDefinition[] = agentToolDefinitions
+export const backgroundToolDefinitions: ToolDefinition[] = agentToolDefinitions.filter(
+  (tool) => tool.function.name !== COMPUTER_TOOL_NAME,
+)
 
 /**
  * Executes one model-requested tool call and returns the tool-role message
@@ -77,6 +89,12 @@ export async function executeAgentToolCall(
       return respond(
         await executeSendMessage(agent, sendMessageArgsSchema.parse(args), call, context),
       )
+    }
+    if (call.function.name === SCREENSHOT_TOOL_NAME) {
+      return respond(await executeScreenshotTool(call, args, context))
+    }
+    if (call.function.name === COMPUTER_TOOL_NAME) {
+      return respond(await executeComputerTool(call, args, context))
     }
     if (call.function.name === SEND_AGENT_MESSAGE_TOOL_NAME) {
       return respond(

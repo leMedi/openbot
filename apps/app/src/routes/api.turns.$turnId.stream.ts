@@ -6,10 +6,9 @@ import {
 } from '@openbot/agent'
 
 // Streams one turn's visible output as server-sent events: one `message` per
-// delivered SendMessage row, then a terminal `done`, `waiting` interaction,
-// or `error`. Reconnecting after a reload replays the rows already delivered
-// and continues live. Execution does not depend on this connection; closing
-// the tab never cancels the turn.
+// delivered SendMessage or durable tool-result row, then a terminal `done`,
+// `waiting` interaction, or `error`. Reconnecting replays persisted rows and
+// continues live. Execution does not depend on this connection.
 export const Route = createFileRoute('/api/turns/$turnId/stream')({
   server: {
     handlers: {

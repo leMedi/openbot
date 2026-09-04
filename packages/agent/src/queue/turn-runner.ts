@@ -39,6 +39,11 @@ import {
   type McpToolRegistry,
 } from '@openbot/plugins'
 import { getAiConfig, getOpenbotModel, piAgentDirectory } from '../ai'
+import { createDesktopDriver } from '../desktop/driver'
+import {
+  computerApprovalFromWaitingState,
+  DesktopToolRuntime,
+} from '../desktop/runtime'
 import { prepareConversationTurn } from '../prompt/assembly'
 import type { ConversationPromptContext } from '../prompt/system'
 import {
@@ -65,6 +70,7 @@ export type TurnStreamEvent =
 
 type ActiveTurn = {
   delivered: ConversationMessage[]
+  sendMessageCount: number
   controller: AbortController
   subscribers: Set<(event: TurnStreamEvent) => void>
   /** Set once the pi session exists; cancellation aborts the running loop. */
@@ -125,6 +131,7 @@ async function executeTurn(turnId: string) {
 
   const active: ActiveTurn = {
     delivered: [],
+    sendMessageCount: 0,
     controller: new AbortController(),
     subscribers: new Set(),
   }
@@ -192,6 +199,7 @@ async function executeTurn(turnId: string) {
             approved: waitingState.response.optionId === 'approve',
           }
         : undefined
+    const computerApproval = computerApprovalFromWaitingState(waitingState)
     const builtInToolDefinitions =
       claimed.lane !== 'background' ? agentToolDefinitions : backgroundToolDefinitions
     const hasMcpAccess = claimed.lane !== 'background' && claimed.source !== 'subagent'
@@ -244,6 +252,19 @@ async function executeTurn(turnId: string) {
             ? `A detached shell you started has completed. Inspect ${String(wake.outputPath ?? '')} and decide whether the outcome materially matters to the user. This is a hidden background wake; nobody just messaged you. Send a message only for a requested result, meaningful failure or blocker, or useful artifact. Otherwise finish silently.`
             : undefined
         : undefined
+    const resumedText = waitingState?.response
+      ? waitingState.originatingToolCall.name === 'Computer'
+        ? computerApproval
+          ? '[The user approved the exact pending Computer action. Call Computer again with unchanged arguments. The approval applies only while the Remote Desktop state is unchanged.]'
+          : '[The user denied the pending Computer action. Do not retry it unless they explicitly ask for a new action.]'
+        : pluginApproval?.approved
+          ? approvedPluginHasAccount
+            ? `[The user approved ${pluginApproval.pluginId}. Access is enabled and its MCP tools are available now. Continue the user's original request using them.]`
+            : `[The user approved installing ${pluginApproval.pluginId}, but it has no connected account yet. Explain that they must connect an account in Plugins before you can continue the original request.]`
+          : waitingState.response.dismissed
+            ? `[The user moved on without answering the pending question.]\n\n${waitingState.response.text}`
+            : waitingState.response.text
+      : undefined
     const prepared = await prepareConversationTurn({
       agent,
       availableAgents,
@@ -252,15 +273,7 @@ async function executeTurn(turnId: string) {
       conversationId: conversation.id,
       turnId,
       workspace,
-      resumedText: waitingState?.response
-        ? pluginApproval?.approved
-          ? approvedPluginHasAccount
-            ? `[The user approved ${pluginApproval.pluginId}. Access is enabled and its MCP tools are available now. Continue the user's original request using them.]`
-            : `[The user approved installing ${pluginApproval.pluginId}, but it has no connected account yet. Explain that they must connect an account in Plugins before you can continue the original request.]`
-          : waitingState.response.dismissed
-          ? `[The user moved on without answering the pending question.]\n\n${waitingState.response.text}`
-          : waitingState.response.text
-        : undefined,
+      resumedText,
       hiddenWakePrompt,
     })
     const toolContext: ToolTurnContext = {
@@ -270,6 +283,7 @@ async function executeTurn(turnId: string) {
       priorDeliveries,
       onDelivered: (message) => {
         active.delivered.push(message)
+        active.sendMessageCount += 1
         emit({ type: 'message', message })
       },
       suspend: async (state, delivery) => {
@@ -301,6 +315,21 @@ async function executeTurn(turnId: string) {
         return delivery
       },
     }
+    toolContext.desktop = new DesktopToolRuntime({
+      driver: createDesktopDriver(),
+      approvalMode: agent.approvalMode,
+      agentId: agent.id,
+      conversationId: conversation.id,
+      turnId,
+      senderAgentId: prepared.senderAgentId,
+      signal: active.controller.signal,
+      approved: computerApproval,
+      onPersisted: (message) => {
+        active.delivered.push(message)
+        emit({ type: 'message', message })
+      },
+      suspend: toolContext.suspend,
+    })
     const managementTools = hasMcpAccess
       ? createMcpManagementTools(agent.id, {
           approval: pluginApproval,
@@ -405,7 +434,7 @@ async function executeTurn(turnId: string) {
     if (
       !active.controller.signal.aborted &&
       (claimed.source === 'composer' || claimed.source === 'group-orchestrator') &&
-      active.delivered.length === 0
+      active.sendMessageCount === 0
     ) {
       console.warn('[agent delivery missing]', {
         agent: { id: agent.id, name: agent.name },
@@ -416,7 +445,7 @@ async function executeTurn(turnId: string) {
       )
       if (finishSuspension()) return
       throwOnModelError(created.session.state.messages)
-      if (active.delivered.length === 0) {
+      if (active.sendMessageCount === 0) {
         throw new Error('Agent completed without delivering a message')
       }
     }
@@ -687,11 +716,13 @@ export function watchTurn(
         if (turn.status === 'succeeded') {
           const rows = await listConversationMessages(turn.conversationId)
           const turnRows = rows.filter((m) => m.turnId === currentTurnId)
-          const deliveries = turnRows.filter(
-            (m) => m.payloadJson.deliveryKind === 'send-message',
+          const visibleRows = turnRows.filter(
+            (m) =>
+              m.payloadJson.deliveryKind === 'send-message' ||
+              m.payloadJson.event === 'computer-use',
           )
-          for (const message of deliveries) onEvent({ type: 'message', message })
-          if (deliveries.length === 0) {
+          for (const message of visibleRows) onEvent({ type: 'message', message })
+          if (visibleRows.length === 0) {
             // A group orchestration turn succeeds by delegating: walk its
             // child turns (one per selected member) in round order.
             // The round runs sequentially on the orchestrator's drain; the

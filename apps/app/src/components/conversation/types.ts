@@ -107,6 +107,10 @@ export type ToolResult = {
   output?: string
   diff?: string
   cwd?: string
+  imageUrl?: string
+  imageAlt?: string
+  dimensions?: { width: number; height: number }
+  cursor?: { x: number; y: number }
 }
 
 export type VoiceState =

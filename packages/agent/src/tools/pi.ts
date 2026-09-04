@@ -5,7 +5,12 @@ import {
   defineTool,
   type ToolDefinition as PiToolDefinition,
 } from '@earendil-works/pi-coding-agent'
-import type { Agent, ModelToolCall, ToolDefinition } from '@openbot/db'
+import {
+  type Agent,
+  type ModelToolCall,
+  readManagedFile,
+  type ToolDefinition,
+} from '@openbot/db'
 import type { McpManagementTools, McpToolRegistry } from '@openbot/plugins'
 import type { TSchema } from 'typebox'
 import { executeAgentToolCall, type ToolTurnContext } from './index'
@@ -21,6 +26,37 @@ function asToolCall(toolCallId: string, name: string, params: unknown): ModelToo
 function textResult(text: string) {
   return {
     content: [{ type: 'text' as const, text }],
+    details: {},
+  }
+}
+
+async function modelVisibleResult(text: string) {
+  let screenshot: { fileId?: unknown; mediaType?: unknown } | undefined
+  try {
+    const parsed = JSON.parse(text) as { screenshot?: typeof screenshot }
+    screenshot = parsed.screenshot
+  } catch {
+    return textResult(text)
+  }
+  if (
+    !screenshot ||
+    typeof screenshot.fileId !== 'string' ||
+    typeof screenshot.mediaType !== 'string' ||
+    !screenshot.mediaType.startsWith('image/')
+  ) {
+    return textResult(text)
+  }
+  const managed = await readManagedFile(screenshot.fileId).catch(() => undefined)
+  if (!managed) return textResult(text)
+  return {
+    content: [
+      { type: 'text' as const, text },
+      {
+        type: 'image' as const,
+        data: Buffer.from(managed.bytes).toString('base64'),
+        mimeType: screenshot.mediaType,
+      },
+    ],
     details: {},
   }
 }
@@ -52,7 +88,7 @@ export function toPiBuiltinTools(
           asToolCall(toolCallId, definition.function.name, params),
           context,
         )
-        return textResult(result)
+        return modelVisibleResult(result)
       },
     }),
   )
