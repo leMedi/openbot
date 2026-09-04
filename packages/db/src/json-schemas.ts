@@ -215,6 +215,15 @@ export const computerUsePayloadSchema = z.discriminatedUnion('event', [
   }),
   z.object({
     version: z.literal(1),
+    event: z.literal('computer-use-progress'),
+    toolCallId: z.string().min(1),
+    name: z.literal('Computer'),
+    preview: z.string().min(1),
+    status: z.literal('pending'),
+    fingerprint: z.string().min(1),
+  }),
+  z.object({
+    version: z.literal(1),
     event: z.literal('computer-use-audit'),
     toolCallId: z.string().min(1),
     fingerprint: z.string().min(1),

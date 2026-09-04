@@ -719,7 +719,8 @@ export function watchTurn(
           const visibleRows = turnRows.filter(
             (m) =>
               m.payloadJson.deliveryKind === 'send-message' ||
-              m.payloadJson.event === 'computer-use',
+              m.payloadJson.event === 'computer-use' ||
+              m.payloadJson.event === 'computer-use-progress',
           )
           for (const message of visibleRows) onEvent({ type: 'message', message })
           if (visibleRows.length === 0) {

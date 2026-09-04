@@ -10,7 +10,7 @@ process.env.OPENBOT_DATA_DIR = testData
 const [
   { acceptUserMessage, createAgent, listConversationMessages },
   { DesktopToolRuntime },
-  { DesktopDriverError },
+  { createDesktopDriver, DesktopDriverError },
   schema,
 ] =
   await Promise.all([
@@ -142,6 +142,7 @@ test('executes a normalized sequence and persists its automatic final screenshot
   const row = rows.find((candidate) => candidate.payloadJson.event === 'computer-use')
   assert.equal(row?.kind, 'tool_result')
   assert.equal(row?.attachmentsJson.items.length, 1)
+  assert.ok(rows.some((candidate) => candidate.payloadJson.event === 'computer-use-progress'))
 })
 
 test('serializes mutating sequences across agents and releases the lease', async () => {
@@ -352,4 +353,26 @@ test('normalizes cancellation and timeout and releases their leases', async () =
   const runtime = new DesktopToolRuntime(runtimeOptions(context, driver))
   const args = schema.computerArgsSchema.parse({ action: 'key', key: 'TAB' })
   assert.equal((await runtime.computer('after-interruption-call', args)).status, 'success')
+})
+
+test('turn construction tolerates malformed optional driver configuration', async () => {
+  const previousDriver = process.env.OPENBOT_DESKTOP_DRIVER
+  const previousArgs = process.env.OPENBOT_DESKTOP_DRIVER_ARGS
+  process.env.OPENBOT_DESKTOP_DRIVER = '/configured/driver'
+  process.env.OPENBOT_DESKTOP_DRIVER_ARGS = '{not-json'
+  try {
+    const driver = createDesktopDriver()
+    await assert.rejects(
+      driver.getDisplay(),
+      (error: unknown) =>
+        error instanceof DesktopDriverError &&
+        error.code === 'desktop_unavailable' &&
+        error.message.includes('OPENBOT_DESKTOP_DRIVER_ARGS'),
+    )
+  } finally {
+    if (previousDriver === undefined) delete process.env.OPENBOT_DESKTOP_DRIVER
+    else process.env.OPENBOT_DESKTOP_DRIVER = previousDriver
+    if (previousArgs === undefined) delete process.env.OPENBOT_DESKTOP_DRIVER_ARGS
+    else process.env.OPENBOT_DESKTOP_DRIVER_ARGS = previousArgs
+  }
 })

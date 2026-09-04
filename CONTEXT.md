@@ -313,8 +313,8 @@ and approval prompts; it never captures its own screen or injects input.
 One configured local desktop-driver boundary discovers the active display,
 captures screenshots, and executes normalized screenshot, click, move, drag,
 type, key, scroll, and wait actions. Coordinates are validated against current
-driver dimensions. A process-wide lease serializes Computer sequences on each
-graphical session, while read-only Screenshot calls remain independent.
+driver dimensions. A process-wide lease serializes access to each graphical
+session; read-only Screenshot calls never overlap an active Computer sequence.
 
 Screenshots are stored through `managed_files` and referenced by durable
 computer-use transcript rows. Reviewed actions carry a fingerprint over the

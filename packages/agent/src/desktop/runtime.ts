@@ -315,6 +315,27 @@ export class DesktopToolRuntime {
     })
   }
 
+  private async progress(toolCallId: string, fingerprint: string, summary: string) {
+    const message = await appendConversationMessage({
+      conversationId: this.options.conversationId,
+      turnId: this.options.turnId,
+      senderAgentId: this.options.senderAgentId,
+      kind: 'status',
+      direction: 'outbound',
+      bodyText: `Computer: ${summary}`,
+      payload: computerUsePayloadSchema.parse({
+        version: 1,
+        event: 'computer-use-progress',
+        toolCallId,
+        name: 'Computer',
+        preview: summary,
+        status: 'pending',
+        fingerprint,
+      }),
+    })
+    this.options.onPersisted(message)
+  }
+
   private async persist(
     toolCallId: string,
     toolName: 'Screenshot' | 'Computer',
@@ -691,6 +712,26 @@ export class DesktopToolRuntime {
       // only after owning it; an intervening desktop change invalidates the
       // reviewed coordinates and any one-shot approval.
       const immediatelyBefore = await this.options.driver.captureScreenshot(operation.signal)
+      const currentDisplay = await this.options.driver.getDisplay(operation.signal)
+      const currentBoundsError = validateDisplayBounds(normalized.actions, currentDisplay)
+      if (
+        currentDisplay.sessionId !== display.sessionId ||
+        currentDisplay.width !== display.width ||
+        currentDisplay.height !== display.height ||
+        immediatelyBefore.width !== currentDisplay.width ||
+        immediatelyBefore.height !== currentDisplay.height ||
+        currentBoundsError
+      ) {
+        return await this.persist(toolCallId, 'Computer', {
+          ok: false,
+          status: 'stale_desktop',
+          summary:
+            currentBoundsError ??
+            'The Remote Desktop display changed between review and execution',
+          display: currentDisplay,
+          fingerprint,
+        })
+      }
       if (screenshotState(immediatelyBefore).stateId !== stateId) {
         return await this.persist(toolCallId, 'Computer', {
           ok: false,
@@ -709,6 +750,7 @@ export class DesktopToolRuntime {
         normalized.actions,
         `Executing ${actionSummary(normalized.actions)}`,
       )
+      await this.progress(toolCallId, fingerprint, actionSummary(normalized.actions))
 
       const executed = await this.options.driver.execute(actions, operation.signal)
       let finalScreenshot = executed.screenshot

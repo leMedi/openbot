@@ -79,11 +79,13 @@ export interface DesktopDriver {
 }
 
 class UnavailableDesktopDriver implements DesktopDriver {
-  private unavailable(): never {
-    throw new DesktopDriverError(
-      'desktop_unavailable',
+  constructor(
+    private readonly message =
       'Computer Use is unavailable because no local desktop driver is configured',
-    )
+  ) {}
+
+  private unavailable(): never {
+    throw new DesktopDriverError('desktop_unavailable', this.message)
   }
 
   async getDisplay(): Promise<DesktopDisplay> {
@@ -301,11 +303,18 @@ function configuredProcessDriver(): DesktopDriver {
   let args: string[] = []
   const rawArgs = process.env.OPENBOT_DESKTOP_DRIVER_ARGS?.trim()
   if (rawArgs) {
-    const parsed = JSON.parse(rawArgs) as unknown
-    if (!Array.isArray(parsed) || !parsed.every((value) => typeof value === 'string')) {
-      throw new Error('OPENBOT_DESKTOP_DRIVER_ARGS must be a JSON array of strings')
+    try {
+      const parsed = JSON.parse(rawArgs) as unknown
+      if (!Array.isArray(parsed) || !parsed.every((value) => typeof value === 'string')) {
+        throw new Error('must be a JSON array of strings')
+      }
+      args = parsed
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'invalid JSON'
+      return new UnavailableDesktopDriver(
+        `Computer Use configuration is invalid: OPENBOT_DESKTOP_DRIVER_ARGS ${reason}`,
+      )
     }
-    args = parsed
   }
   return new ProcessDesktopDriver(executable, args)
 }
