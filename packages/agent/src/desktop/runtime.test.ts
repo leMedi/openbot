@@ -278,6 +278,54 @@ test('rejects an approval when the desktop state changes', async () => {
   assert.equal((await resumed.computer('resumed-call', args)).status, 'stale_desktop')
 })
 
+test('consumes a matching one-shot approval after one Computer attempt', async () => {
+  const context = await turnContext('allowlist')
+  let waitingState: { resumeData: unknown } | undefined
+  let suspensions = 0
+  const stableImage = image('stable approval state')
+  const driver = {
+    async getDisplay() {
+      return display
+    },
+    async captureScreenshot() {
+      return stableImage
+    },
+    async execute() {
+      return { screenshot: stableImage }
+    },
+  }
+  const options = runtimeOptions(context, driver, 'allowlist')
+  const args = schema.computerArgsSchema.parse({
+    action: 'key',
+    key: 'ENTER',
+    description: 'Confirm the active dialog once',
+  })
+  const requesting = new DesktopToolRuntime({
+    ...options,
+    suspend: async (state) => {
+      waitingState = state
+      return undefined
+    },
+  })
+  assert.equal((await requesting.computer('request-call', args)).status, 'approval_required')
+  const approval = waitingState!.resumeData as {
+    fingerprint: string
+    stateId: string
+  }
+  const resumed = new DesktopToolRuntime({
+    ...options,
+    approved: approval,
+    suspend: async () => {
+      suspensions += 1
+      return undefined
+    },
+  })
+
+  assert.equal((await resumed.computer('approved-call', args)).status, 'success')
+  assert.equal((await resumed.computer('repeat-call', args)).status, 'approval_required')
+  assert.equal(suspensions, 1)
+})
+
 test('normalizes driver failures and releases the desktop lease', async () => {
   const failedContext = await turnContext()
   const nextContext = await turnContext()

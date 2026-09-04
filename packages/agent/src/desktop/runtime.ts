@@ -235,10 +235,12 @@ function combinedSignal(parent: AbortSignal, timeoutMs: number) {
 export class DesktopToolRuntime {
   private readonly reviewer: DesktopReviewer
   private readonly timeoutMs: number
+  private approved: DesktopApproval | undefined
 
   constructor(private readonly options: DesktopRuntimeOptions) {
     this.reviewer = options.reviewer ?? reviewerFactory(options.approvalMode)
     this.timeoutMs = options.timeoutMs ?? computerTimeoutMs()
+    this.approved = options.approved
   }
 
   private async priorResult(toolCallId: string): Promise<ComputerResult | undefined> {
@@ -574,9 +576,8 @@ export class DesktopToolRuntime {
       fingerprint = actionFingerprint(reviewBase)
       const review = await this.reviewer.review({ ...reviewBase, fingerprint })
       const hasApproval =
-        this.options.approved?.fingerprint === fingerprint &&
-        this.options.approved.stateId === stateId
-      if (this.options.approved && !hasApproval) {
+        this.approved?.fingerprint === fingerprint && this.approved.stateId === stateId
+      if (this.approved && !hasApproval) {
         await this.audit(
           toolCallId,
           fingerprint,
@@ -594,6 +595,7 @@ export class DesktopToolRuntime {
           fingerprint,
         })
       }
+      if (hasApproval) this.approved = undefined
       if (review.decision === 'block') {
         await this.audit(
           toolCallId,
