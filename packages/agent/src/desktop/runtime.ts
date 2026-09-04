@@ -180,14 +180,13 @@ function actionFingerprint(input: Omit<DesktopReviewTarget, 'fingerprint'>) {
     .digest('hex')
 }
 
-function reviewedDescriptionError(actions: readonly DesktopAction[], approvalMode: string) {
-  if (approvalMode === 'off' || approvalMode === 'shadow') return undefined
-  const missing = actions.find(
-    (action) =>
-      (action.action === 'click' || action.action === 'drag') && !action.description?.trim(),
-  )
+function reviewedDescriptionError(actions: readonly DesktopAction[]) {
+  const missing = actions.find((action) => {
+    if (!SCREEN_CHANGING_ACTIONS.has(action.action)) return false
+    return !('description' in action) || !action.description.trim()
+  })
   return missing
-    ? `${missing.action} requires description in ${approvalMode} approval mode`
+    ? `${missing.action} requires a declared purpose`
     : undefined
 }
 
@@ -522,10 +521,7 @@ export class DesktopToolRuntime {
           display,
         })
       }
-      const descriptionError = reviewedDescriptionError(
-        normalized.actions,
-        this.options.approvalMode,
-      )
+      const descriptionError = reviewedDescriptionError(normalized.actions)
       if (descriptionError) {
         return await this.persist(toolCallId, 'Computer', {
           ok: false,

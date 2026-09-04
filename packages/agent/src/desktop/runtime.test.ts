@@ -1,23 +1,38 @@
 import assert from 'node:assert/strict'
-import { rm } from 'node:fs/promises'
+import { readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import test from 'node:test'
+import type { ConversationMessage } from '@openbot/db'
+import type { TurnStreamEvent } from '../queue/turn-runner'
+import type { ToolTurnContext } from '../tools'
 
 const testData = path.resolve(process.cwd(), '../../.data', `computer-tests-${process.pid}`)
 await rm(testData, { recursive: true, force: true })
 process.env.OPENBOT_DATA_DIR = testData
 
 const [
-  { acceptUserMessage, createAgent, listConversationMessages },
+  {
+    acceptUserMessage,
+    claimQueuedTurn,
+    completeTurn,
+    createAgent,
+    listConversationMessages,
+  },
   { DesktopToolRuntime },
   { createDesktopDriver, DesktopDriverError },
   schema,
+  tools,
+  runner,
+  workspace,
 ] =
   await Promise.all([
     import('@openbot/db'),
     import('./runtime'),
     import('./driver'),
     import('../tools/computer-schema'),
+    import('../tools'),
+    import('../queue/turn-runner'),
+    import('../tools/shell/workspace'),
   ])
 
 const display = { width: 100, height: 50, sessionId: 'test-display' }
@@ -29,6 +44,7 @@ function image(value: string) {
     width: display.width,
     height: display.height,
     cursor: { x: 2, y: 3 },
+    stateId: value,
   }
 }
 
@@ -84,6 +100,16 @@ test('validates bounded sequences and dynamic desktop coordinates', () => {
     }).success,
     false,
   )
+  const ungrounded = schema.computerArgsSchema.safeParse({
+    action: 'click',
+    x: 10,
+    y: 20,
+    description: 'Select the visible control',
+  })
+  assert.equal(ungrounded.success, false)
+  if (!ungrounded.success) {
+    assert.match(ungrounded.error.issues[0]?.message ?? '', /call Screenshot/)
+  }
   assert.equal(
     schema.computerArgsSchema.safeParse({
       action: 'wait',
@@ -91,7 +117,13 @@ test('validates bounded sequences and dynamic desktop coordinates', () => {
     }).success,
     false,
   )
-  const parsed = schema.computerArgsSchema.parse({ action: 'click', x: 99, y: 49 })
+  const parsed = schema.computerArgsSchema.parse({
+    action: 'click',
+    x: 99,
+    y: 49,
+    description: 'Select the visible control',
+    expected_state_id: 'observed-state',
+  })
   const actions = schema.normalizeComputerArgs(parsed).actions
   assert.equal(schema.validateDisplayBounds(actions, display), undefined)
   assert.match(
@@ -124,7 +156,8 @@ test('executes a normalized sequence and persists its automatic final screenshot
     x: 10,
     y: 20,
     description: 'Open the visible menu',
-    then: [{ action: 'type', text: 'hello' }],
+    expected_state_id: 'initial state',
+    then: [{ action: 'type', text: 'hello', description: 'Enter the requested text' }],
   })
 
   const result = await runtime.computer('call-1', args)
@@ -182,7 +215,11 @@ test('serializes mutating sequences across agents and releases the lease', async
       return { screenshot: image('second finished') }
     },
   }
-  const args = schema.computerArgsSchema.parse({ action: 'key', key: 'ENTER' })
+  const args = schema.computerArgsSchema.parse({
+    action: 'key',
+    key: 'ENTER',
+    description: 'Confirm the active dialog',
+  })
   const firstRuntime = new DesktopToolRuntime(runtimeOptions(firstContext, firstDriver))
   const secondRuntime = new DesktopToolRuntime(runtimeOptions(secondContext, secondDriver))
 
@@ -227,6 +264,7 @@ test('rejects an approval when the desktop state changes', async () => {
     x: 4,
     y: 5,
     description: 'Confirm the visible dialog',
+    expected_state_id: 'before review',
   })
   assert.equal((await firstRuntime.computer('approval-call', args)).status, 'approval_required')
   assert.ok(waitingState)
@@ -265,7 +303,11 @@ test('normalizes driver failures and releases the desktop lease', async () => {
       return { screenshot: image('complete') }
     },
   }
-  const args = schema.computerArgsSchema.parse({ action: 'key', key: 'ESCAPE' })
+  const args = schema.computerArgsSchema.parse({
+    action: 'key',
+    key: 'ESCAPE',
+    description: 'Close the active dialog',
+  })
   const failed = new DesktopToolRuntime(runtimeOptions(failedContext, failedDriver))
   const next = new DesktopToolRuntime(runtimeOptions(nextContext, workingDriver))
 
@@ -328,7 +370,11 @@ test('normalizes cancellation and timeout and releases their leases', async () =
       signal: controller.signal,
       timeoutMs: kind === 'timeout' ? 20 : 10_000,
     })
-    const args = schema.computerArgsSchema.parse({ action: 'key', key: 'TAB' })
+    const args = schema.computerArgsSchema.parse({
+      action: 'key',
+      key: 'TAB',
+      description: 'Move focus to the next control',
+    })
     const pending = runtime.computer(`${kind}-call`, args)
     await started
     if (kind === 'cancelled') controller.abort()
@@ -351,7 +397,11 @@ test('normalizes cancellation and timeout and releases their leases', async () =
     },
   }
   const runtime = new DesktopToolRuntime(runtimeOptions(context, driver))
-  const args = schema.computerArgsSchema.parse({ action: 'key', key: 'TAB' })
+  const args = schema.computerArgsSchema.parse({
+    action: 'key',
+    key: 'TAB',
+    description: 'Move focus to the next control',
+  })
   assert.equal((await runtime.computer('after-interruption-call', args)).status, 'success')
 })
 
@@ -375,4 +425,101 @@ test('turn construction tolerates malformed optional driver configuration', asyn
     if (previousArgs === undefined) delete process.env.OPENBOT_DESKTOP_DRIVER_ARGS
     else process.env.OPENBOT_DESKTOP_DRIVER_ARGS = previousArgs
   }
+})
+
+test('dispatches server tools, shares Shell files, and replays visible SSE state', async () => {
+  const context = await turnContext()
+  assert.ok(await claimQueuedTurn(context.turnId))
+  const visible: unknown[] = []
+  const driver = {
+    async getDisplay() {
+      return display
+    },
+    async captureScreenshot() {
+      return image('dispatcher state')
+    },
+    async execute() {
+      const marker = await readFile(
+        path.join(workspace.agentWorkspaceDirectory(context.agent.id), 'gui-visible.txt'),
+        'utf8',
+      )
+      assert.equal(marker, 'same-machine')
+      return { screenshot: image('dispatcher final') }
+    },
+  }
+  const desktop = new DesktopToolRuntime({
+    ...runtimeOptions(context, driver),
+    onPersisted: (message) => visible.push(message),
+  })
+  const toolContext: ToolTurnContext = {
+    turnId: context.turnId,
+    conversationId: context.conversation.id,
+    senderAgentId: null,
+    priorDeliveries: [],
+    onDelivered: (message: ConversationMessage) => visible.push(message),
+    suspend: async () => undefined,
+    enqueueBackgroundWake: async () => {},
+    sendDirectAgentMessage: async () => {
+      throw new Error('not used')
+    },
+    desktop,
+  }
+
+  const shellResult = JSON.parse(
+    await tools.executeAgentToolCall(
+      context.agent,
+      {
+        id: 'shell-integration-call',
+        type: 'function',
+        function: {
+          name: 'runShell',
+          arguments: JSON.stringify({
+            command: "printf 'same-machine' > gui-visible.txt",
+          }),
+        },
+      },
+      toolContext,
+    ),
+  ) as { status: string }
+  assert.equal(shellResult.status, 'complete')
+
+  const computerResult = JSON.parse(
+    await tools.executeAgentToolCall(
+      context.agent,
+      {
+        id: 'computer-integration-call',
+        type: 'function',
+        function: {
+          name: 'Computer',
+          arguments: JSON.stringify({
+            action: 'key',
+            key: 'ENTER',
+            description: 'Open the server-created file in the active application',
+          }),
+        },
+      },
+      toolContext,
+    ),
+  ) as { status: string; screenshot?: { fileId: string } }
+  assert.equal(computerResult.status, 'success')
+  assert.ok(computerResult.screenshot?.fileId)
+
+  assert.ok(await completeTurn(context.turnId, { status: 'succeeded' }))
+  const events: TurnStreamEvent[] = []
+  await runner.watchTurn(context.turnId, (event) => events.push(event))
+  assert.ok(
+    events.some(
+      (event) =>
+        event.type === 'message' &&
+        event.message.payloadJson.event === 'computer-use-progress',
+    ),
+  )
+  assert.ok(
+    events.some(
+      (event) =>
+        event.type === 'message' && event.message.payloadJson.event === 'computer-use',
+    ),
+  )
+  assert.equal(events.at(-1)?.type, 'done')
+  assert.equal(visible.length, 2)
 })

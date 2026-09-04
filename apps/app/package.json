@@ -12,6 +12,7 @@
     "build": "pnpm with-env vite build",
     "preview": "pnpm with-env vite preview",
     "typecheck": "pnpm generate-routes && tsc --noEmit",
+    "test": "node --import tsx --test src/**/*.test.ts",
     "ui:add": "shadcn add"
   },
   "dependencies": {
@@ -59,6 +60,7 @@
     "@vitejs/plugin-react": "6.1.1",
     "dotenv-cli": "11.0.0",
     "shadcn": "4.19.0",
+    "tsx": "4.23.12",
     "typescript": "7.0.2",
     "vite": "8.2.2"
   }

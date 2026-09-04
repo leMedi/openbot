@@ -5,8 +5,8 @@ import path from 'node:path'
 import { dataDirectory } from '@openbot/db'
 
 /**
- * Per-agent isolated working area. Agent tools (runShell, Read, AwaitShell)
- * operate on files here; background shell output lands in `.shells/`.
+ * Per-agent organizational working area on the Remote Desktop filesystem.
+ * Agent tools operate on files here; background output lands in `.shells/`.
  */
 export function agentWorkspaceDirectory(agentId: string) {
   const workspace = path.join(dataDirectory, 'workspaces', agentId)

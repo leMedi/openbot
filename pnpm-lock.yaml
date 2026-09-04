@@ -144,6 +144,9 @@ importers:
       shadcn:
         specifier: 4.19.0
         version: 4.19.0(typescript@7.0.2)
+      tsx:
+        specifier: 4.23.12
+        version: 4.23.12
       typescript:
         specifier: 7.0.2
         version: 7.0.2

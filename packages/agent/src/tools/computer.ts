@@ -54,7 +54,7 @@ const actionProperties = {
     type: 'string',
     minLength: 1,
     maxLength: 500,
-    description: 'Purpose and intended visual target. Required for reviewed clicks and drags.',
+    description: 'Purpose and intended visual target. Required for every screen-changing action.',
   },
 } as const
 
@@ -64,10 +64,10 @@ export const computerToolDefinition: ToolDefinition = {
     name: COMPUTER_TOOL_NAME,
     description:
       'Control the configured Remote Desktop through validated coordinates. Use Screenshot ' +
-      'first to discover the current dimensions and state id. Provide expected_state_id to ' +
-      'reject actions if the screen changed. Supports one action plus up to 9 follow-ups. ' +
-      'Clicks, drags, typing, and keys may require user approval. A screen-changing sequence ' +
-      'automatically returns a final persisted screenshot.',
+      'first to discover the current dimensions and state id; expected_state_id is required ' +
+      'for every coordinate action. Every screen-changing action needs a description of its ' +
+      'purpose. Supports one action plus up to 9 follow-ups. Mutations may require user ' +
+      'approval and automatically return a final persisted screenshot.',
     parameters: {
       type: 'object',
       properties: {

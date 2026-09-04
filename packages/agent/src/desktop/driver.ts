@@ -11,22 +11,23 @@ export type DesktopAction =
       y: number
       button: 'left' | 'right' | 'middle'
       clickCount: number
-      description?: string
+      description: string
     }
-  | { action: 'move'; x: number; y: number }
+  | { action: 'move'; x: number; y: number; description: string }
   | {
       action: 'drag'
       button: 'left' | 'right' | 'middle'
       path: DesktopPoint[]
-      description?: string
+      description: string
     }
-  | { action: 'type'; text: string; description?: string }
-  | { action: 'key'; key: string; description?: string }
+  | { action: 'type'; text: string; description: string }
+  | { action: 'key'; key: string; description: string }
   | {
       action: 'scroll'
       direction: 'up' | 'down' | 'left' | 'right'
       amount: number
       at?: DesktopPoint
+      description: string
     }
   | { action: 'wait'; durationMs: number }
 

@@ -2,7 +2,7 @@ import * as z from 'zod'
 import type { DesktopAction, DesktopDisplay, DesktopPoint } from '../desktop/driver'
 
 const coordinate = z.number().int().nonnegative()
-const description = z.string().trim().min(1).max(500).optional()
+const description = z.string().trim().min(1).max(500)
 const pointSchema = z.object({ x: coordinate, y: coordinate }).strict()
 
 const screenshotActionSchema = z.object({ action: z.literal('screenshot') }).strict()
@@ -17,7 +17,12 @@ const clickActionSchema = z
   })
   .strict()
 const moveActionSchema = z
-  .object({ action: z.literal('move'), x: coordinate, y: coordinate })
+  .object({
+    action: z.literal('move'),
+    x: coordinate,
+    y: coordinate,
+    description,
+  })
   .strict()
 const dragActionSchema = z
   .object({
@@ -63,6 +68,7 @@ const scrollActionSchema = z
     amount: z.number().int().min(1).max(10_000),
     x: coordinate.optional(),
     y: coordinate.optional(),
+    description,
   })
   .strict()
   .refine((value) => (value.x === undefined) === (value.y === undefined), {
@@ -103,7 +109,7 @@ export const computerArgsSchema = z
     direction: z.enum(['up', 'down', 'left', 'right']).optional(),
     amount: z.number().int().min(1).max(10_000).optional(),
     duration_ms: z.number().int().min(0).max(30_000).optional(),
-    description,
+    description: description.optional(),
     expected_state_id: z.string().trim().min(1).max(200).optional(),
     then: z.array(computerActionSchema).max(9).optional(),
   })
@@ -115,6 +121,18 @@ export const computerArgsSchema = z
       for (const issue of parsed.error.issues) {
         context.addIssue({ ...issue, path: issue.path })
       }
+    }
+    const actions = [primary, ...(value.then ?? [])]
+    const hasCoordinates = actions.some((action) =>
+      ['click', 'move', 'drag', 'scroll'].includes(action.action),
+    )
+    if (hasCoordinates && !value.expected_state_id) {
+      context.addIssue({
+        code: 'custom',
+        path: ['expected_state_id'],
+        message:
+          'expected_state_id is required for coordinate actions; call Screenshot before choosing coordinates',
+      })
     }
   })
 
@@ -131,10 +149,15 @@ function normalizeAction(value: z.infer<typeof computerActionSchema>): DesktopAc
         y: value.y,
         button: value.button,
         clickCount: value.click_count,
-        ...(value.description && { description: value.description }),
+        description: value.description,
       }
     case 'move':
-      return value
+      return {
+        action: 'move',
+        x: value.x,
+        y: value.y,
+        description: value.description,
+      }
     case 'drag': {
       const path: DesktopPoint[] = value.path ?? [
         { x: value.x as number, y: value.y as number },
@@ -144,20 +167,20 @@ function normalizeAction(value: z.infer<typeof computerActionSchema>): DesktopAc
         action: 'drag',
         path,
         button: value.button,
-        ...(value.description && { description: value.description }),
+        description: value.description,
       }
     }
     case 'type':
       return {
         action: 'type',
         text: value.text,
-        ...(value.description && { description: value.description }),
+        description: value.description,
       }
     case 'key':
       return {
         action: 'key',
         key: value.key,
-        ...(value.description && { description: value.description }),
+        description: value.description,
       }
     case 'scroll':
       return {
@@ -167,6 +190,7 @@ function normalizeAction(value: z.infer<typeof computerActionSchema>): DesktopAc
         ...(value.x !== undefined && value.y !== undefined
           ? { at: { x: value.x, y: value.y } }
           : {}),
+        description: value.description,
       }
     case 'wait':
       return { action: 'wait', durationMs: value.duration_ms }
