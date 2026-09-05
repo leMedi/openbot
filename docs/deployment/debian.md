@@ -1,7 +1,7 @@
 # Debian installation
 
-Each push to `main-v2` builds an `openbot-debian-x64` package and publishes it
-as an immutable GitHub prerelease tagged `main-v2-<commit>`. It contains the
+Each push to `main` builds an `openbot-debian-x64` package and publishes it
+as an immutable GitHub prerelease tagged `main-<commit>`. It contains the
 application, its production dependencies, database migrations, a pinned Node
 runtime, and an installer. The package supports x86-64 Debian machines.
 
@@ -18,8 +18,8 @@ gh auth login
 REPO=leMedi/openbot
 TAG=$(gh release list --repo "$REPO" --limit 100 \
   --json tagName,publishedAt \
-  --jq 'map(select(.tagName | startswith("main-v2-"))) | sort_by(.publishedAt) | last | .tagName')
-test -n "$TAG" || { echo "No published main-v2 Debian release" >&2; exit 1; }
+  --jq 'map(select(.tagName | test("^main-[0-9a-f]{12}$"))) | sort_by(.publishedAt) | last | .tagName')
+test -n "$TAG" || { echo "No published main Debian release" >&2; exit 1; }
 echo "Installing $TAG"
 rm -rf "$HOME/openbot-install"
 mkdir -p "$HOME/openbot-install"
