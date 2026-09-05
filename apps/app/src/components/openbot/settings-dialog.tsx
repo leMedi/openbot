@@ -1,15 +1,24 @@
 import { useEffect, useRef, useState } from 'react'
 import type {
   ProviderAuthFlowEvent,
+  ProviderAuthMethodDto,
   ProviderConfigurationDto,
   ProviderDto,
 } from '@openbot/agent'
+import {
+  PROVIDER_DESCRIPTIONS,
+  providerBrandIcon,
+  sortProviders,
+} from '@openbot/plugins/provider-icons'
 import type { Profile, Setting } from '@openbot/db'
 import {
   ArrowUp,
-  ExternalLink,
-  Plus,
   Check,
+  ChevronRight,
+  Copy,
+  ExternalLink,
+  Loader2,
+  Plus,
   RefreshCw,
   Server,
   SlidersHorizontal,
@@ -266,13 +275,26 @@ function GeneralTab({
 
 type ProviderView = ProviderConfigurationDto & { setting: Setting }
 
+type AuthType = ProviderAuthMethodDto['type']
+
 type ActiveAuthFlow = {
-  providerId: string
-  providerName: string
   flowId: string
+  authType: AuthType
   prompt?: Extract<ProviderAuthFlowEvent, { type: 'prompt' }>
   notifications: Extract<ProviderAuthFlowEvent, { type: 'notification' }>[]
   error?: string
+}
+
+type ConnectSession = {
+  provider: ProviderDto
+  /** Whether the method picker was shown, so the flow can offer "Back". */
+  chose: boolean
+  flow: ActiveAuthFlow | null
+}
+
+const METHOD_DESCRIPTIONS: Record<AuthType, string> = {
+  api_key: 'Paste a key from your provider dashboard',
+  oauth: 'Sign in with your browser to use your existing plan',
 }
 
 function ProvidersTab({
@@ -283,8 +305,8 @@ function ProvidersTab({
   onChanged: () => void
 }) {
   const [configuration, setConfiguration] = useState(initialConfiguration)
-  const [authChoicesFor, setAuthChoicesFor] = useState<string | null>(null)
-  const [flow, setFlow] = useState<ActiveAuthFlow | null>(null)
+  const [query, setQuery] = useState('')
+  const [session, setSession] = useState<ConnectSession | null>(null)
   const [answer, setAnswer] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -298,8 +320,12 @@ function ProvidersTab({
     if (flowId) void fetch(`/api/provider-auth-flows/${flowId}`, { method: 'DELETE' })
   }, [])
 
-  const connected = configuration.providers.filter((provider) => provider.connected)
-  const available = configuration.providers.filter((provider) => !provider.connected)
+  const connected = sortProviders(configuration.providers.filter((provider) => provider.connected))
+  const normalizedQuery = query.trim().toLowerCase()
+  const available = sortProviders(configuration.providers.filter((provider) =>
+    !provider.connected
+    && (!normalizedQuery || provider.name.toLowerCase().includes(normalizedQuery)),
+  ))
   const modelOptions = configuration.models
 
   async function reload() {
@@ -308,10 +334,27 @@ function ProvidersTab({
     onChanged()
   }
 
-  async function startLogin(provider: ProviderDto, authType: 'api_key' | 'oauth') {
+  function closeEventSource() {
+    eventSourceRef.current?.close()
+    eventSourceRef.current = null
+    flowIdRef.current = null
+  }
+
+  function openConnect(provider: ProviderDto) {
+    if (provider.authMethods.length === 0) return
+    setError(null)
+    setAnswer('')
+    if (provider.authMethods.length === 1) {
+      setSession({ provider, chose: false, flow: null })
+      void startLogin(provider, provider.authMethods[0].type)
+    } else {
+      setSession({ provider, chose: true, flow: null })
+    }
+  }
+
+  async function startLogin(provider: ProviderDto, authType: AuthType) {
     setBusy(true)
     setError(null)
-    setAuthChoicesFor(null)
     try {
       const response = await fetch(`/api/providers/${encodeURIComponent(provider.id)}/login`, {
         method: 'POST',
@@ -321,62 +364,54 @@ function ProvidersTab({
       const body = await response.json()
       if (!response.ok) throw new Error(body.error ?? 'Provider login could not start')
 
-      const nextFlow: ActiveAuthFlow = {
-        providerId: provider.id,
-        providerName: provider.name,
-        flowId: body.flowId,
-        notifications: [],
-      }
-      setFlow(nextFlow)
+      const flow: ActiveAuthFlow = { flowId: body.flowId, authType, notifications: [] }
+      setSession((current) => current ? { ...current, flow } : { provider, chose: false, flow })
       flowIdRef.current = body.flowId
       const source = new EventSource(`/api/provider-auth-flows/${body.flowId}/stream`)
       eventSourceRef.current = source
+      const patchFlow = (patch: (flow: ActiveAuthFlow) => ActiveAuthFlow) =>
+        setSession((current) => current?.flow ? { ...current, flow: patch(current.flow) } : current)
       source.onmessage = (message) => {
         const event = JSON.parse(message.data) as ProviderAuthFlowEvent
         if (event.type === 'prompt') {
           setAnswer('')
-          setFlow((current) => current ? { ...current, prompt: event } : current)
+          patchFlow((flow) => ({ ...flow, prompt: event }))
         } else if (event.type === 'prompt_answered') {
-          setFlow((current) => current?.prompt?.promptId === event.promptId
-            ? { ...current, prompt: undefined }
-            : current)
+          patchFlow((flow) => flow.prompt?.promptId === event.promptId
+            ? { ...flow, prompt: undefined }
+            : flow)
         } else if (event.type === 'notification') {
-          setFlow((current) => current
-            ? { ...current, notifications: [...current.notifications, event] }
-            : current)
+          patchFlow((flow) => ({ ...flow, notifications: [...flow.notifications, event] }))
         } else if (event.type === 'complete') {
-          source.close()
-          eventSourceRef.current = null
-          flowIdRef.current = null
-          setFlow(null)
+          closeEventSource()
+          setSession(null)
           void reload().catch((cause) => setError(
             cause instanceof Error ? cause.message : 'Provider list could not be reloaded',
           ))
         } else if (event.type === 'error') {
-          source.close()
-          eventSourceRef.current = null
-          flowIdRef.current = null
-          setFlow((current) => current ? { ...current, error: event.message } : current)
+          closeEventSource()
+          patchFlow((flow) => ({ ...flow, error: event.message }))
         }
       }
       source.onerror = () => {
         if (eventSourceRef.current !== source) return
-        source.close()
-        eventSourceRef.current = null
-        setFlow((current) => current
-          ? { ...current, error: 'The provider login connection closed unexpectedly' }
-          : current)
+        closeEventSource()
+        patchFlow((flow) => ({ ...flow, error: 'The provider login connection closed unexpectedly' }))
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Provider login could not start')
+      setSession((current) => current
+        ? { ...current, flow: { flowId: '', authType, notifications: [], error: cause instanceof Error ? cause.message : 'Provider login could not start' } }
+        : current)
     } finally {
       setBusy(false)
     }
   }
 
   async function submitPrompt() {
+    const flow = session?.flow
     if (!flow?.prompt) return
     setBusy(true)
+    setError(null)
     try {
       const response = await fetch(`/api/provider-auth-flows/${flow.flowId}/respond`, {
         method: 'POST',
@@ -386,19 +421,30 @@ function ProvidersTab({
       const body = await response.json()
       if (!response.ok) throw new Error(body.error ?? 'Login response was rejected')
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Login response was rejected')
+      setSession((current) => current?.flow
+        ? { ...current, flow: { ...current.flow, error: cause instanceof Error ? cause.message : 'Login response was rejected' } }
+        : current)
     } finally {
       setBusy(false)
     }
   }
 
-  async function cancelFlow() {
-    if (!flow) return
-    eventSourceRef.current?.close()
-    eventSourceRef.current = null
-    flowIdRef.current = null
-    await fetch(`/api/provider-auth-flows/${flow.flowId}`, { method: 'DELETE' })
-    setFlow(null)
+  async function abandonFlow() {
+    const flowId = flowIdRef.current
+    closeEventSource()
+    if (flowId) await fetch(`/api/provider-auth-flows/${flowId}`, { method: 'DELETE' })
+  }
+
+  async function cancelConnect() {
+    await abandonFlow()
+    setSession(null)
+    setAnswer('')
+  }
+
+  async function backToMethods() {
+    await abandonFlow()
+    setAnswer('')
+    setSession((current) => current ? { ...current, flow: null } : current)
   }
 
   async function disconnect(providerId: string) {
@@ -486,60 +532,42 @@ function ProvidersTab({
         </div>
       </div>
 
-      <h3 className="text-sm font-semibold text-foreground/85">Connected providers</h3>
+      <h3 className="mt-3 text-sm font-semibold text-foreground/85">Connected providers</h3>
       {connected.length > 0 ? (
         <div className="rounded-xl bg-card px-5">
           {connected.map((provider) => (
-            <div key={provider.id} className="border-b py-4 last:border-b-0">
-              <div className="flex items-center gap-3">
-                <BotAvatar name={provider.name} color={providerHue(provider.id)} className="size-6.5 text-xs" />
-                <span className="text-sm font-semibold">{provider.name}</span>
-                <Badge variant="outline" className="text-[10px]">
-                  {provider.connectionSource ?? 'connected'}
-                </Badge>
-                <span className="text-[10px] text-muted-foreground">
-                  {provider.modelCount} models
-                </span>
-                <span className="flex-1" />
-                {provider.authMethods.length > 0 && (
-                  <button
-                    type="button"
-                    disabled={busy || !!flow}
-                    onClick={() => setAuthChoicesFor((current) =>
-                      current === provider.id ? null : provider.id
-                    )}
-                    className="text-xs text-muted-foreground hover:text-foreground"
-                  >
-                    {provider.connectionSource === 'stored' ? 'Reconnect' : 'Override'}
-                  </button>
-                )}
-                {provider.connectionSource === 'stored' ? (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void disconnect(provider.id)}
-                    className="text-xs text-muted-foreground hover:text-destructive"
-                  >
-                    Disconnect
-                  </button>
-                ) : provider.authMethods.length === 0 ? (
-                  <span className="text-[10px] text-muted-foreground">Managed externally</span>
-                ) : null}
-              </div>
-              {authChoicesFor === provider.id && (
-                <div className="mt-2.5 ml-9 flex flex-wrap gap-2">
-                  {provider.authMethods.map((method) => (
-                    <Button
-                      key={method.type}
-                      size="sm"
-                      variant="outline"
-                      onClick={() => void startLogin(provider, method.type)}
-                    >
-                      {method.label}
-                    </Button>
-                  ))}
-                </div>
+            <div key={provider.id} className="flex items-center gap-3 border-b py-4 last:border-b-0">
+              <ProviderBrandIcon provider={provider} />
+              <span className="text-sm font-semibold">{provider.name}</span>
+              <Badge variant="outline" className="text-[10px]">
+                {connectionLabel(provider)}
+              </Badge>
+              <span className="text-[10px] text-muted-foreground">
+                {provider.modelCount} models
+              </span>
+              <span className="flex-1" />
+              {provider.authMethods.length > 0 && (
+                <button
+                  type="button"
+                  disabled={busy || !!session}
+                  onClick={() => openConnect(provider)}
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                >
+                  {provider.connectionSource === 'stored' ? 'Reconnect' : 'Override'}
+                </button>
               )}
+              {provider.connectionSource === 'stored' ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void disconnect(provider.id)}
+                  className="text-xs text-muted-foreground hover:text-destructive"
+                >
+                  Disconnect
+                </button>
+              ) : provider.authMethods.length === 0 ? (
+                <span className="text-[10px] text-muted-foreground">Managed externally</span>
+              ) : null}
             </div>
           ))}
         </div>
@@ -549,82 +577,124 @@ function ProvidersTab({
         </div>
       )}
 
-      <h3 className="mt-3 text-sm font-semibold text-foreground/85">Available providers</h3>
+      <div className="mt-3 flex items-center gap-3">
+        <h3 className="flex-1 text-sm font-semibold text-foreground/85">Available providers</h3>
+        <Input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search providers…"
+          aria-label="Search providers"
+          className="h-7 w-48 text-xs"
+        />
+      </div>
       <div className="rounded-xl bg-card px-5">
         {available.map((provider) => (
           <ProviderRow
             key={provider.id}
             provider={provider}
-            choosing={authChoicesFor === provider.id}
-            busy={busy || !!flow}
-            onChoose={() => setAuthChoicesFor((current) =>
-              current === provider.id ? null : provider.id
-            )}
-            onLogin={(authType) => void startLogin(provider, authType)}
+            busy={busy || !!session}
+            onConnect={() => openConnect(provider)}
           />
         ))}
+        {available.length === 0 && (
+          <div className="py-4 text-xs text-muted-foreground/70">
+            {normalizedQuery
+              ? `No providers match “${query.trim()}”.`
+              : 'Every provider is connected.'}
+          </div>
+        )}
       </div>
-      {flow && (
-        <AuthFlowPanel
-          flow={flow}
-          answer={answer}
-          busy={busy}
-          onAnswer={setAnswer}
-          onSubmit={() => void submitPrompt()}
-          onCancel={() => void cancelFlow()}
-        />
-      )}
+
       {(error || configuration.error) && (
         <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
           {error ?? configuration.error}
         </p>
       )}
+
+      <ConnectProviderDialog
+        session={session}
+        answer={answer}
+        busy={busy}
+        onAnswer={setAnswer}
+        onPickMethod={(authType) => session && void startLogin(session.provider, authType)}
+        onSubmit={() => void submitPrompt()}
+        onBack={() => void backToMethods()}
+        onCancel={() => void cancelConnect()}
+      />
     </div>
+  )
+}
+
+function connectionLabel(provider: ProviderDto) {
+  switch (provider.connectionSource) {
+    case 'stored': return 'Connected'
+    case 'env': return 'Environment'
+    case undefined: return 'Connected'
+    default: return provider.connectionSource
+  }
+}
+
+function ProviderBrandIcon({
+  provider,
+  className,
+}: {
+  provider: Pick<ProviderDto, 'id' | 'name'>
+  className?: string
+}) {
+  const icon = providerBrandIcon(provider.id)
+  if (!icon) {
+    return (
+      <BotAvatar
+        name={provider.name}
+        color={providerHue(provider.id)}
+        className={cn('size-6.5 text-xs', className)}
+      />
+    )
+  }
+  return (
+    <span
+      className={cn(
+        'flex size-6.5 shrink-0 items-center justify-center rounded-md border bg-muted/60 p-1.25',
+        className,
+      )}
+    >
+      <svg viewBox="0 0 24 24" role="img" aria-label={`${provider.name} logo`} className="size-full">
+        <path d={icon.path} fill={icon.color} />
+      </svg>
+    </span>
   )
 }
 
 function ProviderRow({
   provider,
-  choosing,
   busy,
-  onChoose,
-  onLogin,
+  onConnect,
 }: {
   provider: ProviderDto
-  choosing: boolean
   busy: boolean
-  onChoose: () => void
-  onLogin: (authType: 'api_key' | 'oauth') => void
+  onConnect: () => void
 }) {
+  const description = PROVIDER_DESCRIPTIONS[provider.id]
+    ?? (provider.authMethods.length > 0
+      ? provider.authMethods.map((method) => method.label).join(' or ')
+      : 'Requires credentials configured on the server.')
   return (
-    <div className="flex items-start gap-3 border-b py-4 last:border-b-0">
-      <BotAvatar
-        name={provider.name}
-        color={providerHue(provider.id)}
-        className="mt-0.5 size-6.5 text-xs"
-      />
+    <div className="flex items-center gap-3 border-b py-4 last:border-b-0">
+      <ProviderBrandIcon provider={provider} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold">{provider.name}</span>
-          <Badge variant="outline" className="text-[10px]">{provider.modelCount} models</Badge>
+          {provider.id === 'openrouter' && (
+            <Badge variant="outline" className="text-[10px]">Recommended</Badge>
+          )}
+          {provider.modelCount > 0 && (
+            <span className="text-[10px] text-muted-foreground">{provider.modelCount} models</span>
+          )}
         </div>
-        <p className="mt-1 text-xs leading-normal text-muted-foreground">
-          {provider.authMethods.length > 0
-            ? provider.authMethods.map((method) => method.label).join(' or ')
-            : 'Requires credentials configured on the server.'}
-        </p>
-        {choosing && provider.authMethods.length > 0 && (
-          <div className="mt-2.5 flex flex-wrap gap-2">
-            {provider.authMethods.map((method) => (
-              <Button key={method.type} size="sm" variant="outline" onClick={() => onLogin(method.type)}>
-                {method.label}
-              </Button>
-            ))}
-          </div>
-        )}
+        <p className="mt-0.5 text-xs leading-normal text-muted-foreground">{description}</p>
       </div>
-      {!choosing && provider.authMethods.length > 0 && (
-        <Button size="sm" variant="outline" disabled={busy} onClick={onChoose}>
+      {provider.authMethods.length > 0 && (
+        <Button size="sm" variant="outline" disabled={busy} onClick={onConnect}>
           <Plus data-icon="inline-start" /> Connect
         </Button>
       )}
@@ -664,104 +734,227 @@ function ModelDefaultField({
   )
 }
 
-function AuthFlowPanel({
-  flow,
+function ConnectProviderDialog({
+  session,
   answer,
   busy,
   onAnswer,
+  onPickMethod,
   onSubmit,
+  onBack,
   onCancel,
 }: {
-  flow: ActiveAuthFlow
+  session: ConnectSession | null
   answer: string
   busy: boolean
   onAnswer: (answer: string) => void
+  onPickMethod: (authType: AuthType) => void
   onSubmit: () => void
+  onBack: () => void
   onCancel: () => void
 }) {
-  const prompt = flow.prompt?.prompt
+  const provider = session?.provider
+  const flow = session?.flow ?? null
+  const prompt = flow?.prompt?.prompt
+  const authUrl = flow?.notifications.find((item) => item.notification.type === 'auth_url')
+  const deviceCode = flow?.notifications.find((item) => item.notification.type === 'device_code')
+  const infos = flow?.notifications.filter((item) =>
+    item.notification.type !== 'auth_url' && item.notification.type !== 'device_code',
+  ) ?? []
+  const waiting = !!flow && !flow.error && !prompt && (flow.flowId !== '')
+  const showBack = !!session?.chose && !!flow
+
   return (
-    <div className="rounded-xl border bg-card px-5 py-4">
-      <div className="flex items-center gap-2">
-        <span className="flex-1 text-sm font-semibold">Connect {flow.providerName}</span>
-        <Button size="xs" variant="ghost" onClick={onCancel}>Cancel</Button>
-      </div>
-      <div className="mt-3 flex flex-col gap-2 text-xs text-muted-foreground">
-        {flow.notifications.map(({ notification }, index) => (
-          <div key={`${notification.type}-${index}`}>
-            {notification.type === 'auth_url' ? (
-              <div className="flex flex-col gap-1">
-                {notification.instructions && <span>{notification.instructions}</span>}
-                <a
-                  href={notification.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-info hover:underline"
-                >
-                  Open sign-in page <ExternalLink className="size-3" />
-                </a>
-              </div>
-            ) : notification.type === 'device_code' ? (
-              <div>
-                Open <a className="text-info hover:underline" href={notification.verificationUri} target="_blank" rel="noreferrer">{notification.verificationUri}</a>
-                {' '}and enter <code className="rounded bg-muted px-1 py-0.5 text-foreground">{notification.userCode}</code>
-              </div>
-            ) : notification.type === 'info' ? (
-              <div className="flex flex-col gap-1">
-                <span>{notification.message}</span>
-                {notification.links?.map((link) => (
-                  <a
-                    key={link.url}
-                    href={link.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 text-info hover:underline"
+    <Dialog open={!!session} onOpenChange={(open) => { if (!open) onCancel() }}>
+      <DialogContent showCloseButton={false} className="gap-0 p-5 sm:max-w-sm">
+        {provider && (
+          <>
+            <div className="flex items-center gap-2.5">
+              <ProviderBrandIcon provider={provider} className="size-7" />
+              <DialogTitle className="text-sm font-semibold">Connect {provider.name}</DialogTitle>
+            </div>
+
+            {!flow && (
+              <div className="mt-3 flex flex-col gap-2">
+                <p className="text-xs text-muted-foreground">How do you want to connect?</p>
+                {provider.authMethods.map((method) => (
+                  <button
+                    key={method.type}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onPickMethod(method.type)}
+                    className="flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left hover:border-ring/60 hover:bg-accent/40"
                   >
-                    {link.label ?? link.url} <ExternalLink className="size-3" />
-                  </a>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[13px] font-semibold">{method.label}</span>
+                      <span className="mt-0.5 block text-xs leading-normal text-muted-foreground">
+                        {METHOD_DESCRIPTIONS[method.type]}
+                      </span>
+                    </span>
+                    <ChevronRight className="size-4 text-muted-foreground" />
+                  </button>
                 ))}
               </div>
-            ) : (
-              <div>{notification.message}</div>
             )}
-          </div>
-        ))}
-        {prompt && (
-          <div className="mt-1 flex flex-col gap-2">
-            <label className="font-medium text-foreground">{prompt.message}</label>
-            {prompt.type === 'select' ? (
-              <select
-                autoFocus
-                value={answer}
-                onChange={(event) => onAnswer(event.target.value)}
-                className="h-8 rounded-lg border border-input bg-transparent px-2 text-xs text-foreground dark:bg-input/30"
-              >
-                <option value="">Choose…</option>
-                {prompt.options.map((option) => (
-                  <option key={option.id} value={option.id}>{option.label}</option>
+
+            {flow && (
+              <div className="mt-3 flex flex-col gap-3 text-xs text-muted-foreground">
+                {infos.map(({ notification }, index) => (
+                  <div key={index} className="flex flex-col gap-1">
+                    {'message' in notification && <span>{notification.message}</span>}
+                    {notification.type === 'info' && notification.links?.map((link) => (
+                      <a
+                        key={link.url}
+                        href={link.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-info hover:underline"
+                      >
+                        {link.label ?? link.url} <ExternalLink className="size-3" />
+                      </a>
+                    ))}
+                  </div>
                 ))}
-              </select>
-            ) : (
-              <Input
-                autoFocus
-                type={prompt.type === 'secret' ? 'password' : 'text'}
-                value={answer}
-                placeholder={prompt.placeholder}
-                onChange={(event) => onAnswer(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && answer) onSubmit()
-                }}
-                className="font-mono text-xs"
-              />
+
+                {authUrl?.notification.type === 'auth_url' && !prompt && (
+                  <div className="flex flex-col gap-3">
+                    <p className="leading-relaxed">
+                      {authUrl.notification.instructions
+                        ?? `Authorize OpenBot with your ${provider.name} account in the browser, then come back here.`}
+                    </p>
+                    <div className="truncate rounded-md border bg-background px-2.5 py-1.5 font-mono text-[11px]">
+                      {authUrl.notification.url}
+                    </div>
+                    <Button
+                      size="sm"
+                      render={<a href={authUrl.notification.url} target="_blank" rel="noreferrer" />}
+                    >
+                      Continue in browser <ExternalLink data-icon="inline-end" />
+                    </Button>
+                  </div>
+                )}
+
+                {deviceCode?.notification.type === 'device_code' && !prompt && (
+                  <DeviceCodePanel
+                    code={deviceCode.notification.userCode}
+                    verificationUri={deviceCode.notification.verificationUri}
+                  />
+                )}
+
+                {prompt && (
+                  <div className="flex flex-col gap-2">
+                    <label className="font-medium text-foreground">{prompt.message}</label>
+                    {prompt.type === 'select' ? (
+                      <select
+                        autoFocus
+                        value={answer}
+                        onChange={(event) => onAnswer(event.target.value)}
+                        className="h-8 rounded-lg border border-input bg-transparent px-2 text-xs text-foreground dark:bg-input/30"
+                      >
+                        <option value="">Choose…</option>
+                        {prompt.options.map((option) => (
+                          <option key={option.id} value={option.id}>{option.label}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <Input
+                        autoFocus
+                        type={prompt.type === 'secret' ? 'password' : 'text'}
+                        value={answer}
+                        placeholder={prompt.placeholder}
+                        onChange={(event) => onAnswer(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' && answer) onSubmit()
+                        }}
+                        className="font-mono text-xs"
+                      />
+                    )}
+                    {prompt.type === 'select' && answer && (
+                      <p>{prompt.options.find((option) => option.id === answer)?.description}</p>
+                    )}
+                    <Button size="sm" disabled={busy || !answer} onClick={onSubmit}>
+                      {prompt.type === 'secret' ? 'Connect' : 'Continue'}
+                    </Button>
+                  </div>
+                )}
+
+                {waiting && (
+                  <div className="flex items-center justify-center gap-2 py-2">
+                    <Loader2 className="size-3.5 animate-spin text-info" />
+                    <span>
+                      {authUrl || deviceCode
+                        ? 'Waiting — finish authorizing in your browser…'
+                        : 'Waiting for the provider…'}
+                    </span>
+                  </div>
+                )}
+
+                {flow.error && (
+                  <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-destructive">
+                    {flow.error}
+                  </p>
+                )}
+              </div>
             )}
-            {prompt.type === 'select' && answer && (
-              <p>{prompt.options.find((option) => option.id === answer)?.description}</p>
-            )}
-            <div><Button size="sm" disabled={busy || !answer} onClick={onSubmit}>Continue</Button></div>
-          </div>
+
+            <div className="mt-4 flex items-center justify-between">
+              {showBack ? (
+                <button
+                  type="button"
+                  onClick={onBack}
+                  className="text-xs font-medium text-muted-foreground hover:text-foreground"
+                >
+                  ← Back
+                </button>
+              ) : <span />}
+              <Button size="sm" variant="secondary" onClick={onCancel}>Cancel</Button>
+            </div>
+          </>
         )}
-        {!prompt && !flow.error && <div>Waiting for the provider…</div>}
-        {flow.error && <div className="text-destructive">{flow.error}</div>}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function DeviceCodePanel({
+  code,
+  verificationUri,
+}: {
+  code: string
+  verificationUri: string
+}) {
+  const [copied, setCopied] = useState(false)
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(code)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Clipboard access can be denied; the code stays visible for manual copy.
+    }
+  }
+  return (
+    <div className="flex flex-col items-center gap-2 py-2 text-center">
+      <div className="font-mono text-2xl font-bold tracking-[.18em] text-foreground">{code}</div>
+      {copied && (
+        <span className="flex items-center gap-1 text-[11px] text-success">
+          <Check className="size-3" /> Copied to clipboard
+        </span>
+      )}
+      <p>
+        Go to{' '}
+        <a href={verificationUri} target="_blank" rel="noreferrer" className="font-mono text-info hover:underline">
+          {verificationUri.replace(/^https?:\/\//, '')}
+        </a>{' '}
+        and paste the code.
+      </p>
+      <div className="mt-1 flex gap-2">
+        <Button size="sm" variant="secondary" onClick={() => void copy()}>
+          <Copy data-icon="inline-start" /> Copy code
+        </Button>
+        <Button size="sm" render={<a href={verificationUri} target="_blank" rel="noreferrer" />}>
+          Open link <ExternalLink data-icon="inline-end" />
+        </Button>
       </div>
     </div>
   )
