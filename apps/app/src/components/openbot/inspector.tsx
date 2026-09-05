@@ -19,6 +19,7 @@ import {
 } from '@/server/memory'
 import { BotAvatar } from './bot-avatar'
 import type { Bot, Conversation } from './data'
+import { createDesktopClipboardController } from './desktop-clipboard'
 
 export function Inspector({
   conversation,
@@ -446,6 +447,7 @@ function DesktopDialog({
     let disposed = false
     let failed = false
     let rfb: RfbClient | undefined
+    let removeClipboardHandlers: (() => void) | undefined
     setConnection('connecting')
     setConnectionError(null)
     const fail = (message: string) => {
@@ -464,6 +466,49 @@ function DesktopDialog({
       // The WebSocket endpoint is server-owned; the browser never receives a VNC port.
       const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
       rfb = new RFB(viewerElement, `${scheme}://${window.location.host}/api/agents/${encodeURIComponent(agentId)}/desktop/vnc`)
+      const clipboard = createDesktopClipboardController({
+        isMac: /Mac|iPhone|iPad/.test(navigator.platform ?? ''),
+        rfb,
+        writeClipboard: async (text) => navigator.clipboard?.writeText(text),
+      })
+      const onKeyDown = (event: KeyboardEvent) => clipboard.keyDown(event)
+      const onKeyUp = (event: KeyboardEvent) => clipboard.keyUp(event)
+      const onPointerDown = () => clipboard.pointerDown()
+      const onPaste = (event: ClipboardEvent) => {
+        const target = event.target
+        const viewerFocused = target instanceof Node && viewerElement.contains(target)
+          || viewerElement.contains(document.activeElement)
+        if (!clipboard.hasPendingPaste() && !viewerFocused) return
+        const text = event.clipboardData?.getData('text/plain')
+        if (text === undefined) {
+          clipboard.cancelPaste()
+          return
+        }
+        clipboard.paste({
+          text,
+          preventDefault: () => event.preventDefault(),
+          stopPropagation: () => event.stopPropagation(),
+        })
+      }
+      const onClipboard = (event: CustomEvent<{ text: string }>) => {
+        void clipboard.remoteClipboard(event.detail.text)
+      }
+      const onBlur = () => clipboard.release()
+      viewerElement.addEventListener('keydown', onKeyDown, true)
+      viewerElement.addEventListener('keyup', onKeyUp, true)
+      viewerElement.addEventListener('pointerdown', onPointerDown, true)
+      window.addEventListener('paste', onPaste, true)
+      window.addEventListener('blur', onBlur)
+      rfb.addEventListener('clipboard', onClipboard)
+      removeClipboardHandlers = () => {
+        clipboard.release()
+        viewerElement.removeEventListener('keydown', onKeyDown, true)
+        viewerElement.removeEventListener('keyup', onKeyUp, true)
+        viewerElement.removeEventListener('pointerdown', onPointerDown, true)
+        window.removeEventListener('paste', onPaste, true)
+        window.removeEventListener('blur', onBlur)
+        rfb?.removeEventListener('clipboard', onClipboard)
+      }
       rfb.addEventListener('connect', () => {
         if (disposed || failed) return
         window.clearTimeout(connectionTimeout)
@@ -484,6 +529,7 @@ function DesktopDialog({
     return () => {
       disposed = true
       window.clearTimeout(connectionTimeout)
+      removeClipboardHandlers?.()
       rfb?.disconnect()
     }
   }, [open, agentId, viewerElement, connectionAttempt])

@@ -6,6 +6,7 @@ declare module '@novnc/novnc' {
   }
 
   type RfbEventMap = {
+    clipboard: CustomEvent<{ text: string }>
     connect: CustomEvent
     disconnect: CustomEvent<{ clean: boolean }>
     securityfailure: CustomEvent<{ reason?: string; status: number }>
@@ -16,6 +17,8 @@ declare module '@novnc/novnc' {
     scaleViewport: boolean
     resizeSession: boolean
     viewOnly: boolean
+    clipboardPasteFrom(text: string): void
+    sendKey(keysym: number, code: string, down?: boolean): void
     addEventListener<K extends keyof RfbEventMap>(
       type: K,
       callback: (this: RFB, event: RfbEventMap[K]) => void,
