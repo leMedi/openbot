@@ -40,8 +40,8 @@ jobs:
           mkdir -p "$out/packages/db" "$out/runtime/bin"
           cp -a packages/db/drizzle "$out/packages/db/drizzle"
           cp pnpm-workspace.yaml "$out/pnpm-workspace.yaml"
-           cp scripts/run-debian.sh "$out/run"
-           cp scripts/run-server.mjs "$out/runtime/run-server.mjs"
+          cp scripts/run-debian.sh "$out/run"
+          pnpm build:server-runtime --outfile="$out/runtime/run-server.mjs"
           cp scripts/install-debian.sh "$out/install-debian.sh"
           cp scripts/update-debian.sh "$out/update-debian.sh"
           cp "$(command -v node)" "$out/runtime/bin/node"
@@ -76,6 +76,7 @@ jobs:
           test -x "$app/runtime/bin/openbot-desktop-driver"
           "$app/runtime/bin/node" --check "$app/runtime/bin/start-window"
           "$app/runtime/bin/node" --check "$app/runtime/bin/openbot-desktop-driver"
+          "$app/runtime/bin/node" --check "$app/runtime/run-server.mjs"
           PATH="$app/runtime/bin:$PATH" \
             "$app/runtime/bin/start-window" \
             >"$RUNNER_TEMP/start-window-smoke.log" 2>&1 || start_window_status=$?
