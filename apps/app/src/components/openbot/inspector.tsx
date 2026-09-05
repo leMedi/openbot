@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { MemoryItem, MemoryKind, SafeMcpAccount, SafeMcpServer } from '@openbot/db'
-import { FileText, Pencil, Plus, Trash2 } from 'lucide-react'
+import { FileText, Maximize2, Pencil, Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -47,6 +47,35 @@ export function Inspector({
   )
   const [memoryKind, setMemoryKind] = useState<MemoryKind>('note')
   const [memoryDraft, setMemoryDraft] = useState('')
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [desktopOpen, setDesktopOpen] = useState(false)
+
+  useEffect(() => {
+    if (!activeAgentId) return
+    setPreviewUrl(null)
+    let cancelled = false
+    let objectUrl: string | null = null
+    const refresh = async () => {
+      try {
+        const response = await fetch(`/api/agents/${encodeURIComponent(activeAgentId)}/desktop/screenshot`)
+        if (!response.ok) return
+        const next = URL.createObjectURL(await response.blob())
+        if (cancelled) URL.revokeObjectURL(next)
+        else {
+          objectUrl && URL.revokeObjectURL(objectUrl)
+          objectUrl = next
+          setPreviewUrl(next)
+        }
+      } catch { /* The preview is best-effort. */ }
+    }
+    void refresh()
+    const timer = window.setInterval(() => void refresh(), 2_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [activeAgentId])
 
   async function readMemory() {
     const [shared, scoped] = await Promise.all([
@@ -173,19 +202,34 @@ export function Inspector({
 
   return (
     <aside className="flex w-78 shrink-0 flex-col gap-5.5 overflow-y-auto border-l bg-sidebar/70 px-3.5 py-4">
-      {/* Live view */}
+      {/* Live view is only meaningful for an agent-owned display. */}
+      {activeAgentId && (
       <section>
         <h3 className="mb-2 text-[11px] font-semibold text-muted-foreground">Live View</h3>
-        <div className="flex h-36 cursor-zoom-in items-end rounded-lg border bg-[repeating-linear-gradient(115deg,transparent_0_9px,oklch(1_0_0/3%)_9px_18px)] p-2.5 hover:border-foreground/20">
-          <span className="max-w-full truncate rounded-md bg-black/55 px-2 py-1 text-[10px] text-muted-foreground">
+        <button
+          type="button"
+          onClick={() => setDesktopOpen(true)}
+          className="group relative flex h-36 w-full cursor-zoom-in items-end overflow-hidden rounded-lg border bg-muted p-2.5 text-left hover:border-foreground/20"
+          aria-label="Open full desktop control"
+        >
+          {previewUrl && <img src={previewUrl} alt="Current agent desktop" className="absolute inset-0 size-full object-cover" />}
+          <span className="relative z-10 max-w-full truncate rounded-md bg-black/55 px-2 py-1 text-[10px] text-muted-foreground">
             {conversation.title} · screen
           </span>
-        </div>
+          <Maximize2 className="absolute right-2 top-2 z-10 size-3.5 text-white opacity-0 drop-shadow group-hover:opacity-100" />
+        </button>
         <div className="mt-2 flex items-center gap-1.5">
           <span className="size-1.5 rounded-full bg-success" />
           <span className="text-xs text-muted-foreground">Shared machine</span>
         </div>
+        <DesktopDialog
+          open={desktopOpen}
+          onOpenChange={setDesktopOpen}
+          agentId={activeAgentId}
+          title={conversation.title}
+        />
       </section>
+      )}
 
       {/* Accounts */}
       <section>
@@ -375,5 +419,52 @@ export function Inspector({
         </DialogContent>
       </Dialog>
     </aside>
+  )
+}
+
+function DesktopDialog({
+  open,
+  onOpenChange,
+  agentId,
+  title,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  agentId: string
+  title: string
+}) {
+  const viewerRef = useRef<HTMLDivElement>(null)
+  type VncViewer = { disconnect: () => void; scaleViewport: boolean; resizeSession: boolean; viewOnly: boolean }
+  const [viewer, setViewer] = useState<VncViewer | null>(null)
+
+  useEffect(() => {
+    if (!open || !viewerRef.current) return
+    let disposed = false
+    let rfb: VncViewer | undefined
+    void import('@novnc/novnc').then(({ default: RFB }) => {
+      if (disposed || !viewerRef.current) return
+      // The WebSocket endpoint is server-owned; the browser never receives a VNC port.
+      const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
+      rfb = new RFB(viewerRef.current, `${scheme}://${window.location.host}/api/agents/${encodeURIComponent(agentId)}/desktop/vnc`)
+      rfb.scaleViewport = true
+      rfb.resizeSession = false
+      rfb.viewOnly = false
+      setViewer(rfb)
+    }).catch(() => setViewer(null))
+    return () => {
+      disposed = true
+      rfb?.disconnect()
+      setViewer(null)
+    }
+  }, [open, agentId])
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex h-[90vh] w-[95vw] max-w-none flex-col">
+        <DialogHeader><DialogTitle>Live View · {title}</DialogTitle></DialogHeader>
+        <div ref={viewerRef} className="min-h-0 flex-1 overflow-hidden rounded-lg bg-black" />
+        {!viewer && <p className="text-center text-xs text-muted-foreground">Connecting to desktop…</p>}
+      </DialogContent>
+    </Dialog>
   )
 }
