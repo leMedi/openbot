@@ -8,6 +8,7 @@ import {
 } from '@openbot/db'
 
 const MAX_STDERR_BYTES = 64 * 1024
+const MIN_AGENT_X_DISPLAY_NUMBER = 2
 
 export class StartWindowError extends Error {
   constructor(
@@ -73,7 +74,10 @@ export async function createAgent(
 ) {
   const agentId = createId('agt')
   return db.transaction(async (transaction) => {
-    const xDisplayNumber = await getNextAgentXDisplayNumber(transaction)
+    const xDisplayNumber = Math.max(
+      MIN_AGENT_X_DISPLAY_NUMBER,
+      await getNextAgentXDisplayNumber(transaction),
+    )
     const created = await createAgentInTransaction(transaction, input, mcpAccountIds, {
       id: agentId,
       xDisplayNumber,

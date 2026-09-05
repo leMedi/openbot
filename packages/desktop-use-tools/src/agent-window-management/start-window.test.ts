@@ -53,6 +53,7 @@ test('parses a display number and owner id', () => {
 
 test('rejects malformed arguments', () => {
   assert.throws(() => parseStartWindowArguments([':2', 'agent-123']), /display-number/)
+  assert.throws(() => parseStartWindowArguments(['1', 'agent-123']), /between 2 and/)
   assert.throws(() => parseStartWindowArguments(['2', 'bad\nowner']), /owner-id/)
   assert.throws(() => parseStartWindowArguments(['2']), /Usage/)
 })

@@ -34,15 +34,15 @@ test('creates the database records and provisions sequential agent displays', as
   const first = await createAgent({ name: 'First managed agent' })
   const second = await createAgent({ name: 'Second managed agent' })
 
-  assert.equal(first.agent.xDisplayNumber, 1)
-  assert.equal(second.agent.xDisplayNumber, 2)
+  assert.equal(first.agent.xDisplayNumber, 2)
+  assert.equal(second.agent.xDisplayNumber, 3)
   const invocations = (await readFile(invocationLog, 'utf8'))
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line))
   assert.deepEqual(invocations, [
-    ['1', first.agent.id],
-    ['2', second.agent.id],
+    ['2', first.agent.id],
+    ['3', second.agent.id],
   ])
 })
 

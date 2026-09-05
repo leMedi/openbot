@@ -13,6 +13,8 @@ import { join } from 'node:path'
 import { isNodeError } from './node-errors'
 
 export const EXIT_UNAVAILABLE = 75
+/** Display :1 is reserved for the interactive user session. */
+export const MIN_AGENT_DISPLAY_NUMBER = 2
 export const AGENT_SCREEN = {
   width: DESKTOP_WIDTH,
   height: DESKTOP_HEIGHT,
@@ -68,11 +70,17 @@ export function parseStartWindowArguments(arguments_: readonly string[]): StartW
 
   const [displayValue, ownerId] = arguments_
   if (!/^(0|[1-9]\d*)$/.test(displayValue)) {
-    throw usageError('display-number must be a non-negative integer')
+    throw usageError(`display-number must be an integer from ${MIN_AGENT_DISPLAY_NUMBER} upward`)
   }
   const displayNumber = Number(displayValue)
-  if (!Number.isSafeInteger(displayNumber) || displayNumber > DISPLAY_NUMBER_MAX) {
-    throw usageError(`display-number must be between 0 and ${DISPLAY_NUMBER_MAX}`)
+  if (
+    !Number.isSafeInteger(displayNumber) ||
+    displayNumber < MIN_AGENT_DISPLAY_NUMBER ||
+    displayNumber > DISPLAY_NUMBER_MAX
+  ) {
+    throw usageError(
+      `display-number must be between ${MIN_AGENT_DISPLAY_NUMBER} and ${DISPLAY_NUMBER_MAX}`,
+    )
   }
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(ownerId)) {
     throw usageError(
