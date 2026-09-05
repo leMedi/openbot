@@ -9,6 +9,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { join } from 'node:path'
+import { isNodeError } from './node-errors'
 
 export const EXIT_UNAVAILABLE = 75
 export const AGENT_SCREEN = { width: 1280, height: 800, depth: 24 } as const
@@ -79,10 +80,6 @@ export function parseStartWindowArguments(arguments_: readonly string[]): StartW
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
-}
-
-function isNodeError(error: unknown, code: string): boolean {
-  return error instanceof Error && 'code' in error && error.code === code
 }
 
 function statePath(directory: string, displayNumber: number) {

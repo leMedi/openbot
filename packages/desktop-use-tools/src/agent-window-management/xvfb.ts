@@ -4,13 +4,10 @@ import { access, readFile } from 'node:fs/promises'
 import { createConnection, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, isAbsolute, join } from 'node:path'
+import { isNodeError } from './node-errors'
 import { AGENT_SCREEN, type StartWindowDependencies } from './start-window-core'
 
 const DEFAULT_START_TIMEOUT_MS = 10_000
-
-function isNodeError(error: unknown, code: string): boolean {
-  return error instanceof Error && 'code' in error && error.code === code
-}
 
 function runtimeStateDirectory(environment: NodeJS.ProcessEnv): string {
   const xdgRuntimeDirectory = environment.XDG_RUNTIME_DIR
