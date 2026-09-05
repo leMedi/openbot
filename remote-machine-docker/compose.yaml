@@ -1,0 +1,17 @@
+services:
+  openbot:
+    image: ghcr.io/lemedi/openbot-remote-machine:main
+    platform: linux/amd64
+    pull_policy: always
+    restart: unless-stopped
+    shm_size: 2gb
+    ports:
+      - "${OPENBOT_BIND_ADDRESS:-127.0.0.1}:3000:3000"
+    environment:
+      OPENBOT_PUBLIC_URL: "${OPENBOT_PUBLIC_URL:-http://localhost:3000}"
+    volumes:
+      - openbot-data:/var/lib/openbot
+    stop_grace_period: 30s
+
+volumes:
+  openbot-data:
