@@ -5,11 +5,7 @@ import type {
   ProviderConfigurationDto,
   ProviderDto,
 } from '@openbot/agent'
-import {
-  PROVIDER_DESCRIPTIONS,
-  providerBrandIcon,
-  sortProviders,
-} from '@openbot/plugins/provider-icons'
+import { PROVIDER_DESCRIPTIONS, sortProviders } from '@openbot/plugins/provider-icons'
 import type { Profile, Setting } from '@openbot/db'
 import {
   ArrowUp,
@@ -37,7 +33,8 @@ import {
   refreshAiProviders,
   saveAiModelSettings,
 } from '@/server/providers'
-import { BotAvatar } from './bot-avatar'
+import { ModelPicker } from './model-picker'
+import { ProviderBrandIcon } from './provider-brand-icon'
 import {
   checkServerUpdate,
   getServerConfig,
@@ -634,37 +631,6 @@ function connectionLabel(provider: ProviderDto) {
   }
 }
 
-function ProviderBrandIcon({
-  provider,
-  className,
-}: {
-  provider: Pick<ProviderDto, 'id' | 'name'>
-  className?: string
-}) {
-  const icon = providerBrandIcon(provider.id)
-  if (!icon) {
-    return (
-      <BotAvatar
-        name={provider.name}
-        color={providerHue(provider.id)}
-        className={cn('size-6.5 text-xs', className)}
-      />
-    )
-  }
-  return (
-    <span
-      className={cn(
-        'flex size-6.5 shrink-0 items-center justify-center rounded-md border bg-muted/60 p-1.25',
-        className,
-      )}
-    >
-      <svg viewBox="0 0 24 24" role="img" aria-label={`${provider.name} logo`} className="size-full">
-        <path d={icon.path} fill={icon.color} />
-      </svg>
-    </span>
-  )
-}
-
 function ProviderRow({
   provider,
   busy,
@@ -714,23 +680,10 @@ function ModelDefaultField({
   onChange: (value: string) => void
 }) {
   return (
-    <label className="flex min-w-0 flex-col gap-1.5 text-xs font-medium">
+    <div className="flex min-w-0 flex-col gap-1.5 text-xs font-medium">
       {label}
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="h-8 min-w-0 rounded-lg border border-input bg-transparent px-2 text-xs outline-none dark:bg-input/30"
-      >
-        {value && !models.some((model) => model.key === value) && (
-          <option value={value}>{value} (unavailable)</option>
-        )}
-        {models.map((model) => (
-          <option key={model.key} value={model.key}>
-            {model.providerName} — {model.name}
-          </option>
-        ))}
-      </select>
-    </label>
+      <ModelPicker value={value} models={models} onChange={onChange} className="text-xs" />
+    </div>
   )
 }
 
@@ -958,12 +911,6 @@ function DeviceCodePanel({
       </div>
     </div>
   )
-}
-
-function providerHue(providerId: string) {
-  let hash = 0
-  for (const character of providerId) hash = (hash * 31 + character.charCodeAt(0)) | 0
-  return `hsl(${Math.abs(hash) % 360} 42% 48%)`
 }
 
 function ServerTab({

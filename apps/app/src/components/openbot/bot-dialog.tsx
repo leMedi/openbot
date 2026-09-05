@@ -21,6 +21,7 @@ import { cn } from '@/lib/utils'
 import { addAgent, updateAgent } from '@/server/agents'
 import { agentAvatarUrl } from './agents'
 import { BotAvatar } from './bot-avatar'
+import { ModelPicker } from './model-picker'
 import { AVATAR_COLORS, AVATAR_SHAPES } from './data'
 
 const ACCEPTED_AVATAR_TYPES = 'image/png,image/jpeg,image/webp,image/gif'
@@ -298,21 +299,12 @@ export function BotDialog({
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label className="text-[11px] font-semibold text-muted-foreground">Model</Label>
-                <select
+                <ModelPicker
                   value={defaultModel}
-                  onChange={(event) => setDefaultModel(event.target.value)}
-                  className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-                >
-                  <option value="">Use default ({defaultAgentModel})</option>
-                  {models.map((model) => (
-                    <option key={model.key} value={model.key}>
-                      {model.providerName} — {model.name}
-                    </option>
-                  ))}
-                  {defaultModel && !models.some((model) => model.key === defaultModel) && (
-                    <option value={defaultModel}>{defaultModel} (unavailable)</option>
-                  )}
-                </select>
+                  models={models}
+                  onChange={setDefaultModel}
+                  emptyLabel={`Use default (${defaultAgentModel})`}
+                />
                 <p className="text-[10px] leading-normal text-muted-foreground/70">
                   Connected providers determine which models are available.
                 </p>
