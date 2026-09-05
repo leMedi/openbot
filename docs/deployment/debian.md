@@ -8,24 +8,36 @@ The package supports x86-64 Debian machines.
 
 ## Install or update
 
-Install the GitHub CLI and authenticate it, then run the following as the
-Debian login user that should run OpenBot. Do not run the installer itself with
-`sudo`; it uses `sudo` only for system-wide changes.
+The repository is public, so no GitHub account or authentication is required.
+Run the following as the Debian login user that should run OpenBot. Do not run
+the installer itself with `sudo`; it uses `sudo` only for system-wide changes.
 
 ```sh
-sudo apt-get update && sudo apt-get install -y curl gh
-gh auth login
+sudo apt-get update && sudo apt-get install -y curl jq
 
 REPO=leMedi/openbot
-TAG=$(gh release list --repo "$REPO" --limit 100 \
-  --json tagName,publishedAt \
-  --jq 'map(select(.tagName | test("^main-[0-9a-f]{12}$"))) | sort_by(.publishedAt) | last | .tagName')
-test -n "$TAG" || { echo "No published main Debian release" >&2; exit 1; }
+release_json=$(curl --fail --silent --show-error --location \
+  "https://api.github.com/repos/$REPO/releases?per_page=100")
+TAG=$(printf '%s' "$release_json" | jq -r \
+  '[.[] | select(.prerelease and (.tag_name | test("^main-[0-9a-f]{12}$")))] |
+   sort_by(.published_at) | last | .tag_name // empty')
+asset_url=$(printf '%s' "$release_json" | jq -r --arg tag "$TAG" \
+  '.[] | select(.tag_name == $tag) | .assets[] |
+   select(.name == "openbot-debian-x64.tar.gz") | .browser_download_url')
+checksum_url=$(printf '%s' "$release_json" | jq -r --arg tag "$TAG" \
+  '.[] | select(.tag_name == $tag) | .assets[] |
+   select(.name == "openbot-debian-x64.tar.gz.sha256") | .browser_download_url')
+test -n "$TAG" && test -n "$asset_url" && test -n "$checksum_url" || {
+  echo "No published main Debian release found" >&2
+  exit 1
+}
 echo "Installing $TAG"
 rm -rf "$HOME/openbot-install"
 mkdir -p "$HOME/openbot-install"
-gh release download "$TAG" --repo "$REPO" \
-  --pattern 'openbot-debian-x64.tar.gz*' --dir "$HOME/openbot-install"
+curl --fail --silent --show-error --location "$asset_url" \
+  --output "$HOME/openbot-install/openbot-debian-x64.tar.gz"
+curl --fail --silent --show-error --location "$checksum_url" \
+  --output "$HOME/openbot-install/openbot-debian-x64.tar.gz.sha256"
 cd "$HOME/openbot-install"
 sha256sum --check openbot-debian-x64.tar.gz.sha256
 tar -xzf openbot-debian-x64.tar.gz
