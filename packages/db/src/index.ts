@@ -15,6 +15,7 @@ export * from './pi-sessions'
 export * from './files'
 export * from './memory'
 export * from './mcp'
+export * from './cleanup'
 export {
   setting,
   profile,

@@ -12,20 +12,33 @@ import {
   Check,
   ChevronRight,
   Copy,
+  Database,
   ExternalLink,
+  MessageCircle,
   Loader2,
+  Bot,
+  Brain,
   Plus,
   RefreshCw,
   Server,
   SlidersHorizontal,
   Sun,
+  Trash2,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import { clearAppData, type AppDataTarget } from '@/server/data'
 import { saveUserProfile } from '@/server/profile'
 import {
   disconnectAiProvider,
@@ -42,12 +55,13 @@ import {
   startServerUpdate,
 } from '@/server/config'
 
-type Tab = 'general' | 'providers' | 'server'
+type Tab = 'general' | 'providers' | 'server' | 'data'
 
 const TABS: { id: Tab; label: string; icon: typeof Sun; group: string }[] = [
   { id: 'general', label: 'General', icon: SlidersHorizontal, group: 'Account' },
   { id: 'providers', label: 'Providers', icon: Sun, group: 'Connection' },
   { id: 'server', label: 'Server', icon: Server, group: 'Connection' },
+  { id: 'data', label: 'Data', icon: Database, group: 'System' },
 ]
 
 export function SettingsDialog({
@@ -58,6 +72,7 @@ export function SettingsDialog({
   providerConfiguration,
   onProvidersChanged,
   onServerUpdateStatus,
+  onDataCleared,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -66,6 +81,7 @@ export function SettingsDialog({
   providerConfiguration: ProviderConfigurationDto & { setting: Setting }
   onProvidersChanged: () => void
   onServerUpdateStatus: (updateAvailable: boolean) => void
+  onDataCleared: (firstConversationId: string | null) => void | Promise<void>
 }) {
   const [tab, setTab] = useState<Tab>('general')
   const [displayProfile, setDisplayProfile] = useState(profile)
@@ -89,7 +105,7 @@ export function SettingsDialog({
         <DialogTitle className="sr-only">Settings</DialogTitle>
         {/* Nav */}
         <div className="flex shrink-0 gap-0.5 overflow-x-auto border-b bg-sidebar/70 px-3 py-2 pr-12 sm:w-56 sm:flex-col sm:border-r sm:border-b-0 sm:py-4 sm:pr-3">
-          {['Account', 'Connection'].map((group) => (
+          {['Account', 'Connection', 'System'].map((group) => (
             <div key={group} className="contents">
               <div className="hidden px-2.5 pt-3 pb-2 text-xs font-semibold text-muted-foreground first:pt-0 sm:block">
                 {group}
@@ -132,9 +148,173 @@ export function SettingsDialog({
             />
           )}
           {tab === 'server' && <ServerTab open={open} onUpdateStatus={onServerUpdateStatus} />}
+          {tab === 'data' && (
+            <DataTab open={open} onDataCleared={onDataCleared} />
+          )}
         </div>
       </DialogContent>
     </Dialog>
+  )
+}
+
+const DATA_OPTIONS: {
+  id: AppDataTarget
+  label: string
+  description: string
+  icon: typeof Database
+}[] = [
+  {
+    id: 'conversations',
+    label: 'Conversations',
+    description: 'Delete every conversation and message. Group rooms will be recreated empty.',
+    icon: MessageCircle,
+  },
+  {
+    id: 'bots',
+    label: 'Agents',
+    description: 'Delete all agents, their conversations, private memory, and access grants.',
+    icon: Bot,
+  },
+  {
+    id: 'memory',
+    label: 'Memory',
+    description: 'Delete all shared and agent-specific memory.',
+    icon: Brain,
+  },
+]
+
+function DataTab({
+  open,
+  onDataCleared,
+}: {
+  open: boolean
+  onDataCleared: (firstConversationId: string | null) => void | Promise<void>
+}) {
+  const [selected, setSelected] = useState<AppDataTarget[]>([])
+  const [confirming, setConfirming] = useState(false)
+  const [clearing, setClearing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [cleared, setCleared] = useState(false)
+
+  useEffect(() => {
+    if (open) return
+    setSelected([])
+    setConfirming(false)
+    setError(null)
+    setCleared(false)
+  }, [open])
+
+  function toggle(target: AppDataTarget) {
+    setCleared(false)
+    setSelected((current) =>
+      current.includes(target)
+        ? current.filter((item) => item !== target)
+        : [...current, target],
+    )
+  }
+
+  async function clear() {
+    if (selected.length === 0 || clearing) return
+    setClearing(true)
+    setError(null)
+    try {
+      const { firstConversationId } = await clearAppData({
+        data: { targets: selected },
+      })
+      await onDataCleared(firstConversationId)
+      setConfirming(false)
+      setSelected([])
+      setCleared(true)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Selected data could not be cleared')
+    } finally {
+      setClearing(false)
+    }
+  }
+
+  const selectedLabels = DATA_OPTIONS
+    .filter((option) => selected.includes(option.id))
+    .map((option) => option.label)
+
+  return (
+    <div className="flex max-w-xl flex-col gap-2.5">
+      <div>
+        <h3 className="text-sm font-semibold text-foreground/85">Clear app data</h3>
+        <p className="mt-1 text-xs leading-normal text-muted-foreground">
+          Select one or more types of data to permanently delete.
+        </p>
+      </div>
+      <div className="rounded-xl bg-card px-5">
+        {DATA_OPTIONS.map((option) => (
+          <label
+            key={option.id}
+            className="flex cursor-pointer items-center gap-3 border-b py-4 last:border-b-0"
+          >
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+              <option.icon className="size-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-medium">{option.label}</span>
+              <span className="mt-0.5 block text-xs leading-normal text-muted-foreground">
+                {option.description}
+              </span>
+            </span>
+            <Checkbox
+              checked={selected.includes(option.id)}
+              onCheckedChange={() => toggle(option.id)}
+              aria-label={`Clear ${option.label}`}
+            />
+          </label>
+        ))}
+      </div>
+      <div className="flex items-center gap-3 pt-1">
+        <span aria-live="polite" className="min-w-0 flex-1 text-xs text-muted-foreground">
+          {cleared ? 'Selected data was deleted.' : null}
+        </span>
+        <Button
+          size="sm"
+          variant="destructive"
+          disabled={selected.length === 0}
+          onClick={() => {
+            setError(null)
+            setConfirming(true)
+          }}
+        >
+          <Trash2 data-icon="inline-start" /> Clear selected
+        </Button>
+      </div>
+
+      <Dialog
+        open={confirming}
+        onOpenChange={(nextOpen) => {
+          if (!clearing) setConfirming(nextOpen)
+        }}
+      >
+        <DialogContent showCloseButton={false} className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Clear selected data?</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs leading-normal text-muted-foreground">
+            This will permanently delete {selectedLabels.join(', ')}. This action cannot be
+            undone.
+          </p>
+          {error && <p className="text-xs text-destructive">{error}</p>}
+          <DialogFooter>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={clearing}
+              onClick={() => setConfirming(false)}
+            >
+              Cancel
+            </Button>
+            <Button variant="destructive" size="sm" disabled={clearing} onClick={clear}>
+              {clearing ? 'Clearing…' : 'Clear data'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   )
 }
 

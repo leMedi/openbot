@@ -495,6 +495,13 @@ function OpenBot() {
         providerConfiguration={providers}
         onProvidersChanged={() => void router.invalidate()}
         onServerUpdateStatus={setUpdateAvailable}
+        onDataCleared={async (firstConversationId) => {
+          localStorage.removeItem(LAST_CONVERSATION_KEY)
+          setTranscript(null)
+          setActiveId(firstConversationId ?? '')
+          setMobileDetail(false)
+          await router.invalidate()
+        }}
       />
       <NewConversationDialog
         open={newConvoOpen}

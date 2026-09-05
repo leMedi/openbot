@@ -1,3 +1,2 @@
-export const cleanTargets = ['bots', 'conversations', 'mcps'] as const
-
-export type CleanTarget = (typeof cleanTargets)[number]
+export { cleanTargets } from '@openbot/db'
+export type { CleanTarget } from '@openbot/db'

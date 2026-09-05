@@ -7,6 +7,7 @@ import { type CleanTarget, cleanTargets } from './targets'
 const labels: Record<CleanTarget, string> = {
   bots: 'Bots',
   conversations: 'Conversations',
+  memory: 'Memory',
   mcps: 'MCP servers and accounts',
 }
 
@@ -23,6 +24,10 @@ const clean = defineCommand({
     conversations: {
       type: 'boolean',
       description: 'Delete all conversations and their dependent data',
+    },
+    memory: {
+      type: 'boolean',
+      description: 'Delete all user and bot memory',
     },
     mcps: {
       type: 'boolean',
