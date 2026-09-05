@@ -163,7 +163,6 @@ fi
 if ! xdotool search --onlyvisible --class Google-chrome >/dev/null 2>&1; then
   stop_recorded_process chrome
   start_process chrome google-chrome-stable \
-    --no-sandbox \
     --no-first-run \
     --no-default-browser-check \
     --password-store=basic \
