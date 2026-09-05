@@ -3,7 +3,8 @@
 Each push to `main` builds an `openbot-debian-x64` package and publishes it
 as an immutable GitHub prerelease tagged `main-<commit>`. It contains the
 application, its production dependencies, database migrations, a pinned Node
-runtime, and an installer. The package supports x86-64 Debian machines.
+runtime, the `start-window` and desktop-driver executables, and an installer.
+The package supports x86-64 Debian machines.
 
 ## Install or update
 
@@ -40,13 +41,19 @@ sudo systemctl restart openbot
 sudo systemctl status openbot
 ```
 
-The artifact configures its bundled `start-window` and
-`openbot-desktop-driver` commands for agent display provisioning and control.
-Install their host dependencies before creating agents:
+The installer installs the required X11 packages and configures the bundled
+`start-window` and `openbot-desktop-driver` commands for agent display
+provisioning and control. Their stable configured paths are:
 
-```sh
-sudo apt-get install -y xvfb imagemagick xdotool x11-xserver-utils
+```dotenv
+OPENBOT_START_WINDOW=/opt/openbot/current/runtime/bin/start-window
+OPENBOT_DESKTOP_DRIVER=/opt/openbot/current/runtime/bin/openbot-desktop-driver
 ```
+
+Both commands run with the Node runtime packaged in the release; a system-wide
+Node installation is not required. On updates, the installer preserves custom
+non-empty command settings and fills missing or empty settings with these
+bundled defaults.
 
 OpenBot listens on `127.0.0.1:3000` by default. Keep it private or place an
 authenticated TLS reverse proxy in front of it. The architecture calls for an

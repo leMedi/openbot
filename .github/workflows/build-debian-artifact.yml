@@ -66,8 +66,26 @@ jobs:
         run: |
           set -euo pipefail
           app="$RUNNER_TEMP/openbot"
+          test -x "$app/runtime/bin/start-window"
+          test -x "$app/runtime/bin/openbot-desktop-driver"
+          "$app/runtime/bin/node" --check "$app/runtime/bin/start-window"
+          "$app/runtime/bin/node" --check "$app/runtime/bin/openbot-desktop-driver"
+          PATH="$app/runtime/bin:$PATH" \
+            "$app/runtime/bin/start-window" \
+            >"$RUNNER_TEMP/start-window-smoke.log" 2>&1 || start_window_status=$?
+          test "${start_window_status:-0}" -eq 1
+          grep -q 'Usage: start-window' "$RUNNER_TEMP/start-window-smoke.log"
+          PATH="$app/runtime/bin:$PATH" \
+            "$app/runtime/bin/openbot-desktop-driver" </dev/null \
+            >"$RUNNER_TEMP/desktop-driver-smoke.json" || driver_status=$?
+          test "${driver_status:-0}" -eq 1
+          grep -q '"error_code":"INVALID_REQUEST"' \
+            "$RUNNER_TEMP/desktop-driver-smoke.json"
           export OPENBOT_DATA_DIR="$RUNNER_TEMP/openbot-data"
           export OPENBOT_PUBLIC_URL=http://127.0.0.1:3000
+          export OPENBOT_DESKTOP_DRIVER="$app/runtime/bin/openbot-desktop-driver"
+          export OPENBOT_DESKTOP_DRIVER_ARGS='[]'
+          export OPENBOT_START_WINDOW="$app/runtime/bin/start-window"
           export HOST=127.0.0.1
           export PORT=3000
           "$app/run" >"$RUNNER_TEMP/openbot.log" 2>&1 &

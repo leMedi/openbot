@@ -23,14 +23,36 @@ case "$(uname -s):$(uname -m)" in
     ;;
 esac
 
-for command in sudo curl tar; do
+for command in sudo curl tar apt-get dpkg-query; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "Required command is missing: $command" >&2
     exit 1
   fi
 done
 
-if [ ! -x "$artifact_root/run" ] || [ ! -x "$artifact_root/runtime/bin/node" ]; then
+install_desktop_dependencies() {
+  missing_packages=
+  for package in xvfb imagemagick xdotool x11-xserver-utils; do
+    if ! dpkg-query -W -f='${Status}\n' "$package" 2>/dev/null |
+      grep -q '^install ok installed$'; then
+      missing_packages="$missing_packages $package"
+    fi
+  done
+  if [ -z "$missing_packages" ]; then
+    return
+  fi
+
+  echo "Installing desktop runtime dependencies:$missing_packages"
+  sudo apt-get update
+  # Word splitting is intentional: this contains only fixed package names.
+  # shellcheck disable=SC2086
+  sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y $missing_packages
+}
+
+if [ ! -x "$artifact_root/run" ] ||
+  [ ! -x "$artifact_root/runtime/bin/node" ] ||
+  [ ! -x "$artifact_root/runtime/bin/start-window" ] ||
+  [ ! -x "$artifact_root/runtime/bin/openbot-desktop-driver" ]; then
   echo "Run this script from the extracted OpenBot artifact directory." >&2
   exit 1
 fi
@@ -66,6 +88,7 @@ switch_current_release() {
 }
 
 echo "Installing OpenBot $version as $run_user:$run_group"
+install_desktop_dependencies
 sudo install -d -m 0755 "$install_root/releases"
 sudo install -d -m 0755 "$config_dir"
 sudo install -d -m 0700 "$backup_dir"
@@ -90,7 +113,12 @@ if [ ! -d "$release_dir" ]; then
   sudo install -d -m 0755 "$release_stage"
   if ! sudo cp -a "$artifact_root/." "$release_stage/" ||
     ! sudo chown -R root:root "$release_stage" ||
-    ! sudo chmod 0755 "$release_stage/run" "$release_stage/install-debian.sh" ||
+    ! sudo chmod 0755 \
+      "$release_stage/run" \
+      "$release_stage/install-debian.sh" \
+      "$release_stage/runtime/bin/node" \
+      "$release_stage/runtime/bin/start-window" \
+      "$release_stage/runtime/bin/openbot-desktop-driver" ||
     ! sudo mv -T "$release_stage" "$release_dir"; then
     sudo rm -rf "$release_stage" || true
     echo "Could not stage release $version; installation aborted." >&2
@@ -134,6 +162,10 @@ fi
 if ! sudo grep -q '^OPENBOT_START_WINDOW=' "$config_dir/openbot.env"; then
   printf '%s\n' 'OPENBOT_START_WINDOW=/opt/openbot/current/runtime/bin/start-window' |
     sudo tee -a "$config_dir/openbot.env" >/dev/null
+elif sudo grep -q '^OPENBOT_START_WINDOW=[[:space:]]*$' "$config_dir/openbot.env"; then
+  sudo sed -i \
+    's|^OPENBOT_START_WINDOW=[[:space:]]*$|OPENBOT_START_WINDOW=/opt/openbot/current/runtime/bin/start-window|' \
+    "$config_dir/openbot.env"
 fi
 if ! sudo grep -q '^OPENBOT_DESKTOP_DRIVER=' "$config_dir/openbot.env"; then
   printf '%s\n' 'OPENBOT_DESKTOP_DRIVER=/opt/openbot/current/runtime/bin/openbot-desktop-driver' |
