@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Google Chrome
+Comment=Open Google Chrome for this agent
+Exec=/usr/local/bin/openbot-launch-chrome
+Icon=google-chrome
+Terminal=false
+NoDisplay=true
+Categories=Network;WebBrowser;

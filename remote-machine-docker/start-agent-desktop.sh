@@ -29,11 +29,24 @@ display=:$display_number
 rfb_port=$((5900 + display_number))
 session_root=${XDG_RUNTIME_DIR:-/tmp}/openbot/agent-desktops
 session_dir=$session_root/display-$display_number
+panel_profile=openbot-display-$display_number
 profile_dir=${OPENBOT_DATA_DIR:-/var/lib/openbot}/chrome-profiles/$owner_id
 window_state_root=${XDG_RUNTIME_DIR:-/tmp}/openbot/agent-window-management
 window_state=$window_state_root/display-$display_number.json
 mkdir -p "$session_dir" "$profile_dir"
 chmod 0700 "$session_root" "$session_dir" "$profile_dir"
+
+database=${OPENBOT_DATA_DIR:-/var/lib/openbot}/store.db
+if [ -f "$database" ]; then
+  timezone=$(sqlite3 -noheader -batch "$database" \
+    'SELECT timezone FROM profile WHERE id = 1' 2>/dev/null || true)
+  case "$timezone" in
+    ''|*..*|.*|/*|*[!A-Za-z0-9_+/-]*) timezone= ;;
+  esac
+  if [ -n "$timezone" ] && [ -f "/usr/share/zoneinfo/$timezone" ]; then
+    export TZ=$timezone
+  fi
+fi
 
 exec 9>"$session_dir/setup.lock"
 if ! flock -w 30 9; then
@@ -43,6 +56,7 @@ fi
 
 export DISPLAY=$display
 started_openbox=0
+started_panel=0
 started_vnc=0
 started_chrome=0
 xvfb_was_running=0
@@ -96,6 +110,7 @@ cleanup_failed_start() {
   if [ "$status" -ne 0 ]; then
     if [ "$started_chrome" -eq 1 ]; then stop_recorded_process chrome; fi
     if [ "$started_vnc" -eq 1 ]; then stop_recorded_process vnc; fi
+    if [ "$started_panel" -eq 1 ]; then stop_recorded_process panel; fi
     if [ "$started_openbox" -eq 1 ]; then stop_recorded_process openbox; fi
     if [ "$xvfb_was_running" -eq 0 ] && [ -f "$window_state" ]; then
       xvfb_pid=$(jq -r '.pid // empty' "$window_state" 2>/dev/null || true)
@@ -137,6 +152,27 @@ if ! xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q 'window id'; the
 fi
 xsetroot -solid '#202124'
 
+if ! xdotool search --onlyvisible --class Lxpanel >/dev/null 2>&1; then
+  stop_recorded_process panel
+  panel_config_dir=$HOME/.config/lxpanel/$panel_profile/panels
+  mkdir -p "$panel_config_dir"
+  cp /etc/xdg/lxpanel/openbot/panels/panel "$panel_config_dir/panel"
+  start_process panel env OPENBOT_CHROME_PROFILE_DIR="$profile_dir" lxpanel --profile "$panel_profile"
+  started_panel=1
+  attempts=0
+  while [ "$attempts" -lt 100 ]; do
+    if xdotool search --onlyvisible --class Lxpanel >/dev/null 2>&1; then
+      break
+    fi
+    attempts=$((attempts + 1))
+    sleep 0.1
+  done
+  if [ "$attempts" -eq 100 ]; then
+    echo "LXPanel did not become ready on $display" >&2
+    exit 1
+  fi
+fi
+
 if ! nc -z 127.0.0.1 "$rfb_port" >/dev/null 2>&1; then
   stop_recorded_process vnc
   start_process vnc X0tigervnc \
@@ -167,13 +203,14 @@ if ! xdotool search --onlyvisible --class Google-chrome >/dev/null 2>&1; then
     --no-default-browser-check \
     --password-store=basic \
     --disable-session-crashed-bubble \
+    --lang=en-US \
     --force-device-scale-factor=1 \
     --ozone-platform=x11 \
     --start-maximized \
     --window-position=0,0 \
     --window-size=1280,800 \
     --user-data-dir="$profile_dir" \
-    about:blank
+    chrome://newtab
   started_chrome=1
   attempts=0
   while [ "$attempts" -lt 200 ]; do

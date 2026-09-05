@@ -1,0 +1,85 @@
+# lxpanel <profile> config file
+
+Global {
+    edge=bottom
+    align=left
+    margin=0
+    widthtype=percent
+    width=100
+    height=30
+    transparent=0
+    tintcolor=#202124
+    alpha=0
+    setdocktype=1
+    setpartialstrut=1
+    usefontcolor=1
+    fontcolor=#ffffff
+    background=0
+}
+
+Plugin {
+    type=menu
+    Config {
+        image=/usr/share/lxpanel/images/my-computer.png
+        system {
+        }
+        separator {
+        }
+        item {
+            command=run
+        }
+    }
+}
+
+Plugin {
+    type=launchbar
+    Config {
+        Button {
+            id=openbot-chrome.desktop
+        }
+        Button {
+            id=openbot-terminal.desktop
+        }
+        Button {
+            id=openbot-files.desktop
+        }
+    }
+}
+
+Plugin {
+    type=space
+    Config {
+        Size=6
+    }
+}
+
+Plugin {
+    type=taskbar
+    expand=1
+    Config {
+        tooltips=1
+        IconsOnly=0
+        AcceptSkipPager=1
+        ShowIconified=1
+        ShowMapped=1
+        ShowAllDesks=0
+        UseMouseWheel=1
+        UseUrgencyHint=1
+        FlatButton=0
+        MaxTaskWidth=180
+        spacing=1
+    }
+}
+
+Plugin {
+    type=tray
+}
+
+Plugin {
+    type=dclock
+    Config {
+        ClockFmt=%R
+        TooltipFmt=%A %x
+        BoldFont=0
+    }
+}

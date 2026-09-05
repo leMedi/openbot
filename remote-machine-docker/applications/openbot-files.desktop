@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=File Explorer
+Comment=Browse files with PCManFM
+Exec=pcmanfm
+Icon=system-file-manager
+Terminal=false
+NoDisplay=true
+Categories=System;FileTools;FileManager;

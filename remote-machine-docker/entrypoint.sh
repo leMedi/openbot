@@ -122,6 +122,25 @@ install_latest_openbot() {
   echo "Installed OpenBot $tag"
 }
 
+apply_profile_timezone() {
+  case "${OPENBOT_DATA_DIR:-/var/lib/openbot}" in
+    /*) database=${OPENBOT_DATA_DIR:-/var/lib/openbot}/store.db ;;
+    *) database=$active_release/$OPENBOT_DATA_DIR/store.db ;;
+  esac
+  if [ ! -f "$database" ]; then
+    return
+  fi
+  timezone=$(sqlite3 -noheader -batch "$database" \
+    'SELECT timezone FROM profile WHERE id = 1' 2>/dev/null || true)
+  case "$timezone" in
+    ''|*..*|.*|/*|*[!A-Za-z0-9_+/-]*) return ;;
+  esac
+  if [ -f "/usr/share/zoneinfo/$timezone" ]; then
+    echo "Using profile timezone $timezone"
+    export TZ=$timezone
+  fi
+}
+
 wait_for_server() {
   attempts=0
   while [ "$attempts" -lt 60 ]; do
@@ -172,6 +191,7 @@ stop_server() {
 
 clear_stale_desktop_runtime
 install_latest_openbot
+apply_profile_timezone
 cd "$active_release"
 export PATH="$active_release/runtime/bin:$PATH"
 

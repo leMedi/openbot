@@ -15,11 +15,15 @@ RUN case "${TARGETARCH:-amd64}" in amd64) ;; *) echo "Only linux/amd64 is suppor
         gnupg \
         imagemagick \
         jq \
+        lxpanel \
+        lxterminal \
         netcat-openbsd \
         openbox \
+        pcmanfm \
         sqlite3 \
         tigervnc-scraping-server \
         tini \
+        tzdata \
         util-linux \
         x11-utils \
         x11-xserver-utils \
@@ -42,8 +46,11 @@ RUN useradd --uid 1000 --create-home --shell /bin/sh openbot \
     && install -d -o openbot -g openbot -m 0700 /run/openbot /var/lib/openbot
 
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/openbot-entrypoint
+COPY --chmod=0755 launch-chrome.sh /usr/local/bin/openbot-launch-chrome
 COPY --chmod=0755 request-update.sh /usr/local/bin/openbot-request-update
 COPY --chmod=0755 start-agent-desktop.sh /usr/local/bin/start-agent-desktop
+COPY applications/ /usr/share/applications/
+COPY lxpanel/panel /etc/xdg/lxpanel/openbot/panels/panel
 
 ENV HOME=/home/openbot \
     LANG=C.UTF-8 \

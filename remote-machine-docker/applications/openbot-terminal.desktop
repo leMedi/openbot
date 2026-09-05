@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Terminal
+Comment=Open LXTerminal
+Exec=lxterminal
+Icon=utilities-terminal
+Terminal=false
+NoDisplay=true
+Categories=System;TerminalEmulator;

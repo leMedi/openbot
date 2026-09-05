@@ -1,9 +1,9 @@
 # OpenBot remote machine container
 
 This image runs OpenBot with one persistent graphical session per agent. Each
-session contains Xvfb, Openbox, loopback-only TigerVNC, and the official stable
-Google Chrome for Linux. OpenBot proxies VNC through its own web interface, so
-only the HTTP port is published.
+session contains Xvfb, Openbox, LXPanel, loopback-only TigerVNC, Google Chrome,
+LXTerminal, and the PCManFM file manager. OpenBot proxies VNC through its own
+web interface, so only the HTTP port is published.
 
 The image supports `linux/amd64` only. On every container start it downloads
 the latest `main-<commit>` OpenBot Debian prerelease from `leMedi/openbot`,
@@ -34,6 +34,13 @@ The Compose definition allocates 2 GB to `/dev/shm`, which Chrome uses for
 renderer shared memory. It persists the OpenBot database, managed files,
 provider credentials, workspaces, and per-agent Chrome profiles in the
 `openbot-data` volume.
+
+The container timezone (`TZ`) is read from the saved user profile in the
+OpenBot database, so the whole desktop session — including the timezone
+Chrome reports to websites — matches the profile. It is applied at container
+start and whenever an agent desktop is (re)launched; an already-running
+desktop keeps its timezone until it is restarted or the container recreates
+it on the next start.
 
 An optional `GITHUB_TOKEN` environment variable can be passed to increase the
 GitHub API rate limit used during startup. It is not required for this public
