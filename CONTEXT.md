@@ -102,9 +102,11 @@ An `agents` row contains:
 
 Interactive agent creation allocates one more than the greatest assigned X
 display number, creates the agent, its first conversation, and MCP grants, then
-provisions the display through the configured `start-window` executable. A
-display startup failure compensates by removing all newly created database
-records.
+provisions the display through the configured `start-window` executable before
+committing. A display startup failure rolls back all database changes. A
+database commit failure after successful display provisioning can leave an
+orphan display until Agent Window Management gains a matching stop operation;
+this is an accepted initial limitation.
 
 The effective tool list is not an agent column. It is derived for each turn
 from runtime capabilities, MCP discovery, permissions, and execution context.

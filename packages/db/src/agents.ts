@@ -118,11 +118,6 @@ export async function createAgent(input: AgentProfileInput, mcpAccountIds: strin
   return db.transaction((tx) => createAgentInTransaction(tx, input, mcpAccountIds))
 }
 
-/** Remove the new agent graph when an external creation step fails. */
-export async function rollbackAgentCreation(id: string) {
-  await db.delete(schema.agents).where(eq(schema.agents.id, id))
-}
-
 export async function updateAgentProfile(
   id: string,
   patch: Partial<AgentProfileInput>,

@@ -4,7 +4,6 @@ import {
   createId,
   db,
   getNextAgentXDisplayNumber,
-  rollbackAgentCreation,
   type AgentProfileInput,
 } from '@openbot/db'
 
@@ -73,25 +72,13 @@ export async function createAgent(
   mcpAccountIds: string[] = [],
 ) {
   const agentId = createId('agt')
-  const created = await db.transaction(async (transaction) => {
+  return db.transaction(async (transaction) => {
     const xDisplayNumber = await getNextAgentXDisplayNumber(transaction)
-    return createAgentInTransaction(transaction, input, mcpAccountIds, {
+    const created = await createAgentInTransaction(transaction, input, mcpAccountIds, {
       id: agentId,
       xDisplayNumber,
     })
-  })
-  try {
-    await startAgentWindow(created.agent.xDisplayNumber!, agentId)
+    await startAgentWindow(xDisplayNumber, agentId)
     return created
-  } catch (error) {
-    try {
-      await rollbackAgentCreation(agentId)
-    } catch (rollbackError) {
-      throw new AggregateError(
-        [error, rollbackError],
-        `Agent ${agentId} display provisioning and database rollback failed`,
-      )
-    }
-    throw error
-  }
+  })
 }
