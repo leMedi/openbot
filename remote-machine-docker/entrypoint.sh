@@ -5,6 +5,37 @@ install_root=/opt/openbot
 release_root=$install_root/releases
 active_release=$install_root/active
 
+clear_stale_desktop_runtime() {
+  if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+    runtime_dir=$(readlink -m -- "$XDG_RUNTIME_DIR")
+    case "$runtime_dir" in
+      /run|/run/*|/tmp|/tmp/*)
+        rm -f "$runtime_dir/openbot/agent-desktops"/display-*/*.pid
+        rm -f "$runtime_dir/openbot/agent-window-management"/display-*.json
+        ;;
+      *)
+        echo "XDG_RUNTIME_DIR must be under /run or /tmp" >&2
+        exit 1
+        ;;
+    esac
+  else
+    rm -f /tmp/openbot/agent-desktops/display-*/*.pid
+    rm -f "/tmp/openbot-agent-window-management-$(id -u)"/display-*.json
+  fi
+  rm -f /tmp/.X[0-9]*-lock /tmp/.X11-unix/X[0-9]*
+
+  case "${OPENBOT_DATA_DIR:-/var/lib/openbot}" in
+    /*) profile_root=${OPENBOT_DATA_DIR:-/var/lib/openbot}/chrome-profiles ;;
+    *) profile_root=$active_release/${OPENBOT_DATA_DIR}/chrome-profiles ;;
+  esac
+  if [ -d "$profile_root" ]; then
+    for profile in "$profile_root"/*; do
+      [ -d "$profile" ] || continue
+      rm -f "$profile/SingletonCookie" "$profile/SingletonLock" "$profile/SingletonSocket"
+    done
+  fi
+}
+
 github_get() {
   if [ -n "${GITHUB_TOKEN:-}" ]; then
     curl --fail --silent --show-error --location \
@@ -139,6 +170,7 @@ stop_server() {
   kill -TERM "$server_pid" 2>/dev/null || true
 }
 
+clear_stale_desktop_runtime
 install_latest_openbot
 cd "$active_release"
 
