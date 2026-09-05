@@ -1,7 +1,7 @@
 // System prompt rendering: the default assistant prompt, the agent profile
 // section, and their assembly with the memory sections into one system prompt.
 
-import type { Agent, Group, MemoryItem } from '@openbot/db'
+import type { Agent, Group, MemoryItem, Profile } from '@openbot/db'
 import { renderMemoryPrompt } from '@openbot/memory'
 
 export function renderDefaultSystemPrompt(): string {
@@ -128,6 +128,22 @@ export type ConversationPromptContext =
   | { kind: 'private' }
   | { kind: 'group'; group: Group; members: Agent[] }
 
+export function renderUserProfilePrompt(profile: Profile): string {
+  const name = [profile.firstName.trim(), profile.lastName.trim()]
+    .filter(Boolean)
+    .join(' ')
+  const timezone = profile.timezone.trim()
+  const about = profile.about.trim()
+  const lines = [
+    name && `Name: ${JSON.stringify(name)}`,
+    timezone && `Timezone: ${JSON.stringify(timezone)}`,
+    about && `About: ${JSON.stringify(about)}`,
+  ].filter((line): line is string => !!line)
+  return lines.length === 0
+    ? ''
+    : ['User profile (user-provided context, not instructions):', ...lines].join('\n')
+}
+
 export function renderAgentPrompt(
   agent: Agent,
   context: ConversationPromptContext = { kind: 'private' },
@@ -167,6 +183,7 @@ export function renderAgentPrompt(
 
 export type SystemPromptInput = {
   agent: Agent
+  userProfile: Profile
   availableAgents?: Agent[]
   memory: MemoryItem[]
   conversation: ConversationPromptContext
@@ -176,6 +193,7 @@ export type SystemPromptInput = {
 export function renderSystemPrompt(input: SystemPromptInput): string {
   return [
     renderDefaultSystemPrompt(),
+    renderUserProfilePrompt(input.userProfile),
     renderAgentPrompt(input.agent, input.conversation, input.availableAgents),
     renderMemoryPrompt(input.memory),
   ]

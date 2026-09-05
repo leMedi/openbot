@@ -34,6 +34,20 @@ export const setting = sqliteTable('setting', {
   check('setting_singleton_check', sql`${table.id} = 1`),
 ])
 
+export const profile = sqliteTable(
+  'profile',
+  {
+    id: integer('id').primaryKey().default(1),
+    firstName: text('first_name').notNull().default(''),
+    lastName: text('last_name').notNull().default(''),
+    about: text('about').notNull().default(''),
+    timezone: text('timezone').notNull().default(''),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [check('profile_singleton_check', sql`${table.id} = 1`)],
+)
+
 export const managedFiles = sqliteTable('managed_files', {
   id: text('id').primaryKey(),
   relativePath: text('relative_path').notNull().unique(),
@@ -376,6 +390,7 @@ export const agentMcpAccounts = sqliteTable('agent_mcp_accounts', {
 export type ManagedFile = typeof managedFiles.$inferSelect
 export type NewManagedFile = typeof managedFiles.$inferInsert
 export type Setting = typeof setting.$inferSelect
+export type Profile = typeof profile.$inferSelect
 export type Agent = typeof agents.$inferSelect
 export type NewAgent = typeof agents.$inferInsert
 export type Group = typeof groups.$inferSelect

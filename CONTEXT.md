@@ -72,6 +72,7 @@ consumption of the orchestrator setting lands with the decision layer.
 | Table | Responsibility |
 | --- | --- |
 | `setting` | Singleton installation-wide model configuration. |
+| `profile` | Singleton local-user identity, about text, and optional IANA timezone. |
 | `managed_files` | Metadata for application-owned files on disk. |
 | `agents` | Agent identity, appearance, stable defaults, and UI settings. |
 | `groups` | Group identity and versioned JSON membership. |
@@ -281,11 +282,11 @@ Private conversations continue the most recent append-only Pi JSONL session for
 their conversation ID, while each group member runs an in-memory Pi session and
 receives the shared database transcript from that member's perspective.
 
-The system prompt is rebuilt from live agent, room, and memory state on every
-turn; it is not restored from model history. Conversation clear and deletion
-remove the corresponding Pi session directory after the database operation
-commits. A process failure can leave an orphaned directory, matching the MVP's
-managed-file deletion policy.
+The system prompt is rebuilt from live user profile, agent, room, and memory
+state on every turn; it is not restored from model history. Conversation clear
+and deletion remove the corresponding Pi session directory after the database
+operation commits. A process failure can leave an orphaned directory, matching
+the MVP's managed-file deletion policy.
 
 ## Memory
 
@@ -397,11 +398,12 @@ behavior is being implemented.
 
 ## Implementation Status
 
-The schema, generated initial migration, startup migration path, JSON contracts,
+The schema, generated migrations, startup migration path, JSON contracts,
 ID helper, agent profile and avatar services, conversation navigation, the
 transcript repository, the durable turn queue with restart recovery and
 persisted waiting-turn resume, durable Pi session history, durable user and
-agent memory, and single-agent turn execution with streamed visible output are
+agent memory, singleton user profile settings, and single-agent turn execution
+with streamed visible output are
 implemented. User message acceptance is idempotent by request ID or stable
 idempotency key. Per-target claims enforce one active turn and
 `user > agent > background` priority. A turn is executed by the server-side runner
@@ -452,6 +454,7 @@ Remaining implementation slices are:
 
 - `packages/db/src/schema.ts`: canonical Drizzle table and constraint model.
 - `packages/db/src/settings.ts`: singleton installation-wide model configuration.
+- `packages/db/src/profile.ts`: singleton local-user profile reads and updates.
 - `packages/db/src/json-schemas.ts`: versioned durable JSON contracts.
 - `packages/db/src/ids.ts`: prefixed server ID generation.
 - `packages/db/src/client.ts`: database startup (pragmas, migrations, turn recovery).
