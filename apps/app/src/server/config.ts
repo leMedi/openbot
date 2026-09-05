@@ -1,8 +1,4 @@
-import { getDesktopDriverStatus } from '@openbot/agent'
 import { createServerFn } from '@tanstack/react-start'
-import { access, readFile } from 'node:fs/promises'
-import { spawn } from 'node:child_process'
-import path from 'node:path'
 
 const repo = process.env.OPENBOT_GITHUB_REPO ?? 'leMedi/openbot'
 const releasePattern = /^main-([0-9a-f]{12})$/
@@ -18,6 +14,10 @@ type UpdateStatus = {
 }
 
 async function installedVersion() {
+  const [{ readFile }, { default: path }] = await Promise.all([
+    import('node:fs/promises'),
+    import('node:path'),
+  ])
   for (const file of [
     path.join(process.cwd(), 'VERSION'),
     '/opt/openbot/current/VERSION',
@@ -52,16 +52,14 @@ function refreshUpdateCheck() {
   return updatePromise
 }
 
-void refreshUpdateCheck()
-setInterval(() => void refreshUpdateCheck(), 60 * 60 * 1000).unref()
-
 // Model selection is fixed by server configuration until the model providers
 // and listing feature lands; clients display it read-only.
-const desktopStatusPromise = (async (): Promise<
+async function getDesktopStatus(): Promise<
   | { available: true; width: number; height: number; sessionId: string }
   | { available: false; error: string }
-> => {
+> {
   try {
+    const { getDesktopDriverStatus } = await import('@openbot/agent')
     const display = await getDesktopDriverStatus()
     console.info('[desktop ready]', display)
     return { available: true as const, ...display }
@@ -70,12 +68,12 @@ const desktopStatusPromise = (async (): Promise<
     console.warn('[desktop unavailable]', message)
     return { available: false as const, error: message }
   }
-})()
+}
 
 export const getServerConfig = createServerFn({ method: 'GET' }).handler(async () => ({
   model: process.env.OPENBOT_AI_MODEL ?? '',
   host: process.env.OPENBOT_PUBLIC_URL ?? `http://${process.env.HOST ?? '127.0.0.1'}:${process.env.PORT ?? '3000'}`,
-  desktop: await desktopStatusPromise,
+  desktop: await getDesktopStatus(),
 }))
 
 export const getServerUpdate = createServerFn({ method: 'GET' }).handler(async () => cachedUpdate ?? refreshUpdateCheck())
@@ -86,7 +84,9 @@ export const startServerUpdate = createServerFn({ method: 'POST' }).handler(asyn
   const update = cachedUpdate ?? await refreshUpdateCheck()
   if (!update.updateAvailable) throw new Error('No update is available')
   const script = '/opt/openbot/current/update-debian.sh'
+  const { access } = await import('node:fs/promises')
   try { await access(script) } catch { throw new Error('Automatic updates are only available on the Debian installation') }
+  const { spawn } = await import('node:child_process')
   const child = spawn(script, [], { detached: true, stdio: 'ignore' })
   child.unref()
   return { started: true }
