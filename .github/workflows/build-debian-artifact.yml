@@ -46,6 +46,10 @@ jobs:
           cp packages/desktop-use-tools/dist/start-window.cjs "$out/runtime/bin/start-window"
           cp packages/desktop-driver/dist/openbot-desktop-driver.cjs \
             "$out/runtime/bin/openbot-desktop-driver"
+          # The bundled desktop tools are CommonJS files. The deployed app's
+          # package.json is ESM, so provide a package boundary for these
+          # extensionless executable paths.
+          printf '%s\n' '{"type":"commonjs"}' > "$out/runtime/bin/package.json"
           # libsql selects its native binding with a dynamic require, so Vite
           # cannot express this runtime dependency in the generated bundle.
           mkdir -p "$out/node_modules/@libsql"
