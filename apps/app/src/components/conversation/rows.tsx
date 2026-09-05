@@ -193,7 +193,7 @@ export function MessageRow({
 
       <div
         className={cn(
-          'relative flex max-w-[68%] min-w-0 flex-col gap-1',
+          'relative flex max-w-[85%] min-w-0 flex-col gap-1 sm:max-w-[68%]',
           isUser ? 'items-end' : 'items-start',
         )}
       >

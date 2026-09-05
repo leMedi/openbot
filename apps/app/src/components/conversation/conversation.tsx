@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ConversationMessage, Turn, WaitingState } from '@openbot/db'
-import { ArrowLeft, PanelRightOpen, Pencil, Square } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, PanelRightOpen, Pencil, Square } from 'lucide-react'
 import { BotAvatar } from '@/components/openbot/bot-avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -52,6 +52,11 @@ export type ConversationProps = {
   initialEntries: Entry[]
   activityTabs: ActivityTab[]
   onEditAgent?: () => void
+  /**
+   * Phone navigation: shows a back chevron and collapses the header to the
+   * essentials (the title itself opens the agent editor).
+   */
+  onBack?: () => void
   /** Extra header controls (e.g. inspector toggle). */
   headerActions?: React.ReactNode
   /** Read-only conversations hide message actions and the composer. */
@@ -94,6 +99,7 @@ export function Conversation({
   initialEntries,
   activityTabs,
   onEditAgent,
+  onBack,
   headerActions,
   readOnly,
   onSendMessage,
@@ -578,7 +584,12 @@ export function Conversation({
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col bg-panel">
       {/* Header */}
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
+      <header className={cn('flex h-12 shrink-0 items-center gap-2 border-b', onBack ? 'px-2' : 'px-4')}>
+        {onBack && !inThreadView && (
+          <Button variant="ghost" size="icon" aria-label="Back" onClick={onBack} className="-mr-1">
+            <ChevronLeft className="size-6" />
+          </Button>
+        )}
         {inThreadView && (
           <Button
             variant="ghost"
@@ -616,8 +627,19 @@ export function Conversation({
           </>
         ) : (
           <>
-            <span className="max-w-sm truncate text-sm font-semibold">{title ?? agent.name}</span>
-            {onEditAgent && (
+            {onBack ? (
+              <button
+                type="button"
+                onClick={onEditAgent}
+                disabled={!onEditAgent}
+                className="min-w-0 truncate text-sm font-semibold"
+              >
+                {title ?? agent.name}
+              </button>
+            ) : (
+              <span className="max-w-sm truncate text-sm font-semibold">{title ?? agent.name}</span>
+            )}
+            {onEditAgent && !onBack && (
               <button
                 type="button"
                 onClick={onEditAgent}
@@ -628,7 +650,9 @@ export function Conversation({
                 <Pencil className="size-2.5" />
               </button>
             )}
-            {model && <span className="text-[11px] text-muted-foreground/70">{model}</span>}
+            {model && !onBack && (
+              <span className="text-[11px] text-muted-foreground/70">{model}</span>
+            )}
             {members && members.length > 0 && <GroupAvatar members={members} />}
           </>
         )}
@@ -649,14 +673,26 @@ export function Conversation({
           </Button>
         )}
         <span className="flex-1" />
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-muted-foreground"
-          onClick={() => setFullOpen(true)}
-        >
-          <PanelRightOpen data-icon="inline-start" /> Full conversation
-        </Button>
+        {onBack ? (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Full conversation"
+            className="text-muted-foreground"
+            onClick={() => setFullOpen(true)}
+          >
+            <PanelRightOpen className="size-4" />
+          </Button>
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-muted-foreground"
+            onClick={() => setFullOpen(true)}
+          >
+            <PanelRightOpen data-icon="inline-start" /> Full conversation
+          </Button>
+        )}
         {headerActions}
       </header>
 

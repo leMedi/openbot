@@ -85,13 +85,13 @@ export function SettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[85vh] flex-row gap-0 overflow-hidden p-0 sm:max-w-4xl">
+      <DialogContent className="flex h-[85vh] flex-col gap-0 overflow-hidden p-0 sm:flex-row sm:max-w-4xl">
         <DialogTitle className="sr-only">Settings</DialogTitle>
         {/* Nav */}
-        <div className="flex w-56 shrink-0 flex-col gap-0.5 border-r bg-sidebar/70 px-3 py-4">
+        <div className="flex shrink-0 gap-0.5 overflow-x-auto border-b bg-sidebar/70 px-3 py-2 pr-12 sm:w-56 sm:flex-col sm:border-r sm:border-b-0 sm:py-4 sm:pr-3">
           {['Account', 'Connection'].map((group) => (
             <div key={group} className="contents">
-              <div className="px-2.5 pt-3 pb-2 text-xs font-semibold text-muted-foreground first:pt-0">
+              <div className="hidden px-2.5 pt-3 pb-2 text-xs font-semibold text-muted-foreground first:pt-0 sm:block">
                 {group}
               </div>
               {TABS.filter((t) => t.group === group).map((t) => (
@@ -100,7 +100,7 @@ export function SettingsDialog({
                   type="button"
                   onClick={() => setTab(t.id)}
                   className={cn(
-                    'flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm',
+                    'flex shrink-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm',
                     tab === t.id ? 'bg-muted font-medium' : 'hover:bg-muted/60',
                   )}
                 >
@@ -111,14 +111,14 @@ export function SettingsDialog({
             </div>
           ))}
           <div className="flex-1" />
-          <div className="px-2.5">
+          <div className="hidden px-2.5 sm:block">
             <div className="text-xs text-muted-foreground">OpenBot</div>
             <div className="mt-0.5 text-xs text-muted-foreground/70">v2.4.1</div>
           </div>
         </div>
 
         {/* Body */}
-        <div className="min-w-0 flex-1 overflow-y-auto px-9 py-7">
+        <div className="min-w-0 flex-1 overflow-y-auto px-5 py-5 sm:px-9 sm:py-7">
           <h2 className="mb-5 text-xl font-bold tracking-tight">
             {TABS.find((t) => t.id === tab)?.label}
           </h2>

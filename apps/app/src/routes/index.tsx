@@ -16,6 +16,7 @@ import { botIn, type Bot, type Conversation as BotConversation } from '@/compone
 import { DeleteGroupDialog, GroupDialog } from '@/components/openbot/group-dialog'
 import { botFromGroup, groupMemberIds } from '@/components/openbot/groups'
 import { Inspector } from '@/components/openbot/inspector'
+import { MobileStack } from '@/components/openbot/mobile-stack'
 import {
   ClearConversationDialog,
   DeleteConversationDialog,
@@ -26,6 +27,7 @@ import { PluginsDialog } from '@/components/openbot/plugins-dialog'
 import { SettingsDialog } from '@/components/openbot/settings-dialog'
 import { Sidebar } from '@/components/openbot/sidebar'
 import { Button } from '@/components/ui/button'
+import { useIsMobile } from '@/hooks/use-is-mobile'
 import { getAgents } from '@/server/agents'
 import { getAiProviders } from '@/server/providers'
 import { getGroups } from '@/server/groups'
@@ -89,9 +91,18 @@ function OpenBot() {
     desktopMode,
   } = Route.useLoaderData()
   const router = useRouter()
+  const isMobile = useIsMobile()
 
   const [activeId, setActiveId] = useState(conversationRows[0]?.id ?? '')
+  // Phone navigation stack: the list page is home; a selected conversation
+  // is pushed on top and popped with the back chevron or an edge swipe.
+  const [mobileDetail, setMobileDetail] = useState(false)
   const [inspectorOpen, setInspectorOpen] = useState(true)
+
+  function openConversation(id: string) {
+    setActiveId(id)
+    setMobileDetail(true)
+  }
 
   const [pluginsOpen, setPluginsOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -230,11 +241,11 @@ function OpenBot() {
     })
     setNewConvoOpen(false)
     await router.invalidate()
-    setActiveId(created.id)
+    openConversation(created.id)
   }
 
   async function selectConversation(id: string) {
-    setActiveId(id)
+    openConversation(id)
     const picked = findConversation(id)
     if (picked?.unread) {
       await setConversationUnread({ data: { id, unread: false } })
@@ -273,6 +284,7 @@ function OpenBot() {
     if (deleteTarget.id === activeId) {
       const next = conversations.find((c) => c.id !== deleteTarget.id)
       setActiveId(next?.id ?? '')
+      setMobileDetail(false)
     }
   }
 
@@ -287,118 +299,123 @@ function OpenBot() {
     if (result.conversationId && result.conversationId === activeId) {
       const next = conversations.find((c) => c.id !== result.conversationId)
       setActiveId(next?.id ?? '')
+      setMobileDetail(false)
     }
   }
 
-  return (
-    <div className="flex h-svh overflow-hidden">
-      <Sidebar
-        conversations={conversations}
-        bots={bots}
-        activeId={active?.id ?? ''}
-        onSelect={selectConversation}
-        onNewBot={() => setBotDialog({ open: true, agent: null })}
-        onNewConversation={() => setNewConvoOpen(true)}
-        onNewGroup={() => setGroupDialog({ open: true, group: null })}
-        onNewConversationWith={startConversation}
-        onEditGroup={openEditGroup}
-        onDeleteGroup={(groupId) =>
-          setDeleteGroupTarget(groups.find((g) => g.id === groupId) ?? null)
-        }
-        onOpenPlugins={() => setPluginsOpen(true)}
-        onOpenSettings={() => setSettingsOpen(true)}
-        updateAvailable={updateAvailable}
-        onRenameConversation={(id) => setRenameTarget(findConversation(id))}
-        onToggleUnread={toggleUnread}
-        onClearConversation={(id) => setClearTarget(findConversation(id))}
-        onDeleteConversation={(id) => setDeleteTarget(findConversation(id))}
-      />
+  const sidebar = (
+    <Sidebar
+      mobile={isMobile}
+      conversations={conversations}
+      bots={bots}
+      activeId={active?.id ?? ''}
+      onSelect={selectConversation}
+      onNewBot={() => setBotDialog({ open: true, agent: null })}
+      onNewConversation={() => setNewConvoOpen(true)}
+      onNewGroup={() => setGroupDialog({ open: true, group: null })}
+      onNewConversationWith={startConversation}
+      onEditGroup={openEditGroup}
+      onDeleteGroup={(groupId) =>
+        setDeleteGroupTarget(groups.find((g) => g.id === groupId) ?? null)
+      }
+      onOpenPlugins={() => setPluginsOpen(true)}
+      onOpenSettings={() => setSettingsOpen(true)}
+      updateAvailable={updateAvailable}
+      onRenameConversation={(id) => setRenameTarget(findConversation(id))}
+      onToggleUnread={toggleUnread}
+      onClearConversation={(id) => setClearTarget(findConversation(id))}
+      onDeleteConversation={(id) => setDeleteTarget(findConversation(id))}
+    />
+  )
 
-      {active && bot && !transcriptReady ? (
-        // The Conversation component seeds its entry state from
-        // initialEntries at mount, so wait for the persisted transcript.
-        <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">
-          Loading conversation…
-        </div>
-      ) : active && bot ? (
-        <Conversation
-          key={active.id}
-          id={active.id}
-          agent={authorFromBot(bot)}
-          title={active.title}
-          model={bot.model}
-          members={memberAuthors}
-          resolveAuthor={(message) =>
-            authorForMessage(message, authorFromBot(bot), transcriptAuthorsById)
-          }
-          initialEntries={entries}
-          activityTabs={tabs}
-          pendingTurnId={transcriptReady ? transcript?.pendingTurnId : null}
-          onSendMessage={(draft) =>
-            sendConversationMessage({
-              data: {
-                conversationId: active.id,
-                text: draft.prompt,
-                // The server drops references it cannot resolve (e.g. an
-                // optimistic local id), degrading to a plain message.
-                replyToEntryId: draft.replyToId ?? null,
-                requestId: crypto.randomUUID(),
-                idempotencyKey: draft.idempotencyKey ?? crypto.randomUUID(),
-              },
-            })
-          }
-          onRespondToTurn={({
-            turnId,
-            text,
-            optionId,
-            dismissed,
-            toolCallId,
-            requestId,
-            idempotencyKey,
-          }) =>
-            respondToConversationTurn({
-              data: {
-                turnId,
-                text,
-                optionId,
-                dismissed,
-                toolCallId,
-                requestId,
-                idempotencyKey,
-              },
-            })
-          }
-          onToggleReaction={(messageId, reaction) =>
-            toggleConversationReaction({
-              data: { conversationId: active.id, messageId, reaction },
-            })
-          }
-          onRefreshEntries={async () => {
-            const refreshed = await getConversationMessages({
-              data: { conversationId: active.id },
-            })
-            return entriesFromMessages(
-              refreshed.rows,
-              authorFromBot(bot),
-              transcriptAuthorsById,
-            )
-          }}
-          onCancelTurn={(turnId) => cancelConversationTurn({ data: { turnId } })}
-          onTurnSettled={async () => {
-            // The assistant message advanced the sequence counter; the user
-            // is looking at it, so move the read horizon and refresh the
-            // sidebar ordering.
-            await setConversationUnread({ data: { id: active.id, unread: false } })
-            await router.invalidate()
-          }}
-          onEditAgent={
-            activeAgent
-              ? () => setBotDialog({ open: true, agent: activeAgent })
-              : activeGroup
-                ? () => setGroupDialog({ open: true, group: activeGroup })
-                : undefined
-          }
-          headerActions={
+  const pane =
+    active && bot && !transcriptReady ? (
+      // The Conversation component seeds its entry state from
+      // initialEntries at mount, so wait for the persisted transcript.
+      <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">
+        Loading conversation…
+      </div>
+    ) : active && bot ? (
+      <Conversation
+        key={active.id}
+        id={active.id}
+        agent={authorFromBot(bot)}
+        title={active.title}
+        model={bot.model}
+        members={memberAuthors}
+        resolveAuthor={(message) =>
+          authorForMessage(message, authorFromBot(bot), transcriptAuthorsById)
+        }
+        initialEntries={entries}
+        activityTabs={tabs}
+        pendingTurnId={transcriptReady ? transcript?.pendingTurnId : null}
+        onSendMessage={(draft) =>
+          sendConversationMessage({
+            data: {
+              conversationId: active.id,
+              text: draft.prompt,
+              // The server drops references it cannot resolve (e.g. an
+              // optimistic local id), degrading to a plain message.
+              replyToEntryId: draft.replyToId ?? null,
+              requestId: crypto.randomUUID(),
+              idempotencyKey: draft.idempotencyKey ?? crypto.randomUUID(),
+            },
+          })
+        }
+        onRespondToTurn={({
+          turnId,
+          text,
+          optionId,
+          dismissed,
+          toolCallId,
+          requestId,
+          idempotencyKey,
+        }) =>
+          respondToConversationTurn({
+            data: {
+              turnId,
+              text,
+              optionId,
+              dismissed,
+              toolCallId,
+              requestId,
+              idempotencyKey,
+            },
+          })
+        }
+        onToggleReaction={(messageId, reaction) =>
+          toggleConversationReaction({
+            data: { conversationId: active.id, messageId, reaction },
+          })
+        }
+        onRefreshEntries={async () => {
+          const refreshed = await getConversationMessages({
+            data: { conversationId: active.id },
+          })
+          return entriesFromMessages(
+            refreshed.rows,
+            authorFromBot(bot),
+            transcriptAuthorsById,
+          )
+        }}
+        onCancelTurn={(turnId) => cancelConversationTurn({ data: { turnId } })}
+        onTurnSettled={async () => {
+          // The assistant message advanced the sequence counter; the user
+          // is looking at it, so move the read horizon and refresh the
+          // sidebar ordering.
+          await setConversationUnread({ data: { id: active.id, unread: false } })
+          await router.invalidate()
+        }}
+        onEditAgent={
+          activeAgent
+            ? () => setBotDialog({ open: true, agent: activeAgent })
+            : activeGroup
+              ? () => setGroupDialog({ open: true, group: activeGroup })
+              : undefined
+        }
+        onBack={isMobile ? () => setMobileDetail(false) : undefined}
+        headerActions={
+          isMobile ? undefined : (
             <Button
               variant="ghost"
               size="icon-sm"
@@ -407,44 +424,60 @@ function OpenBot() {
             >
               <PanelRight className="size-4" />
             </Button>
-          }
+          )
+        }
+      />
+    ) : (
+      <div className="flex flex-1 items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-center">
+          <MessageCircle className="size-8 text-muted-foreground/40" />
+          <div>
+            <div className="text-sm font-medium">No conversations yet</div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {agents.length === 0
+                ? 'Create a bot to get started.'
+                : 'Start a conversation with one of your bots.'}
+            </p>
+          </div>
+          {agents.length === 0 ? (
+            <Button size="sm" onClick={() => setBotDialog({ open: true, agent: null })}>
+              <BotIcon className="size-3.5" /> New Bot
+            </Button>
+          ) : (
+            <Button size="sm" onClick={() => setNewConvoOpen(true)}>
+              <MessageCircle className="size-3.5" /> New Conversation
+            </Button>
+          )}
+        </div>
+      </div>
+    )
+
+  return (
+    <div className="flex h-svh overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
+      {isMobile ? (
+        <MobileStack
+          showDetail={mobileDetail && !!active}
+          onBack={() => setMobileDetail(false)}
+          list={sidebar}
+          detail={pane}
         />
       ) : (
-        <div className="flex flex-1 items-center justify-center">
-          <div className="flex flex-col items-center gap-3 text-center">
-            <MessageCircle className="size-8 text-muted-foreground/40" />
-            <div>
-              <div className="text-sm font-medium">No conversations yet</div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {agents.length === 0
-                  ? 'Create a bot to get started.'
-                  : 'Start a conversation with one of your bots.'}
-              </p>
-            </div>
-            {agents.length === 0 ? (
-              <Button size="sm" onClick={() => setBotDialog({ open: true, agent: null })}>
-                <BotIcon className="size-3.5" /> New Bot
-              </Button>
-            ) : (
-              <Button size="sm" onClick={() => setNewConvoOpen(true)}>
-                <MessageCircle className="size-3.5" /> New Conversation
-              </Button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {inspectorOpen && active && bot && (
-        <Inspector
-          conversation={active}
-          bot={bot}
-          activeAgentId={activeAgent?.id}
-          desktopEnabled={desktopMode === 'per-agent' && activeAgent?.xDisplayNumber != null}
-          onOpenPlugins={() => setPluginsOpen(true)}
-          mcpServers={mcp.servers}
-          mcpAccounts={mcp.accounts}
-          mcpGrants={mcp.grants}
-        />
+        <>
+          {sidebar}
+          {pane}
+          {inspectorOpen && active && bot && (
+            <Inspector
+              conversation={active}
+              bot={bot}
+              activeAgentId={activeAgent?.id}
+              desktopEnabled={desktopMode === 'per-agent' && activeAgent?.xDisplayNumber != null}
+              onOpenPlugins={() => setPluginsOpen(true)}
+              mcpServers={mcp.servers}
+              mcpAccounts={mcp.accounts}
+              mcpGrants={mcp.grants}
+            />
+          )}
+        </>
       )}
 
       <PluginsDialog
@@ -477,7 +510,7 @@ function OpenBot() {
           agents={agentBots}
           onSaved={async (_saved, sharedConversation) => {
             await router.invalidate()
-            if (sharedConversation) setActiveId(sharedConversation.id)
+            if (sharedConversation) openConversation(sharedConversation.id)
           }}
         />
       )}
@@ -503,7 +536,7 @@ function OpenBot() {
           onOpenPlugins={() => setPluginsOpen(true)}
           onSaved={async (_saved, firstConversation) => {
             await router.invalidate()
-            if (firstConversation) setActiveId(firstConversation.id)
+            if (firstConversation) openConversation(firstConversation.id)
           }}
         />
       )}

@@ -61,6 +61,8 @@ type SidebarProps = {
   onToggleUnread: (id: string) => void
   onClearConversation: (id: string) => void
   onDeleteConversation: (id: string) => void
+  /** Phone layout: full-page list with a top bar instead of a resizable rail. */
+  mobile?: boolean
 }
 
 export function Sidebar({
@@ -81,6 +83,7 @@ export function Sidebar({
   onToggleUnread,
   onClearConversation,
   onDeleteConversation,
+  mobile = false,
 }: SidebarProps) {
   const [search, setSearch] = useState('')
   const [width, setWidth] = useState(DEFAULT_W)
@@ -117,12 +120,12 @@ export function Sidebar({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button variant="ghost" size="icon-sm" aria-label="New…">
-            <Plus className="size-3.5" />
+          <Button variant="ghost" size={mobile ? 'icon' : 'icon-sm'} aria-label="New…">
+            <Plus className={mobile ? 'size-5' : 'size-3.5'} />
           </Button>
         }
       />
-      <DropdownMenuContent align={collapsed ? 'start' : 'end'} className="w-44">
+      <DropdownMenuContent align={collapsed && !mobile ? 'start' : 'end'} className="w-44">
         <DropdownMenuItem onClick={onNewBot}>
           <BotIcon /> New Bot
         </DropdownMenuItem>
@@ -135,6 +138,80 @@ export function Sidebar({
       </DropdownMenuContent>
     </DropdownMenu>
   )
+
+  const rows = ordered.map((c) => (
+    <ConversationRow
+      key={c.id}
+      conversation={c}
+      bot={botIn(bots, c.botId)}
+      active={!mobile && c.id === activeId}
+      onSelect={() => onSelect(c.id)}
+      onNewConversationWith={onNewConversationWith}
+      onEditGroup={onEditGroup}
+      onDeleteGroup={onDeleteGroup}
+      onRename={() => onRenameConversation(c.id)}
+      onToggleUnread={() => onToggleUnread(c.id)}
+      onClear={() => onClearConversation(c.id)}
+      onDelete={() => onDeleteConversation(c.id)}
+    />
+  ))
+
+  if (mobile) {
+    return (
+      <div className="flex h-full w-full flex-col bg-sidebar">
+        <div className="flex h-12 shrink-0 items-center px-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button variant="ghost" size="icon" aria-label="Settings" className="relative">
+                  <Settings className="size-5" />
+                  {updateAvailable && (
+                    <span className="absolute top-1 right-1 size-2 rounded-full border border-sidebar bg-primary" />
+                  )}
+                </Button>
+              }
+            />
+            <DropdownMenuContent align="start" className="w-44">
+              <DropdownMenuItem onClick={onOpenSettings}>
+                <Settings /> Settings
+                {updateAvailable && <ArrowUp className="ml-auto size-3 text-primary" />}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onOpenPlugins}>
+                <Plug /> Plugins
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <span className="flex-1 text-center text-base font-semibold">Messages</span>
+          {plusMenu}
+        </div>
+        <div className="px-3 pb-2">
+          <div className="relative">
+            <Search className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search"
+              className="h-9 rounded-xl border-transparent bg-muted pl-8 text-base dark:bg-muted"
+            />
+          </div>
+        </div>
+        <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-2">
+          {pinned.length > 0 && (
+            <div className="px-2 pt-2 pb-1 text-[11px] font-semibold tracking-wide text-muted-foreground">
+              Pinned
+            </div>
+          )}
+          {rows}
+          {filtered.length === 0 && (
+            <div className="px-2 py-10 text-center text-sm text-muted-foreground">
+              {conversations.length === 0 ? 'No conversations yet' : 'No conversations match'}
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <aside
@@ -215,22 +292,7 @@ export function Sidebar({
                 Pinned
               </div>
             )}
-            {ordered.map((c) => (
-              <ConversationRow
-                key={c.id}
-                conversation={c}
-                bot={botIn(bots, c.botId)}
-                active={c.id === activeId}
-                onSelect={() => onSelect(c.id)}
-                onNewConversationWith={onNewConversationWith}
-                onEditGroup={onEditGroup}
-                onDeleteGroup={onDeleteGroup}
-                onRename={() => onRenameConversation(c.id)}
-                onToggleUnread={() => onToggleUnread(c.id)}
-                onClear={() => onClearConversation(c.id)}
-                onDelete={() => onDeleteConversation(c.id)}
-              />
-            ))}
+            {rows}
             {filtered.length === 0 && (
               <div className="px-2 py-6 text-center text-xs text-muted-foreground">
                 No conversations match
