@@ -1,8 +1,9 @@
 # Debian installation
 
-Each push builds an `openbot-debian-x64` GitHub Actions artifact. It contains
-the application, its production dependencies, database migrations, a pinned
-Node runtime, and an installer. The artifact supports x86-64 Debian machines.
+Each push to `main-v2` builds an `openbot-debian-x64` package and publishes it
+as an immutable GitHub prerelease tagged `main-v2-<commit>`. It contains the
+application, its production dependencies, database migrations, a pinned Node
+runtime, and an installer. The package supports x86-64 Debian machines.
 
 ## Install or update
 
@@ -15,16 +16,15 @@ sudo apt-get update && sudo apt-get install -y curl gh
 gh auth login
 
 REPO=leMedi/openbot
-BRANCH=the-branch-you-pushed
-COMMIT=$(gh api "repos/$REPO/commits/$BRANCH" --jq .sha)
-RUN_ID=$(gh run list --repo "$REPO" --workflow build-debian-artifact.yml \
-  --branch "$BRANCH" --commit "$COMMIT" --status success --limit 1 \
-  --json databaseId --jq '.[0].databaseId')
-test -n "$RUN_ID" || { echo "No successful artifact for $COMMIT" >&2; exit 1; }
+TAG=$(gh release list --repo "$REPO" --limit 100 \
+  --json tagName,publishedAt \
+  --jq 'map(select(.tagName | startswith("main-v2-"))) | sort_by(.publishedAt) | last | .tagName')
+test -n "$TAG" || { echo "No published main-v2 Debian release" >&2; exit 1; }
+echo "Installing $TAG"
 rm -rf "$HOME/openbot-install"
 mkdir -p "$HOME/openbot-install"
-gh run download "$RUN_ID" --repo "$REPO" --name openbot-debian-x64 \
-  --dir "$HOME/openbot-install"
+gh release download "$TAG" --repo "$REPO" \
+  --pattern 'openbot-debian-x64.tar.gz*' --dir "$HOME/openbot-install"
 cd "$HOME/openbot-install"
 sha256sum --check openbot-debian-x64.tar.gz.sha256
 tar -xzf openbot-debian-x64.tar.gz

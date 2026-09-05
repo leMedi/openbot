@@ -3,7 +3,7 @@ name: Build Debian artifact
 on:
   push:
     branches:
-      - '**'
+      - main-v2
   workflow_dispatch:
 
 permissions:
@@ -85,3 +85,37 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
+
+  publish:
+    if: github.ref == 'refs/heads/main-v2'
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: openbot-debian-x64
+          path: artifact
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          short_sha=${GITHUB_SHA:0:12}
+          tag="main-v2-$short_sha"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" artifact/* \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" artifact/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "OpenBot main-v2 $short_sha" \
+              --notes "Automated Debian x86-64 build for commit $GITHUB_SHA." \
+              --prerelease
+          fi
