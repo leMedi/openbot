@@ -9,6 +9,7 @@ import {
   ArrowUp,
   ExternalLink,
   Plus,
+  Check,
   RefreshCw,
   Server,
   SlidersHorizontal,
@@ -28,7 +29,7 @@ import {
   saveAiModelSettings,
 } from '@/server/providers'
 import { BotAvatar } from './bot-avatar'
-import { SERVER_ROWS } from './data'
+import { checkServerUpdate, getServerConfig, getServerUpdate, startServerUpdate } from '@/server/config'
 
 type Tab = 'general' | 'providers' | 'server'
 
@@ -117,7 +118,7 @@ export function SettingsDialog({
               onChanged={onProvidersChanged}
             />
           )}
-          {tab === 'server' && <ServerTab />}
+           {tab === 'server' && <ServerTab open={open} />}
         </div>
       </DialogContent>
     </Dialog>
@@ -765,35 +766,58 @@ function providerHue(providerId: string) {
   return `hsl(${Math.abs(hash) % 360} 42% 48%)`
 }
 
-function ServerTab() {
-  const [updated, setUpdated] = useState(false)
+function ServerTab({ open }: { open: boolean }) {
+  const [status, setStatus] = useState<Awaited<ReturnType<typeof getServerUpdate>> | null>(null)
+  const [host, setHost] = useState('—')
+  const [latency, setLatency] = useState<number | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [updating, setUpdating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function check() {
+    if (checking) return
+    setChecking(true); setError(null)
+    const started = performance.now()
+    try {
+      const [nextStatus, config] = await Promise.all([checkServerUpdate(), getServerConfig()])
+      setStatus(nextStatus); setHost(config.host); setLatency(Math.round(performance.now() - started))
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not check the server') }
+    finally { setChecking(false) }
+  }
+
+  useEffect(() => {
+    if (!open) return
+    void Promise.all([getServerUpdate(), getServerConfig()]).then(([nextStatus, config]) => {
+      setStatus(nextStatus); setHost(config.host)
+      const started = performance.now()
+      return getServerConfig().then(() => setLatency(Math.round(performance.now() - started)))
+    }).catch((cause) => setError(cause instanceof Error ? cause.message : 'Could not load server status'))
+  }, [open])
+
+  async function update() {
+    if (!status?.updateAvailable || updating) return
+    setUpdating(true); setError(null)
+    try { await startServerUpdate() } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not start update'); setUpdating(false) }
+  }
 
   return (
     <div className="flex max-w-xl flex-col gap-3">
-      <div className="rounded-xl bg-card px-5">
-        {SERVER_ROWS.map((r) => (
-          <div key={r.key} className="flex items-center gap-4 border-b py-3.5 last:border-b-0">
-            <span className="flex-1 text-sm font-medium">{r.key}</span>
-            <span
-              className={cn(
-                'text-sm text-muted-foreground',
-                r.mono && 'font-mono text-xs',
-                r.key === 'Status' && 'text-success',
-              )}
-            >
-              {r.key === 'Version' && updated ? 'v2.5.0' : r.val}
-            </span>
-            {r.hasUpdate && !updated && (
-              <Button size="xs" onClick={() => setUpdated(true)}>
-                <ArrowUp data-icon="inline-start" /> Update to v2.5.0
-              </Button>
-            )}
-          </div>
-        ))}
-      </div>
-      <p className="px-1 text-xs leading-normal text-muted-foreground/70">
-        Bots run on this server. Contact your admin to change it.
-      </p>
+      <section>
+        <h3 className="mb-2 text-sm font-semibold text-foreground/85">Remote machine</h3>
+        <div className="rounded-xl bg-card px-5">
+          <div className="flex items-center gap-4 border-b py-3.5"><span className="flex-1 text-sm font-medium">Host</span><span className="font-mono text-xs text-muted-foreground">{host}</span></div>
+          <div className="flex items-center gap-4 py-3.5"><span className="flex-1 text-sm font-medium">Latency</span><span className="text-sm text-muted-foreground">{latency == null ? '—' : `${latency} ms`}</span></div>
+        </div>
+      </section>
+      <section>
+        <h3 className="mb-2 text-sm font-semibold text-foreground/85">OpenBot server</h3>
+        <div className="rounded-xl bg-card px-5">
+          <div className="flex items-center gap-4 border-b py-3.5"><span className="flex-1 text-sm font-medium">Installed version</span><span className="font-mono text-xs text-muted-foreground">{status?.installedVersion ?? '—'}</span></div>
+          <div className="flex items-center gap-3 py-3.5"><span className="flex-1 text-sm font-medium">{status?.updateAvailable ? `Update available: ${status.latestVersion}` : 'Status'}</span>{status?.updateAvailable ? <Button size="xs" onClick={update} disabled={updating}><ArrowUp data-icon="inline-start" />{updating ? 'Updating…' : `Update to ${status.latestVersion}`}</Button> : <span className="flex items-center gap-1 text-sm text-success"><Check className="size-4" /> Up to date</span>}<Button size="icon-xs" variant="ghost" onClick={check} disabled={checking} aria-label="Check for updates"><RefreshCw className={cn('size-4', checking && 'animate-spin')} /></Button></div>
+        </div>
+        <p className="mt-2 px-1 text-xs leading-normal text-muted-foreground/70">Last checked {status?.checkedAt ? new Date(status.checkedAt).toLocaleString() : 'never'}. Updates are checked hourly.</p>
+       </section>
+       {error && <p className="px-1 text-xs text-destructive">{error}</p>}
     </div>
   )
 }

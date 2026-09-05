@@ -42,6 +42,7 @@ jobs:
           cp pnpm-workspace.yaml "$out/pnpm-workspace.yaml"
           cp scripts/run-debian.sh "$out/run"
           cp scripts/install-debian.sh "$out/install-debian.sh"
+          cp scripts/update-debian.sh "$out/update-debian.sh"
           cp "$(command -v node)" "$out/runtime/bin/node"
           cp packages/desktop-use-tools/dist/start-window.cjs "$out/runtime/bin/start-window"
           cp packages/desktop-driver/dist/openbot-desktop-driver.cjs \
@@ -58,7 +59,7 @@ jobs:
           test -n "$native_binding"
           cp -aL "$native_binding" "$out/node_modules/@libsql/linux-x64-gnu"
           printf '%s\n' "$GITHUB_SHA" > "$out/VERSION"
-          chmod 0755 "$out/run" "$out/install-debian.sh" "$out/runtime/bin/node" \
+          chmod 0755 "$out/run" "$out/install-debian.sh" "$out/update-debian.sh" "$out/runtime/bin/node" \
             "$out/runtime/bin/start-window" "$out/runtime/bin/openbot-desktop-driver"
 
           mkdir -p artifact
