@@ -43,6 +43,7 @@ jobs:
           cp scripts/run-debian.sh "$out/run"
           cp scripts/install-debian.sh "$out/install-debian.sh"
           cp "$(command -v node)" "$out/runtime/bin/node"
+          cp packages/desktop-use-tools/dist/start-window.cjs "$out/runtime/bin/start-window"
           # libsql selects its native binding with a dynamic require, so Vite
           # cannot express this runtime dependency in the generated bundle.
           mkdir -p "$out/node_modules/@libsql"
@@ -51,7 +52,8 @@ jobs:
           test -n "$native_binding"
           cp -aL "$native_binding" "$out/node_modules/@libsql/linux-x64-gnu"
           printf '%s\n' "$GITHUB_SHA" > "$out/VERSION"
-          chmod 0755 "$out/run" "$out/install-debian.sh" "$out/runtime/bin/node"
+          chmod 0755 "$out/run" "$out/install-debian.sh" "$out/runtime/bin/node" \
+            "$out/runtime/bin/start-window"
 
           mkdir -p artifact
           tar -C "$RUNNER_TEMP" -czf artifact/openbot-debian-x64.tar.gz openbot

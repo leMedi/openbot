@@ -99,6 +99,7 @@ if [ ! -d "$release_dir" ]; then
 fi
 if [ ! -x "$release_dir/run" ] ||
   [ ! -x "$release_dir/runtime/bin/node" ] ||
+  [ ! -x "$release_dir/runtime/bin/start-window" ] ||
   [ ! -f "$release_dir/dist/server/server.js" ] ||
   [ ! -d "$release_dir/packages/db/drizzle" ]; then
   echo "Release directory is incomplete: $release_dir" >&2
@@ -119,6 +120,7 @@ OPENBOT_AI_MODEL=
 OPENBOT_DESKTOP_DRIVER=
 OPENBOT_DESKTOP_DRIVER_ARGS=[]
 OPENBOT_COMPUTER_TIMEOUT_MS=120000
+OPENBOT_START_WINDOW=/opt/openbot/current/runtime/bin/start-window
 HOST=127.0.0.1
 PORT=3000
 EOF
@@ -126,6 +128,9 @@ EOF
   rm -f "$config_tmp"
   trap - EXIT HUP INT TERM
   echo "Created $config_dir/openbot.env; configure the AI values after installation."
+elif ! sudo grep -q '^OPENBOT_START_WINDOW=' "$config_dir/openbot.env"; then
+  printf '%s\n' 'OPENBOT_START_WINDOW=/opt/openbot/current/runtime/bin/start-window' |
+    sudo tee -a "$config_dir/openbot.env" >/dev/null
 fi
 
 unit_tmp=$(mktemp)

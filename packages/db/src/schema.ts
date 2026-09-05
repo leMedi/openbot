@@ -47,6 +47,7 @@ export const managedFiles = sqliteTable('managed_files', {
 
 export const agents = sqliteTable('agents', {
   id: text('id').primaryKey(),
+  xDisplayNumber: integer('x_display_number').unique(),
   name: text('name').notNull(),
   description: text('description').notNull().default(''),
   avatarFileId: text('avatar_file_id').references(() => managedFiles.id, {
@@ -65,7 +66,12 @@ export const agents = sqliteTable('agents', {
     .default(false),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
-})
+}, (table) => [
+  check(
+    'agents_x_display_number_check',
+    sql`${table.xDisplayNumber} IS NULL OR ${table.xDisplayNumber} >= 0`,
+  ),
+])
 
 export const groups = sqliteTable('groups', {
   id: text('id').primaryKey(),

@@ -68,6 +68,12 @@ Installing or linking the package exposes the executable as `start-window`.
 The built file only requires Node.js at runtime; TypeScript and package
 dependencies are bundled.
 
+Configure the OpenBot server to use the built executable when creating agents:
+
+```dotenv
+OPENBOT_START_WINDOW=/absolute/path/to/start-window
+```
+
 ### Runtime state
 
 Ownership and PID state is stored in:

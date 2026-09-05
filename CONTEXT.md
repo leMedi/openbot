@@ -97,7 +97,13 @@ An `agents` row contains:
 - Default mode and model.
 - Approval mode.
 - Notification and sidebar visibility settings.
+- Optional unique X display number.
 - Creation and update timestamps.
+
+Interactive agent creation allocates one more than the greatest assigned X
+display number, creates the agent, its first conversation, and MCP grants, then
+provisions the display through the configured `start-window` executable. A
+display startup failure rolls back all database changes.
 
 The effective tool list is not an agent column. It is derived for each turn
 from runtime capabilities, MCP discovery, permissions, and execution context.
@@ -447,6 +453,7 @@ Remaining implementation slices are:
 - `packages/db/src/ids.ts`: prefixed server ID generation.
 - `packages/db/src/client.ts`: database startup (pragmas, migrations, turn recovery).
 - `packages/db/src/agents.ts`: agent registry repository, including avatar operations.
+- `packages/agent/src/management/create-agent.tsx`: transactional agent and X display creation.
 - `packages/db/src/groups.ts`: group registry repository (identity, avatar,
   validated versioned membership, the one shared conversation).
 - `packages/db/src/avatars.ts`: shared avatar-upload contract and validation.

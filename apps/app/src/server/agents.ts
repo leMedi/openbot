@@ -1,10 +1,10 @@
 import {
-  createAgent,
   getAgent,
   listAgents,
   updateAgentProfile,
   updateAgentProfileAndMcpAccounts,
 } from '@openbot/db'
+import { createAgent } from '@openbot/agent'
 import { createServerFn } from '@tanstack/react-start'
 import * as z from 'zod'
 import { AVATAR_COLORS, AVATAR_SHAPES } from '@/components/openbot/data'

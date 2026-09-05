@@ -1,4 +1,4 @@
-import { eq, inArray } from 'drizzle-orm'
+import { eq, inArray, max } from 'drizzle-orm'
 import { assertValidAvatarUpload, type AvatarUpload } from './avatars'
 import { db } from './client'
 import type { DbExecutor } from './conversations'
@@ -20,6 +20,11 @@ export type AgentProfileInput = {
   approvalMode?: string
   notifyOnUpdates?: boolean
   hiddenFromSidebar?: boolean
+}
+
+export type AgentCreationOptions = {
+  id?: string
+  xDisplayNumber?: number
 }
 
 async function validateMcpAccountIds(executor: DbExecutor, accountIds: string[]) {
@@ -49,52 +54,68 @@ export async function getAgent(id: string) {
   return agent
 }
 
+export async function getNextAgentXDisplayNumber(executor: DbExecutor = db) {
+  const [result] = await executor
+    .select({ highest: max(schema.agents.xDisplayNumber) })
+    .from(schema.agents)
+  return (result?.highest ?? 0) + 1
+}
+
+/** Caller must provide the transaction that makes this multi-row operation atomic. */
+export async function createAgentInTransaction(
+  executor: DbExecutor,
+  input: AgentProfileInput,
+  mcpAccountIds: string[] = [],
+  options: AgentCreationOptions = {},
+) {
+  const now = Date.now()
+  await validateMcpAccountIds(executor, mcpAccountIds)
+  const [agent] = await executor
+    .insert(schema.agents)
+    .values({
+      id: options.id ?? createId('agt'),
+      xDisplayNumber: options.xDisplayNumber,
+      name: input.name,
+      description: input.description ?? '',
+      avatarShape: input.avatarShape ?? 'squircle',
+      avatarColor: input.avatarColor ?? '#5865c4',
+      defaultMode: input.defaultMode ?? 'default',
+      defaultModel: input.defaultModel ?? null,
+      approvalMode: input.approvalMode ?? 'allowlist',
+      notifyOnUpdates: input.notifyOnUpdates ?? true,
+      hiddenFromSidebar: input.hiddenFromSidebar ?? false,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning()
+  const [conversation] = await executor
+    .insert(schema.conversations)
+    .values({
+      id: createId('cnv'),
+      ownerAgentId: agent.id,
+      title: agent.name,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning()
+  if (mcpAccountIds.length > 0) {
+    await executor.insert(schema.agentMcpAccounts).values(
+      mcpAccountIds.map((accountId) => ({
+        agentId: agent.id,
+        accountId,
+        enabledAt: now,
+      })),
+    )
+  }
+  return { agent, conversation }
+}
+
 /**
  * Creates the agent together with its first conversation (titled after the
  * agent) in one transaction, so a new agent never exists without a room.
  */
 export async function createAgent(input: AgentProfileInput, mcpAccountIds: string[] = []) {
-  const now = Date.now()
-  return db.transaction(async (tx) => {
-    await validateMcpAccountIds(tx, mcpAccountIds)
-    const [agent] = await tx
-      .insert(schema.agents)
-      .values({
-        id: createId('agt'),
-        name: input.name,
-        description: input.description ?? '',
-        avatarShape: input.avatarShape ?? 'squircle',
-        avatarColor: input.avatarColor ?? '#5865c4',
-        defaultMode: input.defaultMode ?? 'default',
-        defaultModel: input.defaultModel ?? null,
-        approvalMode: input.approvalMode ?? 'allowlist',
-        notifyOnUpdates: input.notifyOnUpdates ?? true,
-        hiddenFromSidebar: input.hiddenFromSidebar ?? false,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning()
-    const [conversation] = await tx
-      .insert(schema.conversations)
-      .values({
-        id: createId('cnv'),
-        ownerAgentId: agent.id,
-        title: agent.name,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning()
-    if (mcpAccountIds.length > 0) {
-      await tx.insert(schema.agentMcpAccounts).values(
-        mcpAccountIds.map((accountId) => ({
-          agentId: agent.id,
-          accountId,
-          enabledAt: now,
-        })),
-      )
-    }
-    return { agent, conversation }
-  })
+  return db.transaction((tx) => createAgentInTransaction(tx, input, mcpAccountIds))
 }
 
 export async function updateAgentProfile(

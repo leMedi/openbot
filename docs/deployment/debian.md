@@ -40,6 +40,13 @@ sudo systemctl restart openbot
 sudo systemctl status openbot
 ```
 
+The artifact configures its bundled `start-window` command for agent display
+provisioning. Install Xvfb on the host before creating agents:
+
+```sh
+sudo apt-get install -y xvfb
+```
+
 OpenBot listens on `127.0.0.1:3000` by default. Keep it private or place an
 authenticated TLS reverse proxy in front of it. The architecture calls for an
 authenticated server API, but the current MVP implementation does not yet
