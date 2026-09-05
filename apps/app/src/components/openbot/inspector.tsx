@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
+import type RfbClient from '@novnc/novnc'
 import type { MemoryItem, MemoryKind, SafeMcpAccount, SafeMcpServer } from '@openbot/db'
 import { FileText, Maximize2, Pencil, Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -435,37 +436,70 @@ function DesktopDialog({
   agentId: string
   title: string
 }) {
-  const viewerRef = useRef<HTMLDivElement>(null)
-  type VncViewer = { disconnect: () => void; scaleViewport: boolean; resizeSession: boolean; viewOnly: boolean }
-  const [viewer, setViewer] = useState<VncViewer | null>(null)
+  const [viewerElement, setViewerElement] = useState<HTMLDivElement | null>(null)
+  const [connection, setConnection] = useState<'connecting' | 'connected' | 'error'>('connecting')
+  const [connectionError, setConnectionError] = useState<string | null>(null)
+  const [connectionAttempt, setConnectionAttempt] = useState(0)
 
   useEffect(() => {
-    if (!open || !viewerRef.current) return
+    if (!open || !viewerElement) return
     let disposed = false
-    let rfb: VncViewer | undefined
+    let failed = false
+    let rfb: RfbClient | undefined
+    setConnection('connecting')
+    setConnectionError(null)
+    const fail = (message: string) => {
+      if (disposed || failed) return
+      failed = true
+      window.clearTimeout(connectionTimeout)
+      setConnection('error')
+      setConnectionError(message)
+    }
+    const connectionTimeout = window.setTimeout(() => {
+      fail('The desktop did not connect within 15 seconds')
+      rfb?.disconnect()
+    }, 15_000)
     void import('@novnc/novnc').then(({ default: RFB }) => {
-      if (disposed || !viewerRef.current) return
+      if (disposed || failed) return
       // The WebSocket endpoint is server-owned; the browser never receives a VNC port.
       const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
-      rfb = new RFB(viewerRef.current, `${scheme}://${window.location.host}/api/agents/${encodeURIComponent(agentId)}/desktop/vnc`)
+      rfb = new RFB(viewerElement, `${scheme}://${window.location.host}/api/agents/${encodeURIComponent(agentId)}/desktop/vnc`)
+      rfb.addEventListener('connect', () => {
+        if (disposed || failed) return
+        window.clearTimeout(connectionTimeout)
+        setConnection('connected')
+      })
+      rfb.addEventListener('disconnect', () => {
+        fail('The desktop connection closed')
+      })
+      rfb.addEventListener('securityfailure', (event) => {
+        fail(event.detail.reason ?? 'The desktop rejected the connection')
+      })
       rfb.scaleViewport = true
       rfb.resizeSession = false
       rfb.viewOnly = false
-      setViewer(rfb)
-    }).catch(() => setViewer(null))
+    }).catch((cause) => {
+      fail(cause instanceof Error ? cause.message : 'Could not initialize the desktop viewer')
+    })
     return () => {
       disposed = true
+      window.clearTimeout(connectionTimeout)
       rfb?.disconnect()
-      setViewer(null)
     }
-  }, [open, agentId])
+  }, [open, agentId, viewerElement, connectionAttempt])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex h-[90vh] w-[95vw] max-w-none flex-col">
         <DialogHeader><DialogTitle>Live View · {title}</DialogTitle></DialogHeader>
-        <div ref={viewerRef} className="min-h-0 flex-1 overflow-hidden rounded-lg bg-black" />
-        {!viewer && <p className="text-center text-xs text-muted-foreground">Connecting to desktop…</p>}
+        <div ref={setViewerElement} className="min-h-0 flex-1 overflow-hidden rounded-lg bg-black" />
+        {connection === 'connecting' && <p className="text-center text-xs text-muted-foreground">Connecting to desktop…</p>}
+        {connection === 'error' && (
+          <div className="flex items-center justify-center gap-3 text-xs text-destructive">
+            <span>{connectionError}</span>
+            <Button size="xs" variant="outline" onClick={() => setConnectionAttempt((attempt) => attempt + 1)}>Retry</Button>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   )
