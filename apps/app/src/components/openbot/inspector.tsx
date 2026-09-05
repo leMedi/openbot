@@ -490,7 +490,7 @@ function DesktopDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[90vh] w-[95vw] max-w-none flex-col">
+      <DialogContent className="flex h-[90vh] w-[95vw] max-w-none flex-col sm:max-w-none">
         <DialogHeader><DialogTitle>Live View · {title}</DialogTitle></DialogHeader>
         <div ref={setViewerElement} className="min-h-0 flex-1 overflow-hidden rounded-lg bg-black" />
         {connection === 'connecting' && <p className="text-center text-xs text-muted-foreground">Connecting to desktop…</p>}
