@@ -1,21 +1,17 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import {
-  access,
   chmod,
   lstat,
   mkdir,
   readFile,
+  rename,
   unlink,
   writeFile,
 } from 'node:fs/promises'
-import { closeSync, openSync } from 'node:fs'
-import { createConnection, createServer } from 'node:net'
-import { tmpdir } from 'node:os'
-import { isAbsolute, join } from 'node:path'
+import { join } from 'node:path'
 
 export const EXIT_UNAVAILABLE = 75
-const SCREEN = { width: 1280, height: 800, depth: 24 } as const
-const DEFAULT_START_TIMEOUT_MS = 10_000
+export const AGENT_SCREEN = { width: 1280, height: 800, depth: 24 } as const
 const DISPLAY_NUMBER_MAX = 65_535
 
 export type StartWindowInput = {
@@ -50,7 +46,7 @@ export type StartWindowDependencies = {
   processId: number
   now: () => string
   acquireOperationLock: (displayNumber: number) => Promise<(() => Promise<void>) | undefined>
-  isProcessAlive: (pid: number) => boolean
+  isManagedDisplayProcess: (pid: number, displayNumber: number) => Promise<boolean>
   isDisplayOccupied: (displayNumber: number) => Promise<boolean>
   launchXvfb: (displayNumber: number, logPath: string) => Promise<LaunchedDisplay>
 }
@@ -115,9 +111,9 @@ function parseState(value: string, expectedDisplayNumber: number): WindowState {
     typeof state.ownerId !== 'string' ||
     !Number.isInteger(state.pid) ||
     Number(state.pid) <= 0 ||
-    state.width !== SCREEN.width ||
-    state.height !== SCREEN.height ||
-    state.depth !== SCREEN.depth ||
+    state.width !== AGENT_SCREEN.width ||
+    state.height !== AGENT_SCREEN.height ||
+    state.depth !== AGENT_SCREEN.depth ||
     typeof state.startedAt !== 'string'
   ) {
     throw new Error(`Ownership state for display :${expectedDisplayNumber} is invalid`)
@@ -158,7 +154,7 @@ function makeState(
     displayNumber: input.displayNumber,
     ownerId: input.ownerId,
     pid,
-    ...SCREEN,
+    ...AGENT_SCREEN,
     startedAt,
   }
 }
@@ -171,10 +167,24 @@ async function safelyUnlink(path: string) {
   }
 }
 
+async function replaceState(path: string, state: WindowState) {
+  const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify(state)}\n`, {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600,
+    })
+    await rename(temporaryPath, path)
+  } finally {
+    await safelyUnlink(temporaryPath)
+  }
+}
+
 /** Provision one fixed X display and persist its agent ownership. */
 export async function provisionAgentWindow(
   input: StartWindowInput,
-  dependencies: StartWindowDependencies = systemDependencies(),
+  dependencies: StartWindowDependencies,
 ): Promise<StartWindowResult> {
   try {
     await prepareStateDirectory(dependencies.stateDirectory)
@@ -203,20 +213,34 @@ async function provisionWithLock(
 
   try {
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const existing = await readState(path, input.displayNumber)
+      let existing: WindowState | undefined
+      try {
+        existing = await readState(path, input.displayNumber)
+      } catch (error) {
+        if (await dependencies.isDisplayOccupied(input.displayNumber)) {
+          return {
+            exitCode: EXIT_UNAVAILABLE,
+            error: `Display :${input.displayNumber} is unavailable`,
+          }
+        }
+        throw error
+      }
       const occupied = await dependencies.isDisplayOccupied(input.displayNumber)
 
       if (existing) {
-        const processAlive = dependencies.isProcessAlive(existing.pid)
+        const managedProcess = await dependencies.isManagedDisplayProcess(
+          existing.pid,
+          input.displayNumber,
+        )
         if (existing.status === 'running' && existing.ownerId === input.ownerId) {
-          if (processAlive && occupied) return { exitCode: 0 }
-          if (processAlive || occupied) {
+          if (managedProcess && occupied) return { exitCode: 0 }
+          if (managedProcess || occupied) {
             return {
               exitCode: EXIT_UNAVAILABLE,
               error: `Display :${input.displayNumber} is unavailable`,
             }
           }
-        } else if (processAlive || occupied) {
+        } else if (managedProcess || occupied) {
           return {
             exitCode: EXIT_UNAVAILABLE,
             error:
@@ -254,10 +278,7 @@ async function provisionWithLock(
           logPath(dependencies.stateDirectory, input.displayNumber),
         )
         const running = makeState(input, 'running', launched.pid, startedAt)
-        await writeFile(path, `${JSON.stringify(running)}\n`, {
-          encoding: 'utf8',
-          mode: 0o600,
-        })
+        await replaceState(path, running)
         return { exitCode: 0 }
       } catch (error) {
         if (launched) await launched.stop()
@@ -278,196 +299,5 @@ async function provisionWithLock(
     }
   } catch (error) {
     return { exitCode: 1, error: errorMessage(error) }
-  }
-}
-
-function runtimeStateDirectory(environment: NodeJS.ProcessEnv): string {
-  const xdgRuntimeDirectory = environment.XDG_RUNTIME_DIR
-  if (xdgRuntimeDirectory) {
-    if (!isAbsolute(xdgRuntimeDirectory)) {
-      throw new Error('XDG_RUNTIME_DIR must be an absolute path')
-    }
-    return join(xdgRuntimeDirectory, 'openbot', 'agent-window-management')
-  }
-  const uid = typeof process.getuid === 'function' ? process.getuid() : process.pid
-  return join(tmpdir(), `openbot-agent-window-management-${uid}`)
-}
-
-function processIsAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    return isNodeError(error, 'EPERM')
-  }
-}
-
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path)
-    return true
-  } catch (error) {
-    if (isNodeError(error, 'ENOENT')) return false
-    throw error
-  }
-}
-
-async function canConnectToDisplay(displayNumber: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = createConnection(`/tmp/.X11-unix/X${displayNumber}`)
-    let settled = false
-    const finish = (connected: boolean) => {
-      if (settled) return
-      settled = true
-      socket.destroy()
-      resolve(connected)
-    }
-    socket.setTimeout(250)
-    socket.once('connect', () => finish(true))
-    socket.once('error', () => finish(false))
-    socket.once('timeout', () => finish(false))
-  })
-}
-
-async function displayIsOccupied(displayNumber: number): Promise<boolean> {
-  if (await pathExists(`/tmp/.X${displayNumber}-lock`)) return true
-  return canConnectToDisplay(displayNumber)
-}
-
-async function acquireOperationLock(
-  displayNumber: number,
-): Promise<(() => Promise<void>) | undefined> {
-  const uid = typeof process.getuid === 'function' ? process.getuid() : process.pid
-  const server = createServer()
-  server.unref()
-  const acquired = await new Promise<boolean>((resolve, reject) => {
-    server.once('error', (error) => {
-      if (isNodeError(error, 'EADDRINUSE')) resolve(false)
-      else reject(error)
-    })
-    server.listen(`\0openbot-agent-window-${uid}-${displayNumber}`, () => resolve(true))
-  })
-  if (!acquired) return undefined
-  return () =>
-    new Promise<void>((resolve, reject) => {
-      server.close((error) => (error ? reject(error) : resolve()))
-    })
-}
-
-function sleep(durationMs: number) {
-  return new Promise((resolve) => setTimeout(resolve, durationMs))
-}
-
-async function readStartupLog(path: string): Promise<string> {
-  try {
-    return (await readFile(path, 'utf8')).trim()
-  } catch {
-    return ''
-  }
-}
-
-async function stopChild(child: ChildProcess, exited: () => boolean) {
-  if (exited() || !child.pid) return
-  try {
-    process.kill(-child.pid, 'SIGTERM')
-  } catch (error) {
-    if (!isNodeError(error, 'ESRCH')) throw error
-  }
-  for (let attempt = 0; attempt < 20 && !exited(); attempt += 1) await sleep(50)
-  if (!exited()) {
-    try {
-      process.kill(-child.pid, 'SIGKILL')
-    } catch (error) {
-      if (!isNodeError(error, 'ESRCH')) throw error
-    }
-  }
-}
-
-async function launchXvfb(
-  displayNumber: number,
-  outputPath: string,
-  executable: string,
-  timeoutMs: number,
-): Promise<LaunchedDisplay> {
-  const output = openSync(outputPath, 'w', 0o600)
-  let child: ChildProcess
-  try {
-    child = spawn(
-      executable,
-      [
-        `:${displayNumber}`,
-        '-screen',
-        '0',
-        `${SCREEN.width}x${SCREEN.height}x${SCREEN.depth}`,
-        '-nolisten',
-        'tcp',
-        '-noreset',
-      ],
-      {
-        detached: true,
-        stdio: ['ignore', 'ignore', output],
-      },
-    )
-  } finally {
-    closeSync(output)
-  }
-
-  let spawnError: Error | undefined
-  let exitCode: number | null | undefined
-  child.once('error', (error) => {
-    spawnError = error
-  })
-  child.once('exit', (code) => {
-    exitCode = code
-  })
-
-  const exited = () => exitCode !== undefined || spawnError !== undefined
-  const stop = () => stopChild(child, exited)
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    if (spawnError) throw spawnError
-    if (exitCode !== undefined) {
-      const detail = await readStartupLog(outputPath)
-      throw new Error(detail || `Xvfb exited with code ${exitCode ?? 'unknown'}`)
-    }
-    if (await canConnectToDisplay(displayNumber)) {
-      if (!child.pid) throw new Error('Xvfb started without reporting a process id')
-      child.unref()
-      return { pid: child.pid, stop }
-    }
-    await sleep(50)
-  }
-
-  await stop()
-  const detail = await readStartupLog(outputPath)
-  throw new Error(detail || `Timed out waiting for Xvfb display :${displayNumber}`)
-}
-
-function positiveInteger(value: string | undefined, fallback: number): number {
-  if (value === undefined) return fallback
-  const parsed = Number(value)
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw new Error('OPENBOT_XVFB_START_TIMEOUT_MS must be a positive integer')
-  }
-  return parsed
-}
-
-export function systemDependencies(
-  environment: NodeJS.ProcessEnv = process.env,
-): StartWindowDependencies {
-  const executable = environment.OPENBOT_XVFB_PATH || 'Xvfb'
-  const timeoutMs = positiveInteger(
-    environment.OPENBOT_XVFB_START_TIMEOUT_MS,
-    DEFAULT_START_TIMEOUT_MS,
-  )
-  return {
-    stateDirectory: runtimeStateDirectory(environment),
-    processId: process.pid,
-    now: () => new Date().toISOString(),
-    acquireOperationLock,
-    isProcessAlive: processIsAlive,
-    isDisplayOccupied: displayIsOccupied,
-    launchXvfb: (displayNumber, outputPath) =>
-      launchXvfb(displayNumber, outputPath, executable, timeoutMs),
   }
 }

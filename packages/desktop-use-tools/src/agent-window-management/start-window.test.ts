@@ -10,6 +10,21 @@ import {
   type StartWindowDependencies,
 } from './start-window-core'
 
+function runningState(overrides: Record<string, unknown> = {}) {
+  return {
+    version: 1,
+    status: 'running',
+    displayNumber: 2,
+    ownerId: 'agent-123',
+    pid: 901,
+    width: 1280,
+    height: 800,
+    depth: 24,
+    startedAt: '2026-09-05T11:00:00.000Z',
+    ...overrides,
+  }
+}
+
 async function fixture(overrides: Partial<StartWindowDependencies> = {}) {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'openbot-start-window-test-'))
   const launched: number[] = []
@@ -18,7 +33,7 @@ async function fixture(overrides: Partial<StartWindowDependencies> = {}) {
     processId: 900,
     now: () => '2026-09-05T12:00:00.000Z',
     acquireOperationLock: async () => async () => undefined,
-    isProcessAlive: (pid) => pid === 901,
+    isManagedDisplayProcess: async (pid) => pid === 901,
     isDisplayOccupied: async () => false,
     launchXvfb: async (displayNumber) => {
       launched.push(displayNumber)
@@ -72,17 +87,7 @@ test('succeeds without restarting a healthy display owned by the same agent', as
   })
   await writeFile(
     join(stateDirectory, 'display-2.json'),
-    JSON.stringify({
-      version: 1,
-      status: 'running',
-      displayNumber: 2,
-      ownerId: 'agent-123',
-      pid: 901,
-      width: 1280,
-      height: 800,
-      depth: 24,
-      startedAt: '2026-09-05T11:00:00.000Z',
-    }),
+    JSON.stringify(runningState()),
   )
 
   const result = await provisionAgentWindow(
@@ -100,17 +105,7 @@ test('returns 75 when another agent owns the display', async () => {
   })
   await writeFile(
     join(stateDirectory, 'display-2.json'),
-    JSON.stringify({
-      version: 1,
-      status: 'running',
-      displayNumber: 2,
-      ownerId: 'agent-456',
-      pid: 901,
-      width: 1280,
-      height: 800,
-      depth: 24,
-      startedAt: '2026-09-05T11:00:00.000Z',
-    }),
+    JSON.stringify(runningState({ ownerId: 'agent-456' })),
   )
 
   const result = await provisionAgentWindow(
@@ -127,6 +122,42 @@ test('returns 75 when an unmanaged X display occupies the number', async () => {
   const { dependencies, launched } = await fixture({
     isDisplayOccupied: async () => true,
   })
+
+  const result = await provisionAgentWindow(
+    { displayNumber: 2, ownerId: 'agent-123' },
+    dependencies,
+  )
+
+  assert.equal(result.exitCode, EXIT_UNAVAILABLE)
+  assert.match(result.error ?? '', /unavailable/)
+  assert.deepEqual(launched, [])
+})
+
+test('returns 75 when occupied display state is malformed', async () => {
+  const { dependencies, launched, stateDirectory } = await fixture({
+    isDisplayOccupied: async () => true,
+  })
+  await writeFile(join(stateDirectory, 'display-2.json'), '{truncated')
+
+  const result = await provisionAgentWindow(
+    { displayNumber: 2, ownerId: 'agent-123' },
+    dependencies,
+  )
+
+  assert.equal(result.exitCode, EXIT_UNAVAILABLE)
+  assert.match(result.error ?? '', /unavailable/)
+  assert.deepEqual(launched, [])
+})
+
+test('does not trust a reused pid for a same-owner display', async () => {
+  const { dependencies, launched, stateDirectory } = await fixture({
+    isDisplayOccupied: async () => true,
+    isManagedDisplayProcess: async () => false,
+  })
+  await writeFile(
+    join(stateDirectory, 'display-2.json'),
+    JSON.stringify(runningState()),
+  )
 
   const result = await provisionAgentWindow(
     { displayNumber: 2, ownerId: 'agent-123' },
@@ -157,17 +188,7 @@ test('replaces stale state before starting the display', async () => {
   const { dependencies, launched, stateDirectory } = await fixture()
   await writeFile(
     join(stateDirectory, 'display-2.json'),
-    JSON.stringify({
-      version: 1,
-      status: 'running',
-      displayNumber: 2,
-      ownerId: 'old-agent',
-      pid: 899,
-      width: 1280,
-      height: 800,
-      depth: 24,
-      startedAt: '2026-09-05T11:00:00.000Z',
-    }),
+    JSON.stringify(runningState({ ownerId: 'old-agent', pid: 899 })),
   )
 
   const result = await provisionAgentWindow(

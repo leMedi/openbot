@@ -307,21 +307,25 @@ command can later scan for and remove unreferenced files.
 ## Remote Desktop Computer Use
 
 Screenshot and Computer Use execute on the same Remote Desktop machine as the
-OpenBot server and Shell. The web/mobile client only renders durable results
-and approval prompts; it never captures its own screen or injects input.
+OpenBot server and Shell. Each agent is assigned one dedicated graphical
+session on that machine. The web/mobile client only renders durable results and
+approval prompts; it never captures its own screen or injects input.
 
-One configured local desktop-driver boundary discovers the active display,
-captures screenshots, and executes normalized screenshot, click, move, drag,
-type, key, scroll, and wait actions. Coordinates are validated against current
-driver dimensions. A process-wide lease serializes access to each graphical
-session; read-only Screenshot calls never overlap an active Computer sequence.
+Agent Window Management provisions and records ownership of an agent's X
+display. A local desktop-driver boundary for that agent discovers the assigned
+display, captures screenshots, and executes normalized screenshot, click,
+move, drag, type, key, scroll, and wait actions. Coordinates are validated
+against current driver dimensions. A process-wide lease serializes access to
+each graphical session; read-only Screenshot calls never overlap an active
+Computer sequence.
 
 Screenshots are stored through `managed_files` and referenced by durable
 computer-use transcript rows. Reviewed actions carry a fingerprint over the
 agent, conversation, turn, exact normalized actions, display, and screen state.
 One-shot approvals are rejected when that target changes. Agent workspaces are
 organizational path boundaries, not separate desktops, machines, or security
-sandboxes.
+sandboxes. A dedicated graphical session isolates desktop state operationally,
+but is not a security boundary between agents running as the same Unix user.
 
 ## MCP
 
