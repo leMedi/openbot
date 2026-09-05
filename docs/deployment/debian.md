@@ -40,11 +40,12 @@ sudo systemctl restart openbot
 sudo systemctl status openbot
 ```
 
-The artifact configures its bundled `start-window` command for agent display
-provisioning. Install Xvfb on the host before creating agents:
+The artifact configures its bundled `start-window` and
+`openbot-desktop-driver` commands for agent display provisioning and control.
+Install their host dependencies before creating agents:
 
 ```sh
-sudo apt-get install -y xvfb
+sudo apt-get install -y xvfb imagemagick xdotool x11-xserver-utils
 ```
 
 OpenBot listens on `127.0.0.1:3000` by default. Keep it private or place an

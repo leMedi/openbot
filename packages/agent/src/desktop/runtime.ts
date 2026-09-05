@@ -774,13 +774,21 @@ export class DesktopToolRuntime {
       )
     } catch (error) {
       const failure = failureFrom(error, operation.timedOut(), this.options.signal.aborted)
-      return this.persist(toolCallId, 'Computer', {
-        ok: false,
-        status: failure.status,
-        summary: failure.message,
-        ...(display && { display }),
-        ...(fingerprint && { fingerprint }),
-      })
+      return this.persist(
+        toolCallId,
+        'Computer',
+        {
+          ok: false,
+          status: failure.status,
+          summary: failure.message,
+          ...(display && { display }),
+          ...(fingerprint && { fingerprint }),
+          ...(error instanceof DesktopDriverError && error.execution?.cursor
+            ? { cursor: error.execution.cursor }
+            : {}),
+        },
+        error instanceof DesktopDriverError ? error.execution?.screenshot : undefined,
+      )
     } finally {
       if (display && owner) releaseDesktop(display.sessionId, owner)
       operation.dispose()

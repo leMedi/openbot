@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { DESKTOP_HEIGHT, DESKTOP_WIDTH } from '@openbot/desktop-driver'
 import {
   chmod,
   lstat,
@@ -12,7 +13,11 @@ import { join } from 'node:path'
 import { isNodeError } from './node-errors'
 
 export const EXIT_UNAVAILABLE = 75
-export const AGENT_SCREEN = { width: 1280, height: 800, depth: 24 } as const
+export const AGENT_SCREEN = {
+  width: DESKTOP_WIDTH,
+  height: DESKTOP_HEIGHT,
+  depth: 24,
+} as const
 const DISPLAY_NUMBER_MAX = 65_535
 
 export type StartWindowInput = {

@@ -11,6 +11,9 @@
     "test": "node --import tsx --test src/**/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@openbot/desktop-driver": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "26.4.0",
     "esbuild": "0.28.2",

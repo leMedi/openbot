@@ -100,6 +100,7 @@ fi
 if [ ! -x "$release_dir/run" ] ||
   [ ! -x "$release_dir/runtime/bin/node" ] ||
   [ ! -x "$release_dir/runtime/bin/start-window" ] ||
+  [ ! -x "$release_dir/runtime/bin/openbot-desktop-driver" ] ||
   [ ! -f "$release_dir/dist/server/server.js" ] ||
   [ ! -d "$release_dir/packages/db/drizzle" ]; then
   echo "Release directory is incomplete: $release_dir" >&2
@@ -117,7 +118,7 @@ OPENBOT_PUBLIC_URL=http://localhost:3000
 OPENBOT_AI_BASE_URL=
 OPENBOT_AI_API_KEY=
 OPENBOT_AI_MODEL=
-OPENBOT_DESKTOP_DRIVER=
+OPENBOT_DESKTOP_DRIVER=/opt/openbot/current/runtime/bin/openbot-desktop-driver
 OPENBOT_DESKTOP_DRIVER_ARGS=[]
 OPENBOT_COMPUTER_TIMEOUT_MS=120000
 OPENBOT_START_WINDOW=/opt/openbot/current/runtime/bin/start-window
@@ -128,9 +129,19 @@ EOF
   rm -f "$config_tmp"
   trap - EXIT HUP INT TERM
   echo "Created $config_dir/openbot.env; configure the AI values after installation."
-elif ! sudo grep -q '^OPENBOT_START_WINDOW=' "$config_dir/openbot.env"; then
+fi
+
+if ! sudo grep -q '^OPENBOT_START_WINDOW=' "$config_dir/openbot.env"; then
   printf '%s\n' 'OPENBOT_START_WINDOW=/opt/openbot/current/runtime/bin/start-window' |
     sudo tee -a "$config_dir/openbot.env" >/dev/null
+fi
+if ! sudo grep -q '^OPENBOT_DESKTOP_DRIVER=' "$config_dir/openbot.env"; then
+  printf '%s\n' 'OPENBOT_DESKTOP_DRIVER=/opt/openbot/current/runtime/bin/openbot-desktop-driver' |
+    sudo tee -a "$config_dir/openbot.env" >/dev/null
+elif sudo grep -q '^OPENBOT_DESKTOP_DRIVER=[[:space:]]*$' "$config_dir/openbot.env"; then
+  sudo sed -i \
+    's|^OPENBOT_DESKTOP_DRIVER=[[:space:]]*$|OPENBOT_DESKTOP_DRIVER=/opt/openbot/current/runtime/bin/openbot-desktop-driver|' \
+    "$config_dir/openbot.env"
 fi
 
 unit_tmp=$(mktemp)

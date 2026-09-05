@@ -165,6 +165,9 @@ importers:
       '@openbot/db':
         specifier: workspace:*
         version: link:../db
+      '@openbot/desktop-driver':
+        specifier: workspace:*
+        version: link:../desktop-driver
       '@openbot/memory':
         specifier: workspace:*
         version: link:../memory
@@ -219,7 +222,26 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
 
+  packages/desktop-driver:
+    devDependencies:
+      '@types/node':
+        specifier: 26.4.0
+        version: 26.4.0
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
+      tsx:
+        specifier: 4.23.12
+        version: 4.23.12
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+
   packages/desktop-use-tools:
+    dependencies:
+      '@openbot/desktop-driver':
+        specifier: workspace:*
+        version: link:../desktop-driver
     devDependencies:
       '@types/node':
         specifier: 26.4.0

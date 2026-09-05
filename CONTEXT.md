@@ -485,8 +485,10 @@ Remaining implementation slices are:
 - `apps/app/src/server/ai.ts`: OpenAI-compatible streaming inference client.
 - `apps/app/src/server/agent-tools.ts`: agent tool definitions and executor,
   including the SendMessage delivery tool.
+- `packages/desktop-driver/`: protobuf-shaped JSON executor and reusable
+  TypeScript client, including temporary screenshot-path augmentation.
 - `packages/agent/src/desktop/driver.ts`: server-local desktop-driver boundary
-  and configured executable protocol.
+  and adapter for each agent's assigned X display.
 - `packages/agent/src/desktop/runtime.ts`: per-turn review, lease, execution,
   screenshot persistence, audit, and normalized Computer Use outcomes.
 - `packages/agent/src/tools/computer.ts`: Screenshot and Computer model tools.

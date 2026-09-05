@@ -1,56 +1,81 @@
 # Local desktop driver
 
 Computer Use runs on the same **Remote Desktop** machine as the OpenBot server.
-Configure a local driver executable with:
+The bundled Debian driver is configured with:
 
 ```dotenv
-OPENBOT_DESKTOP_DRIVER=/absolute/path/to/openbot-desktop-driver
+OPENBOT_DESKTOP_DRIVER=/opt/openbot/current/runtime/bin/openbot-desktop-driver
 OPENBOT_DESKTOP_DRIVER_ARGS=[]
 OPENBOT_COMPUTER_TIMEOUT_MS=120000
 ```
 
 The executable is started directly, never through a shell. It reads one JSON
-request from stdin and writes one JSON response to stdout.
+`ExecServerMessage` from stdin and writes one JSON `ExecStreamElement` to
+stdout. JSON uses the protobuf field names in snake case.
 
-## Requests
+OpenBot appends the trusted `--display-number <number>` argument from the
+current agent's `xDisplayNumber`. Display selection is intentionally not part
+of the request contract.
 
-```json
-{"version":1,"operation":"display"}
-{"version":1,"operation":"screenshot"}
-{"version":1,"operation":"execute","actions":[{"action":"click","x":10,"y":20,"button":"left","clickCount":1}]}
-```
-
-`execute.actions` supports `screenshot`, `click`, `move`, `drag`, `type`,
-`key`, `scroll`, and `wait`. OpenBot validates and normalizes every action
-before invoking the executable.
-
-## Responses
-
-```json
-{"ok":true,"display":{"width":1280,"height":800,"sessionId":"display-0"}}
-```
+## Request
 
 ```json
 {
-  "ok": true,
-  "screenshot": {
-    "dataBase64": "...",
-    "mediaType": "image/png",
-    "width": 1280,
-    "height": 800,
-    "cursor": {"x": 42, "y": 24},
-    "stateId": "optional-driver-state-id"
+  "id": 1,
+  "exec_id": "exec_example",
+  "computer_use_args": {
+    "tool_call_id": "tool_example",
+    "actions": [
+      {
+        "click": {
+          "coordinate": { "x": 10, "y": 20 },
+          "button": "MOUSE_BUTTON_LEFT",
+          "count": 1
+        }
+      },
+      { "screenshot": {} }
+    ],
+    "description": "Open the selected item"
   }
 }
 ```
 
-An execute response may contain `cursor` and a final `screenshot`. If the
-driver omits the required final screenshot, OpenBot calls `screenshot`
-immediately afterward.
+Actions support `mouse_move`, `click`, `mouse_down`, `mouse_up`, `drag`,
+`scroll`, `type`, `key`, `wait`, `screenshot`, and `cursor_position` variants.
+Requests are limited to ten actions. The executor verifies the live display and
+captured image dimensions before relying on the fixed 1280×800 coordinate
+space. Mutating sequences receive an automatic final screenshot unless the
+last action is already a screenshot. Non-ASCII typing requires
+`bind_unmapped_characters: true` only when a character is absent from the live
+X keymap.
 
-Failures use `{"ok":false,"status":"desktop_unavailable","error":"..."}`.
-Recognized driver statuses are `desktop_unavailable`, `timeout`, `cancelled`,
-and `driver_failure`; all unknown failures normalize to `driver_failure`.
+## Response
 
-The driver must target the configured graphical session on the server. It must
-not capture or inject input into a connected web/mobile client device.
+```json
+{
+  "exec_client_message": {
+    "id": 1,
+    "exec_id": "exec_example",
+    "local_execution_time_ms": 25,
+    "computer_use_result": {
+      "success": {
+        "action_count": 2,
+        "duration_ms": 25,
+        "screenshot": "UklGR...",
+        "cursor_position": { "x": 10, "y": 20 }
+      }
+    }
+  }
+}
+```
+
+The binary returns screenshot WebP bytes as base64. The exported TypeScript
+`ComputerUseClient` validates and saves those bytes in a private temporary file,
+then adds `screenshot_path` to the result. OpenBot subsequently persists the
+image through its managed-file service.
+
+Failures use the `computer_use_result.error` variant. `error_code` distinguishes
+an unavailable assigned display from another driver failure. Invalid top-level
+requests use `exec_client_control_message.throw`.
+
+See `packages/desktop-driver/README.md` for building and direct invocation.

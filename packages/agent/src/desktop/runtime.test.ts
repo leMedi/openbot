@@ -337,7 +337,9 @@ test('normalizes driver failures and releases the desktop lease', async () => {
       return image('unchanged')
     },
     async execute() {
-      throw new DesktopDriverError('driver_failure', 'input daemon disconnected')
+      throw new DesktopDriverError('driver_failure', 'input daemon disconnected', {
+        screenshot: image('failed state'),
+      })
     },
   }
   const workingDriver = {
@@ -359,7 +361,9 @@ test('normalizes driver failures and releases the desktop lease', async () => {
   const failed = new DesktopToolRuntime(runtimeOptions(failedContext, failedDriver))
   const next = new DesktopToolRuntime(runtimeOptions(nextContext, workingDriver))
 
-  assert.equal((await failed.computer('failed-call', args)).status, 'driver_failure')
+  const failedResult = await failed.computer('failed-call', args)
+  assert.equal(failedResult.status, 'driver_failure')
+  assert.ok(failedResult.screenshot)
   assert.equal((await next.computer('next-call', args)).status, 'success')
 })
 

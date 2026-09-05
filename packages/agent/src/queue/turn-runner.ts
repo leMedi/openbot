@@ -316,7 +316,7 @@ async function executeTurn(turnId: string) {
       },
     }
     toolContext.desktop = new DesktopToolRuntime({
-      driver: createDesktopDriver(),
+      driver: createDesktopDriver(agent.xDisplayNumber),
       approvalMode: agent.approvalMode,
       agentId: agent.id,
       conversationId: conversation.id,
