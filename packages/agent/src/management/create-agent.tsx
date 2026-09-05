@@ -4,10 +4,21 @@ import {
   createId,
   db,
   getNextAgentXDisplayNumber,
+  rollbackAgentCreation,
   type AgentProfileInput,
 } from '@openbot/db'
 
 const MAX_STDERR_BYTES = 64 * 1024
+
+export class StartWindowError extends Error {
+  constructor(
+    message: string,
+    readonly exitCode: number | null,
+  ) {
+    super(message)
+    this.name = 'StartWindowError'
+  }
+}
 
 function startWindowExecutable() {
   const executable = process.env.OPENBOT_START_WINDOW?.trim()
@@ -44,11 +55,12 @@ export async function startAgentWindow(
       }
       const detail = Buffer.concat(stderr).toString('utf8').trim()
       reject(
-        new Error(
+        new StartWindowError(
           detail ||
             (code === 75
               ? `Display :${displayNumber} is unavailable or owned by another agent`
               : `start-window failed ${signal ? `with signal ${signal}` : `with exit code ${code}`}`),
+          code,
         ),
       )
     })
@@ -61,13 +73,25 @@ export async function createAgent(
   mcpAccountIds: string[] = [],
 ) {
   const agentId = createId('agt')
-  return db.transaction(async (transaction) => {
+  const created = await db.transaction(async (transaction) => {
     const xDisplayNumber = await getNextAgentXDisplayNumber(transaction)
-    const created = await createAgentInTransaction(transaction, input, mcpAccountIds, {
+    return createAgentInTransaction(transaction, input, mcpAccountIds, {
       id: agentId,
       xDisplayNumber,
     })
-    await startAgentWindow(xDisplayNumber, agentId)
-    return created
   })
+  try {
+    await startAgentWindow(created.agent.xDisplayNumber!, agentId)
+    return created
+  } catch (error) {
+    try {
+      await rollbackAgentCreation(agentId)
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        `Agent ${agentId} display provisioning and database rollback failed`,
+      )
+    }
+    throw error
+  }
 }

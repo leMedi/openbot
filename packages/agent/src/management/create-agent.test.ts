@@ -24,10 +24,11 @@ await chmod(binaryPath, 0o755)
 process.env.OPENBOT_START_WINDOW = binaryPath
 process.env.OPENBOT_TEST_START_WINDOW_LOG = invocationLog
 
-const [{ createAgent }, { listAgents, listConversations }] = await Promise.all([
-  import('./create-agent'),
-  import('@openbot/db'),
-])
+const [{ createAgent, StartWindowError }, { listAgents, listConversations }] =
+  await Promise.all([
+    import('./create-agent'),
+    import('@openbot/db'),
+  ])
 
 test('creates the database records and provisions sequential agent displays', async () => {
   const first = await createAgent({ name: 'First managed agent' })
@@ -50,10 +51,12 @@ test('rolls back agent records when display provisioning fails', async () => {
   const conversationCountBefore = (await listConversations()).length
   process.env.OPENBOT_TEST_START_WINDOW_EXIT = '75'
 
-  await assert.rejects(
-    createAgent({ name: 'Agent without a display' }),
-    /display provisioning failed/,
-  )
+  await assert.rejects(createAgent({ name: 'Agent without a display' }), (error) => {
+    assert.ok(error instanceof StartWindowError)
+    assert.equal(error.exitCode, 75)
+    assert.match(error.message, /display provisioning failed/)
+    return true
+  })
 
   assert.equal((await listAgents()).length, agentCountBefore)
   assert.equal((await listConversations()).length, conversationCountBefore)
