@@ -173,6 +173,7 @@ stop_server() {
 clear_stale_desktop_runtime
 install_latest_openbot
 cd "$active_release"
+export PATH="$active_release/runtime/bin:$PATH"
 
 "$active_release/run" &
 server_pid=$!
