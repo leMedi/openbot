@@ -46,6 +46,18 @@ test('creates the database records and provisions sequential agent displays', as
   ])
 })
 
+test('creates agents without provisioning displays when desktop mode is disabled', async () => {
+  const invocationsBefore = await readFile(invocationLog, 'utf8')
+  process.env.OPENBOT_DESKTOP_MODE = 'disabled'
+  try {
+    const created = await createAgent({ name: 'Desktop-free agent' })
+    assert.equal(created.agent.xDisplayNumber, null)
+    assert.equal(await readFile(invocationLog, 'utf8'), invocationsBefore)
+  } finally {
+    delete process.env.OPENBOT_DESKTOP_MODE
+  }
+})
+
 test('rolls back agent records when display provisioning fails', async () => {
   const agentCountBefore = (await listAgents()).length
   const conversationCountBefore = (await listConversations()).length

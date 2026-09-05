@@ -111,13 +111,15 @@ An `agents` row contains:
 - Optional unique X display number.
 - Creation and update timestamps.
 
-Interactive agent creation allocates one more than the greatest assigned X
-display number, creates the agent, its first conversation, and MCP grants, then
-provisions the display through the configured `start-window` executable before
-committing. A display startup failure rolls back all database changes. A
-database commit failure after successful display provisioning can leave an
-orphan display until Agent Window Management gains a matching stop operation;
-this is an accepted initial limitation.
+In the default `per-agent` desktop mode, interactive agent creation allocates
+one more than the greatest assigned X display number, creates the agent, its
+first conversation, and MCP grants, then provisions the display through the
+configured `start-window` executable before committing. A display startup
+failure rolls back all database changes. A database commit failure after
+successful display provisioning can leave an orphan display until Agent Window
+Management gains a matching stop operation; this is an accepted initial
+limitation. In `disabled` mode, creation leaves the optional display number null
+and skips display provisioning.
 
 The effective tool list is not an agent column. It is derived for each turn
 from runtime capabilities, MCP discovery, permissions, and execution context.
@@ -326,10 +328,13 @@ command can later scan for and remove unreferenced files.
 
 ## Remote Desktop Computer Use
 
-Screenshot and Computer Use execute on the same Remote Desktop machine as the
-OpenBot server and Shell. Each agent is assigned one dedicated graphical
-session on that machine. The web/mobile client only renders durable results and
-approval prompts; it never captures its own screen or injects input.
+`OPENBOT_DESKTOP_MODE` selects `per-agent` (the default) or `disabled`. In
+`per-agent` mode, Screenshot and Computer Use execute on the same Remote Desktop
+machine as the OpenBot server and Shell. Each newly created agent is assigned
+one dedicated graphical session on that machine. In `disabled` mode, agents run
+on the host without graphical sessions, VNC, screenshots, or Computer Use. The
+web/mobile client only renders durable results and approval prompts; it never
+captures its own screen or injects input.
 
 Agent Window Management provisions and records ownership of an agent's X
 display. A local desktop-driver boundary for that agent discovers the assigned

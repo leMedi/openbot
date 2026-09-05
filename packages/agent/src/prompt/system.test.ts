@@ -7,7 +7,49 @@ const testData = path.resolve(process.cwd(), '../../.data', `prompt-tests-${proc
 await rm(testData, { recursive: true, force: true })
 process.env.OPENBOT_DATA_DIR = testData
 
-const { renderUserProfilePrompt } = await import('./system')
+const { renderDefaultSystemPrompt, renderUserProfilePrompt } = await import('./system')
+
+test('removes graphical desktop guidance when desktop mode is disabled', () => {
+  const prompt = renderDefaultSystemPrompt(false)
+  assert.match(prompt, /running on the user's machine/)
+  assert.match(prompt, /No graphical desktop or screen-control tools are available/)
+  assert.doesNotMatch(prompt, /Screenshot|Computer|Remote Desktop/)
+})
+
+test('removes graphical desktop guidance for an agent without a display', async () => {
+  const { renderSystemPrompt } = await import('./system')
+  const prompt = renderSystemPrompt({
+    agent: {
+      id: 'agt_no_display',
+      xDisplayNumber: null,
+      name: 'No display',
+      description: '',
+      avatarFileId: null,
+      avatarShape: 'squircle',
+      avatarColor: '#5865c4',
+      defaultMode: 'default',
+      defaultModel: null,
+      approvalMode: 'allowlist',
+      notifyOnUpdates: true,
+      hiddenFromSidebar: false,
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    userProfile: {
+      id: 1,
+      firstName: '',
+      lastName: '',
+      about: '',
+      timezone: 'UTC',
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    memory: [],
+    conversation: { kind: 'private' },
+  })
+  assert.match(prompt, /No graphical desktop or screen-control tools are available/)
+  assert.doesNotMatch(prompt, /Screenshot|Computer|Remote Desktop/)
+})
 
 test('renders the user identity and timezone for agents', () => {
   assert.equal(

@@ -1,4 +1,5 @@
 import { createServerFn } from '@tanstack/react-start'
+import { getDesktopMode as getConfiguredDesktopMode } from '@openbot/agent'
 
 const repo = process.env.OPENBOT_GITHUB_REPO ?? 'leMedi/openbot'
 const releasePattern = /^main-([0-9a-f]{12})$/
@@ -75,6 +76,10 @@ export const getServerConfig = createServerFn({ method: 'GET' }).handler(async (
   host: process.env.OPENBOT_PUBLIC_URL ?? `http://${process.env.HOST ?? '127.0.0.1'}:${process.env.PORT ?? '3000'}`,
   desktop: await getDesktopStatus(),
 }))
+
+export const getDesktopMode = createServerFn({ method: 'GET' }).handler(() =>
+  getConfiguredDesktopMode(),
+)
 
 export const getServerUpdate = createServerFn({ method: 'GET' }).handler(async () => cachedUpdate ?? refreshUpdateCheck())
 

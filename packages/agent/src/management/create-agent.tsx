@@ -6,6 +6,7 @@ import {
   getNextAgentXDisplayNumber,
   type AgentProfileInput,
 } from '@openbot/db'
+import { isDesktopEnabled } from '../desktop/mode'
 
 const MAX_STDERR_BYTES = 64 * 1024
 const MIN_AGENT_X_DISPLAY_NUMBER = 2
@@ -32,10 +33,12 @@ function startWindowExecutable() {
 export async function startAgentWindow(
   displayNumber: number,
   ownerId: string,
-  executable = startWindowExecutable(),
+  executable?: string,
 ) {
+  if (!isDesktopEnabled()) return
+  const command = executable ?? startWindowExecutable()
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(executable, [String(displayNumber), ownerId], {
+    const child = spawn(command, [String(displayNumber), ownerId], {
       stdio: ['ignore', 'ignore', 'pipe'],
     })
     const stderr: Buffer[] = []
@@ -73,7 +76,13 @@ export async function createAgent(
   mcpAccountIds: string[] = [],
 ) {
   const agentId = createId('agt')
+  const desktopEnabled = isDesktopEnabled()
   return db.transaction(async (transaction) => {
+    if (!desktopEnabled) {
+      return createAgentInTransaction(transaction, input, mcpAccountIds, {
+        id: agentId,
+      })
+    }
     const xDisplayNumber = Math.max(
       MIN_AGENT_X_DISPLAY_NUMBER,
       await getNextAgentXDisplayNumber(transaction),

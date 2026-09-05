@@ -1,5 +1,5 @@
 import { getAgent } from '@openbot/db'
-import { createDesktopDriver } from '@openbot/agent'
+import { createDesktopDriver, isDesktopEnabled } from '@openbot/agent'
 import { createFileRoute } from '@tanstack/react-router'
 
 /** Returns a current, server-captured image for the agent sidebar preview. */
@@ -7,6 +7,9 @@ export const Route = createFileRoute('/api/agents/$agentId/desktop/screenshot')(
   server: {
     handlers: {
       GET: async ({ params }) => {
+        if (!isDesktopEnabled()) {
+          return Response.json({ error: 'Desktop mode is disabled' }, { status: 409 })
+        }
         const agent = await getAgent(params.agentId)
         if (!agent) return Response.json({ error: 'Agent not found' }, { status: 404 })
         if (agent.xDisplayNumber === null) {

@@ -23,6 +23,7 @@ export function Inspector({
   conversation,
   bot,
   activeAgentId,
+  desktopEnabled,
   onOpenPlugins,
   mcpServers,
   mcpAccounts,
@@ -31,6 +32,7 @@ export function Inspector({
   conversation: Conversation
   bot: Bot
   activeAgentId?: string
+  desktopEnabled: boolean
   onOpenPlugins: () => void
   mcpServers: SafeMcpServer[]
   mcpAccounts: SafeMcpAccount[]
@@ -51,7 +53,7 @@ export function Inspector({
   const [desktopOpen, setDesktopOpen] = useState(false)
 
   useEffect(() => {
-    if (!activeAgentId) return
+    if (!activeAgentId || !desktopEnabled) return
     setPreviewUrl(null)
     let cancelled = false
     let objectUrl: string | null = null
@@ -75,7 +77,7 @@ export function Inspector({
       window.clearInterval(timer)
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [activeAgentId])
+  }, [activeAgentId, desktopEnabled])
 
   async function readMemory() {
     const [shared, scoped] = await Promise.all([
@@ -203,7 +205,7 @@ export function Inspector({
   return (
     <aside className="flex w-78 shrink-0 flex-col gap-5.5 overflow-y-auto border-l bg-sidebar/70 px-3.5 py-4">
       {/* Live view is only meaningful for an agent-owned display. */}
-      {activeAgentId && (
+      {activeAgentId && desktopEnabled && (
       <section>
         <h3 className="mb-2 text-[11px] font-semibold text-muted-foreground">Live View</h3>
         <button

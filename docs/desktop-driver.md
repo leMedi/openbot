@@ -4,10 +4,17 @@ Computer Use runs on the same **Remote Desktop** machine as the OpenBot server.
 The bundled Debian driver is configured with:
 
 ```dotenv
+OPENBOT_DESKTOP_MODE=per-agent
 OPENBOT_DESKTOP_DRIVER=/opt/openbot/current/runtime/bin/openbot-desktop-driver
 OPENBOT_DESKTOP_DRIVER_ARGS=[]
 OPENBOT_COMPUTER_TIMEOUT_MS=120000
 ```
+
+`OPENBOT_DESKTOP_MODE` accepts `per-agent` (the default) or `disabled`. In
+`disabled` mode, agents run normally on the server host without an assigned X
+display. OpenBot does not provision agent windows, expose VNC or screenshot
+access, advertise the `Screenshot` and `Computer` tools, or require the desktop
+driver settings.
 
 The executable is started directly, never through a shell. It reads one JSON
 `ExecServerMessage` from stdin and writes one JSON `ExecStreamElement` to

@@ -9,11 +9,18 @@ import app from '../dist/server/server.js'
 
 const host = process.env.HOST ?? '127.0.0.1'
 const port = Number(process.env.PORT ?? 3000)
-const vnc = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024 })
+const desktopMode = process.env.OPENBOT_DESKTOP_MODE?.trim() || 'per-agent'
+if (desktopMode !== 'disabled' && desktopMode !== 'per-agent') {
+  throw new Error(`Invalid OPENBOT_DESKTOP_MODE ${JSON.stringify(desktopMode)}; expected "disabled" or "per-agent"`)
+}
+const desktopEnabled = desktopMode === 'per-agent'
+const vnc = desktopEnabled
+  ? new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024 })
+  : undefined
 const staticRoot = join(process.cwd(), 'dist/client')
 const contentTypes = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff': 'font/woff', '.woff2': 'font/woff2' }
 
-vnc.on('connection', async (socket, _request, agentId) => {
+vnc?.on('connection', async (socket, _request, agentId) => {
   const agent = await getAgent(agentId)
   const display = agent?.xDisplayNumber
   if (display === null || display === undefined) {
@@ -68,7 +75,7 @@ const server = createServer(async (request, response) => {
 server.on('upgrade', (request, socket, head) => {
   const pathname = new URL(request.url ?? '/', 'http://localhost').pathname
   const match = /^\/api\/agents\/([^/]+)\/desktop\/vnc$/.exec(pathname)
-  if (!match || (request.headers.origin && request.headers.origin !== process.env.OPENBOT_PUBLIC_URL)) {
+  if (!vnc || !match || (request.headers.origin && request.headers.origin !== process.env.OPENBOT_PUBLIC_URL)) {
     socket.destroy()
     return
   }

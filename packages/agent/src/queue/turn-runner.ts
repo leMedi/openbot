@@ -46,6 +46,7 @@ import {
   resolveConfiguredModel,
 } from '../ai'
 import { createDesktopDriver } from '../desktop/driver'
+import { isAgentDesktopEnabled } from '../desktop/mode'
 import {
   computerApprovalFromWaitingState,
   DesktopToolRuntime,
@@ -58,6 +59,7 @@ import {
   backgroundToolDefinitions,
   type ToolTurnContext,
 } from '../tools'
+import { COMPUTER_TOOL_NAME, SCREENSHOT_TOOL_NAME } from '../tools/computer'
 import { toPiBuiltinTools, toPiMcpTools } from '../tools/pi'
 import {
   agentWorkspaceDirectory,
@@ -218,8 +220,16 @@ async function executeTurn(turnId: string) {
           }
         : undefined
     const computerApproval = computerApprovalFromWaitingState(waitingState)
-    const builtInToolDefinitions =
+    const desktopEnabled = isAgentDesktopEnabled(agent.xDisplayNumber)
+    const configuredToolDefinitions =
       claimed.lane !== 'background' ? agentToolDefinitions : backgroundToolDefinitions
+    const builtInToolDefinitions = desktopEnabled
+      ? configuredToolDefinitions
+      : configuredToolDefinitions.filter(
+          (tool) =>
+            tool.function.name !== SCREENSHOT_TOOL_NAME &&
+            tool.function.name !== COMPUTER_TOOL_NAME,
+        )
     const hasMcpAccess = claimed.lane !== 'background' && claimed.source !== 'subagent'
     if (hasMcpAccess && pluginApproval?.approved) {
       await applyApprovedPlugin(agent.id, pluginApproval)
@@ -275,7 +285,9 @@ async function executeTurn(turnId: string) {
         : undefined
     const resumedText = waitingState?.response
       ? waitingState.originatingToolCall.name === 'Computer'
-        ? computerApproval
+        ? !desktopEnabled
+          ? '[The pending graphical desktop action cannot be resumed because this agent no longer has a desktop. Continue without graphical desktop access.]'
+          : computerApproval
           ? '[The user approved the exact pending Computer action. Call Computer again with unchanged arguments. The approval applies only while the Remote Desktop state is unchanged.]'
           : '[The user denied the pending Computer action. Do not retry it unless they explicitly ask for a new action.]'
         : pluginApproval?.approved
@@ -337,21 +349,23 @@ async function executeTurn(turnId: string) {
         return delivery
       },
     }
-    toolContext.desktop = new DesktopToolRuntime({
-      driver: createDesktopDriver(agent.xDisplayNumber),
-      approvalMode: agent.approvalMode,
-      agentId: agent.id,
-      conversationId: conversation.id,
-      turnId,
-      senderAgentId: prepared.senderAgentId,
-      signal: active.controller.signal,
-      approved: computerApproval,
-      onPersisted: (message) => {
-        active.delivered.push(message)
-        emit({ type: 'message', message })
-      },
-      suspend: toolContext.suspend,
-    })
+    if (desktopEnabled) {
+      toolContext.desktop = new DesktopToolRuntime({
+        driver: createDesktopDriver(agent.xDisplayNumber),
+        approvalMode: agent.approvalMode,
+        agentId: agent.id,
+        conversationId: conversation.id,
+        turnId,
+        senderAgentId: prepared.senderAgentId,
+        signal: active.controller.signal,
+        approved: computerApproval,
+        onPersisted: (message) => {
+          active.delivered.push(message)
+          emit({ type: 'message', message })
+        },
+        suspend: toolContext.suspend,
+      })
+    }
     const managementTools = hasMcpAccess
       ? createMcpManagementTools(agent.id, {
           approval: pluginApproval,

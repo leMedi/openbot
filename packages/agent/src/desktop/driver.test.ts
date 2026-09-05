@@ -3,7 +3,13 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { DesktopDriverError, ProcessDesktopDriver, type DesktopAction } from './driver'
+import {
+  createDesktopDriver,
+  DesktopDriverError,
+  getDesktopDriverStatus,
+  ProcessDesktopDriver,
+  type DesktopAction,
+} from './driver'
 
 function fakeWebP() {
   const payload = Buffer.alloc(10)
@@ -75,6 +81,27 @@ test('classifies a missing process executable as desktop unavailable', async () 
     assert.equal(error.code, 'desktop_unavailable')
     return true
   })
+})
+
+test('keeps configured desktop drivers unavailable when desktop mode is disabled', async () => {
+  const previousMode = process.env.OPENBOT_DESKTOP_MODE
+  const previousDriver = process.env.OPENBOT_DESKTOP_DRIVER
+  process.env.OPENBOT_DESKTOP_MODE = 'disabled'
+  process.env.OPENBOT_DESKTOP_DRIVER = process.execPath
+  try {
+    await assert.rejects(createDesktopDriver(9).getDisplay(), (error) => {
+      assert.ok(error instanceof DesktopDriverError)
+      assert.equal(error.code, 'desktop_unavailable')
+      assert.match(error.message, /desktop mode is disabled/i)
+      return true
+    })
+    await assert.rejects(getDesktopDriverStatus(), /Desktop mode is disabled/)
+  } finally {
+    if (previousMode === undefined) delete process.env.OPENBOT_DESKTOP_MODE
+    else process.env.OPENBOT_DESKTOP_MODE = previousMode
+    if (previousDriver === undefined) delete process.env.OPENBOT_DESKTOP_DRIVER
+    else process.env.OPENBOT_DESKTOP_DRIVER = previousDriver
+  }
 })
 
 test('requests cursor position with a screenshot', async () => {

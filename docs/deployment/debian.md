@@ -58,9 +58,14 @@ The installer installs the required X11 packages and configures the bundled
 provisioning and control. Their stable configured paths are:
 
 ```dotenv
+OPENBOT_DESKTOP_MODE=per-agent
 OPENBOT_START_WINDOW=/opt/openbot/current/runtime/bin/start-window
 OPENBOT_DESKTOP_DRIVER=/opt/openbot/current/runtime/bin/openbot-desktop-driver
 ```
+
+`per-agent` is the default when `OPENBOT_DESKTOP_MODE` is omitted. Set it to
+`disabled` on hosts without X11 to run agents without desktop provisioning,
+VNC, screenshots, or computer-control tools.
 
 Both commands run with the Node runtime packaged in the release; a system-wide
 Node installation is not required. On updates, the installer preserves custom

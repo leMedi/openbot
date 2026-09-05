@@ -46,6 +46,7 @@ import {
   renameConversation,
   setConversationUnread,
 } from '@/server/conversations'
+import { getDesktopMode } from '@/server/config'
 
 function authorFromBot(bot: Bot, kind: 'agent' | 'member' = 'agent'): Author {
   return {
@@ -63,15 +64,16 @@ const LAST_CONVERSATION_KEY = 'openbot:last-conversation'
 
 export const Route = createFileRoute('/')({
   loader: async () => {
-    const [agents, groups, conversations, mcp, profile, providers] = await Promise.all([
+    const [agents, groups, conversations, mcp, profile, providers, desktopMode] = await Promise.all([
       getAgents(),
       getGroups(),
       getConversations(),
       getMcpConfiguration(),
       getUserProfile(),
       getAiProviders(),
+      getDesktopMode(),
     ])
-    return { agents, groups, conversations, mcp, profile, providers }
+    return { agents, groups, conversations, mcp, profile, providers, desktopMode }
   },
   component: OpenBot,
 })
@@ -84,6 +86,7 @@ function OpenBot() {
     mcp,
     profile,
     providers,
+    desktopMode,
   } = Route.useLoaderData()
   const router = useRouter()
 
@@ -434,6 +437,7 @@ function OpenBot() {
           conversation={active}
           bot={bot}
           activeAgentId={activeAgent?.id}
+          desktopEnabled={desktopMode === 'per-agent' && activeAgent?.xDisplayNumber != null}
           onOpenPlugins={() => setPluginsOpen(true)}
           mcpServers={mcp.servers}
           mcpAccounts={mcp.accounts}

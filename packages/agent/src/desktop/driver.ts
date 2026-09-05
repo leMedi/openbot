@@ -14,6 +14,7 @@ import {
   type MouseButton,
   type ScrollDirection,
 } from '@openbot/desktop-driver'
+import { isDesktopEnabled } from './mode'
 
 export type DesktopPoint = { x: number; y: number }
 export type DesktopCursor = DesktopPoint
@@ -321,6 +322,11 @@ function configuredDriverArguments() {
 }
 
 function configuredProcessDriver(displayNumber: number | null | undefined): DesktopDriver {
+  if (!isDesktopEnabled()) {
+    return new UnavailableDesktopDriver(
+      'Computer Use is unavailable because desktop mode is disabled',
+    )
+  }
   const executable = process.env.OPENBOT_DESKTOP_DRIVER?.trim()
   if (!executable) return new UnavailableDesktopDriver()
 
@@ -363,6 +369,9 @@ export function createDesktopDriver(displayNumber?: number | null) {
 
 /** Checks host configuration without probing an agent-owned display. */
 export async function getDesktopDriverStatus(): Promise<DesktopDisplay> {
+  if (!isDesktopEnabled()) {
+    throw new DesktopDriverError('desktop_unavailable', 'Desktop mode is disabled')
+  }
   const executable = process.env.OPENBOT_DESKTOP_DRIVER?.trim()
   if (!executable) {
     throw new DesktopDriverError('desktop_unavailable', 'No local desktop driver is configured')
