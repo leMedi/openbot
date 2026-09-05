@@ -1,5 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
 import { getDesktopMode as getConfiguredDesktopMode } from '@openbot/agent'
+import { readInstalledVersion } from './version'
 
 const repo = process.env.OPENBOT_GITHUB_REPO ?? 'leMedi/openbot'
 const releasePattern = /^main-([0-9a-f]{12})$/
@@ -14,22 +15,8 @@ type UpdateStatus = {
   error?: string
 }
 
-async function installedVersion() {
-  const [{ readFile }, { default: path }] = await Promise.all([
-    import('node:fs/promises'),
-    import('node:path'),
-  ])
-  for (const file of [
-    path.join(process.cwd(), 'VERSION'),
-    '/opt/openbot/current/VERSION',
-  ]) {
-    try { return (await readFile(file, 'utf8')).trim() } catch { /* try next */ }
-  }
-  return process.env.OPENBOT_VERSION ?? 'development'
-}
-
 async function checkForUpdate(): Promise<UpdateStatus> {
-  const installed = await installedVersion()
+  const installed = await readInstalledVersion()
   try {
     const response = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=100`, {
       headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'openbot-update-check' },
@@ -88,11 +75,17 @@ export const checkServerUpdate = createServerFn({ method: 'POST' }).handler(refr
 export const startServerUpdate = createServerFn({ method: 'POST' }).handler(async () => {
   const update = cachedUpdate ?? await refreshUpdateCheck()
   if (!update.updateAvailable) throw new Error('No update is available')
-  const script = '/opt/openbot/current/update-debian.sh'
-  const { access } = await import('node:fs/promises')
-  try { await access(script) } catch { throw new Error('Automatic updates are only available on the Debian installation') }
-  const { spawn } = await import('node:child_process')
-  const child = spawn(script, [], { detached: true, stdio: 'ignore' })
+  const command = process.env.OPENBOT_UPDATE_COMMAND || '/opt/openbot/current/update-debian.sh'
+  const [{ access, constants }, { spawn }] = await Promise.all([
+    import('node:fs/promises'),
+    import('node:child_process'),
+  ])
+  try { await access(command, constants.X_OK) } catch { throw new Error('Automatic updates are not configured for this server') }
+  const child = spawn(command, [], { detached: true, stdio: 'ignore' })
+  await new Promise<void>((resolve, reject) => {
+    child.once('spawn', resolve)
+    child.once('error', reject)
+  })
   child.unref()
   return { started: true }
 })

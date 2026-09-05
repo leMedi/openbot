@@ -8,7 +8,9 @@ only the HTTP port is published.
 The image supports `linux/amd64` only. On every container start it downloads
 the latest `main-<commit>` OpenBot Debian prerelease from `leMedi/openbot`,
 verifies the published SHA-256 checksum, and activates it without invoking the
-systemd-oriented Debian installer.
+systemd-oriented Debian installer. Starting an update from the server settings
+restarts the container, which activates the latest release through the same
+startup path. This requires the configured `restart: unless-stopped` policy.
 
 ## Run with Compose
 

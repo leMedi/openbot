@@ -42,6 +42,7 @@ RUN useradd --uid 1000 --create-home --shell /bin/sh openbot \
     && install -d -o openbot -g openbot -m 0700 /run/openbot /var/lib/openbot
 
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/openbot-entrypoint
+COPY --chmod=0755 request-update.sh /usr/local/bin/openbot-request-update
 COPY --chmod=0755 start-agent-desktop.sh /usr/local/bin/start-agent-desktop
 
 ENV HOME=/home/openbot \
@@ -55,6 +56,7 @@ ENV HOME=/home/openbot \
     OPENBOT_GITHUB_REPO=leMedi/openbot \
     OPENBOT_PUBLIC_URL=http://localhost:3000 \
     OPENBOT_START_WINDOW=/usr/local/bin/start-agent-desktop \
+    OPENBOT_UPDATE_COMMAND=/usr/local/bin/openbot-request-update \
     HOST=0.0.0.0 \
     PORT=3000 \
     XDG_RUNTIME_DIR=/run/openbot

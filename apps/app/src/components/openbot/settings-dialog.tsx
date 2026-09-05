@@ -29,7 +29,12 @@ import {
   saveAiModelSettings,
 } from '@/server/providers'
 import { BotAvatar } from './bot-avatar'
-import { checkServerUpdate, getServerConfig, getServerUpdate, startServerUpdate } from '@/server/config'
+import {
+  checkServerUpdate,
+  getServerConfig,
+  getServerUpdate,
+  startServerUpdate,
+} from '@/server/config'
 
 type Tab = 'general' | 'providers' | 'server'
 
@@ -773,6 +778,9 @@ function ServerTab({ open }: { open: boolean }) {
   const [checking, setChecking] = useState(false)
   const [updating, setUpdating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const updateAbortRef = useRef<AbortController | null>(null)
+
+  useEffect(() => () => updateAbortRef.current?.abort(), [])
 
   async function check() {
     if (checking) return
@@ -797,7 +805,54 @@ function ServerTab({ open }: { open: boolean }) {
   async function update() {
     if (!status?.updateAvailable || updating) return
     setUpdating(true); setError(null)
-    try { await startServerUpdate() } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not start update'); setUpdating(false) }
+    const previousSha = status.installedVersion.slice(0, 12).toLowerCase()
+    const controller = new AbortController()
+    updateAbortRef.current?.abort()
+    updateAbortRef.current = controller
+    try {
+      const deadline = Date.now() + 180_000
+      let startTimeout: number | undefined
+      try {
+        await Promise.race([
+          startServerUpdate(),
+          new Promise<void>((resolve) => {
+            startTimeout = window.setTimeout(resolve, 15_000)
+          }),
+        ])
+      } finally {
+        window.clearTimeout(startTimeout)
+      }
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2_000))
+        if (controller.signal.aborted) return
+        if (Date.now() >= deadline) break
+        try {
+          const response = await fetch('/api/server-version', {
+            cache: 'no-store',
+            signal: AbortSignal.any([
+              controller.signal,
+              AbortSignal.timeout(Math.max(1, Math.min(5_000, deadline - Date.now()))),
+            ]),
+          })
+          if (!response.ok) continue
+          const { installedVersion } = await response.json() as { installedVersion: string }
+          if (installedVersion.slice(0, 12).toLowerCase() !== previousSha) {
+            window.location.reload()
+            return
+          }
+        } catch {
+          // The server is expected to be unavailable briefly while it restarts.
+        }
+      }
+      setError('The server did not come back with the update within 3 minutes')
+      setUpdating(false)
+    } catch (cause) {
+      if (controller.signal.aborted) return
+      setError(cause instanceof Error ? cause.message : 'Could not start update')
+      setUpdating(false)
+    } finally {
+      if (updateAbortRef.current === controller) updateAbortRef.current = null
+    }
   }
 
   return (
