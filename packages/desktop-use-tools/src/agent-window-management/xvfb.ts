@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { closeSync, openSync } from 'node:fs'
-import { access, readFile } from 'node:fs/promises'
+import { access, readFile, unlink } from 'node:fs/promises'
 import { createConnection, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, isAbsolute, join } from 'node:path'
@@ -52,19 +52,9 @@ async function isManagedDisplayProcess(
   }
 }
 
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path)
-    return true
-  } catch (error) {
-    if (isNodeError(error, 'ENOENT')) return false
-    throw error
-  }
-}
-
-async function canConnectToDisplay(displayNumber: number): Promise<boolean> {
+async function canConnectToDisplay(displayNumber: number, socketPath = `/tmp/.X11-unix/X${displayNumber}`): Promise<boolean> {
   return new Promise((resolve) => {
-    const socket = createConnection(`/tmp/.X11-unix/X${displayNumber}`)
+    const socket = createConnection(socketPath)
     let settled = false
     const finish = (connected: boolean) => {
       if (settled) return
@@ -79,9 +69,56 @@ async function canConnectToDisplay(displayNumber: number): Promise<boolean> {
   })
 }
 
-async function displayIsOccupied(displayNumber: number): Promise<boolean> {
-  if (await pathExists(`/tmp/.X${displayNumber}-lock`)) return true
-  return canConnectToDisplay(displayNumber)
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch (error) {
+    if (isNodeError(error, 'ENOENT')) return false
+    throw error
+  }
+}
+
+export async function displayIsOccupied(
+  displayNumber: number,
+  executable: string,
+  containerOverride?: boolean,
+  paths = {
+    lock: `/tmp/.X${displayNumber}-lock`,
+    socket: `/tmp/.X11-unix/X${displayNumber}`,
+  },
+): Promise<boolean> {
+  const lockExists = await pathExists(paths.lock)
+  const runningInContainer = containerOverride ?? await pathExists('/.dockerenv')
+  if (!runningInContainer) return lockExists || canConnectToDisplay(displayNumber, paths.socket)
+
+  if (lockExists) {
+    try {
+      const value = (await readFile(paths.lock, 'utf8')).trim()
+      if (/^[1-9]\d*$/.test(value)) {
+        const lockPid = Number(value)
+        if (
+          Number.isSafeInteger(lockPid) &&
+          await isManagedDisplayProcess(lockPid, displayNumber, executable)
+        ) return true
+      }
+    } catch (error) {
+      if (!isNodeError(error, 'ENOENT')) return true
+    }
+  }
+  if (await canConnectToDisplay(displayNumber, paths.socket)) return true
+
+  try {
+    await unlink(paths.lock)
+  } catch (error) {
+    if (!isNodeError(error, 'ENOENT')) return true
+  }
+  try {
+    await unlink(paths.socket)
+  } catch (error) {
+    if (!isNodeError(error, 'ENOENT')) return true
+  }
+  return false
 }
 
 async function acquireOperationLock(
@@ -214,7 +251,7 @@ export function systemDependencies(
     acquireOperationLock,
     isManagedDisplayProcess: (pid, displayNumber) =>
       isManagedDisplayProcess(pid, displayNumber, executable),
-    isDisplayOccupied: displayIsOccupied,
+    isDisplayOccupied: (displayNumber) => displayIsOccupied(displayNumber, executable),
     launchXvfb: (displayNumber, outputPath) =>
       launchXvfb(displayNumber, outputPath, executable, timeoutMs),
   }
