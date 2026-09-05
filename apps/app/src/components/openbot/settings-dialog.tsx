@@ -51,6 +51,7 @@ export function SettingsDialog({
   onProfileSaved,
   providerConfiguration,
   onProvidersChanged,
+  onServerUpdateStatus,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -58,6 +59,7 @@ export function SettingsDialog({
   onProfileSaved: (profile: Profile) => void
   providerConfiguration: ProviderConfigurationDto & { setting: Setting }
   onProvidersChanged: () => void
+  onServerUpdateStatus: (updateAvailable: boolean) => void
 }) {
   const [tab, setTab] = useState<Tab>('general')
   const [displayProfile, setDisplayProfile] = useState(profile)
@@ -123,7 +125,7 @@ export function SettingsDialog({
               onChanged={onProvidersChanged}
             />
           )}
-           {tab === 'server' && <ServerTab open={open} />}
+          {tab === 'server' && <ServerTab open={open} onUpdateStatus={onServerUpdateStatus} />}
         </div>
       </DialogContent>
     </Dialog>
@@ -771,7 +773,13 @@ function providerHue(providerId: string) {
   return `hsl(${Math.abs(hash) % 360} 42% 48%)`
 }
 
-function ServerTab({ open }: { open: boolean }) {
+function ServerTab({
+  open,
+  onUpdateStatus,
+}: {
+  open: boolean
+  onUpdateStatus: (updateAvailable: boolean) => void
+}) {
   const [status, setStatus] = useState<Awaited<ReturnType<typeof getServerUpdate>> | null>(null)
   const [host, setHost] = useState('—')
   const [latency, setLatency] = useState<number | null>(null)
@@ -788,18 +796,24 @@ function ServerTab({ open }: { open: boolean }) {
     const started = performance.now()
     try {
       const [nextStatus, config] = await Promise.all([checkServerUpdate(), getServerConfig()])
-      setStatus(nextStatus); setHost(config.host); setLatency(Math.round(performance.now() - started))
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not check the server') }
+      setStatus(nextStatus); onUpdateStatus(nextStatus.updateAvailable); setHost(config.host); setLatency(Math.round(performance.now() - started))
+    } catch (cause) {
+      onUpdateStatus(false)
+      setError(cause instanceof Error ? cause.message : 'Could not check the server')
+    }
     finally { setChecking(false) }
   }
 
   useEffect(() => {
     if (!open) return
     void Promise.all([getServerUpdate(), getServerConfig()]).then(([nextStatus, config]) => {
-      setStatus(nextStatus); setHost(config.host)
+      setStatus(nextStatus); onUpdateStatus(nextStatus.updateAvailable); setHost(config.host)
       const started = performance.now()
       return getServerConfig().then(() => setLatency(Math.round(performance.now() - started)))
-    }).catch((cause) => setError(cause instanceof Error ? cause.message : 'Could not load server status'))
+    }).catch((cause) => {
+      onUpdateStatus(false)
+      setError(cause instanceof Error ? cause.message : 'Could not load server status')
+    })
   }, [open])
 
   async function update() {

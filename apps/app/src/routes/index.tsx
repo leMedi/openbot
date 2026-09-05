@@ -95,6 +95,7 @@ function OpenBot() {
 
   const [pluginsOpen, setPluginsOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [updateAvailable, setUpdateAvailable] = useState(false)
   const [newConvoOpen, setNewConvoOpen] = useState(false)
   const [botDialog, setBotDialog] = useState<{ open: boolean; agent: Agent | null }>({
     open: false,
@@ -306,6 +307,7 @@ function OpenBot() {
         }
         onOpenPlugins={() => setPluginsOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
+        updateAvailable={updateAvailable}
         onRenameConversation={(id) => setRenameTarget(findConversation(id))}
         onToggleUnread={toggleUnread}
         onClearConversation={(id) => setClearTarget(findConversation(id))}
@@ -459,6 +461,7 @@ function OpenBot() {
         onProfileSaved={() => router.invalidate()}
         providerConfiguration={providers}
         onProvidersChanged={() => void router.invalidate()}
+        onServerUpdateStatus={setUpdateAvailable}
       />
       <NewConversationDialog
         open={newConvoOpen}

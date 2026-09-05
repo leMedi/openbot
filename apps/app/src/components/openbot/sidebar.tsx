@@ -56,6 +56,7 @@ type SidebarProps = {
   onDeleteGroup: (groupId: string) => void
   onOpenPlugins: () => void
   onOpenSettings: () => void
+  updateAvailable: boolean
   onRenameConversation: (id: string) => void
   onToggleUnread: (id: string) => void
   onClearConversation: (id: string) => void
@@ -75,6 +76,7 @@ export function Sidebar({
   onDeleteGroup,
   onOpenPlugins,
   onOpenSettings,
+  updateAvailable,
   onRenameConversation,
   onToggleUnread,
   onClearConversation,
@@ -183,10 +185,12 @@ export function Sidebar({
               className="relative"
             >
               <Settings className="size-4" />
-              <span
-                title="Upgrade available"
-                className="absolute top-0.5 right-0.5 size-2 rounded-full border border-sidebar bg-primary"
-              />
+              {updateAvailable && (
+                <span
+                  title="Upgrade available"
+                  className="absolute top-0.5 right-0.5 size-2 rounded-full border border-sidebar bg-primary"
+                />
+              )}
             </Button>
           </div>
         </>
@@ -250,12 +254,14 @@ export function Sidebar({
             >
               <Settings className="size-4 text-muted-foreground" />
               <span className="flex-1 text-left">Settings</span>
-              <span
-                title="Upgrade available"
-                className="flex size-4 items-center justify-center rounded-full bg-primary text-white"
-              >
-                <ArrowUp className="size-2.5" />
-              </span>
+              {updateAvailable && (
+                <span
+                  title="Upgrade available"
+                  className="flex size-4 items-center justify-center rounded-full bg-primary text-white"
+                >
+                  <ArrowUp className="size-2.5" />
+                </span>
+              )}
             </button>
           </div>
         </>
