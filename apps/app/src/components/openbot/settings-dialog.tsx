@@ -1,6 +1,19 @@
-import { useEffect, useState } from 'react'
-import type { Profile } from '@openbot/db'
-import { ArrowUp, Plus, Server, SlidersHorizontal, Sun } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import type {
+  ProviderAuthFlowEvent,
+  ProviderConfigurationDto,
+  ProviderDto,
+} from '@openbot/agent'
+import type { Profile, Setting } from '@openbot/db'
+import {
+  ArrowUp,
+  ExternalLink,
+  Plus,
+  RefreshCw,
+  Server,
+  SlidersHorizontal,
+  Sun,
+} from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
@@ -8,8 +21,14 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { saveUserProfile } from '@/server/profile'
+import {
+  disconnectAiProvider,
+  getAiProviders,
+  refreshAiProviders,
+  saveAiModelSettings,
+} from '@/server/providers'
 import { BotAvatar } from './bot-avatar'
-import { PROVIDERS, SERVER_ROWS, type Provider } from './data'
+import { SERVER_ROWS } from './data'
 
 type Tab = 'general' | 'providers' | 'server'
 
@@ -24,11 +43,15 @@ export function SettingsDialog({
   onOpenChange,
   profile,
   onProfileSaved,
+  providerConfiguration,
+  onProvidersChanged,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   profile: Profile
   onProfileSaved: (profile: Profile) => void
+  providerConfiguration: ProviderConfigurationDto & { setting: Setting }
+  onProvidersChanged: () => void
 }) {
   const [tab, setTab] = useState<Tab>('general')
   const [displayProfile, setDisplayProfile] = useState(profile)
@@ -88,7 +111,12 @@ export function SettingsDialog({
           <div className={tab === 'general' ? undefined : 'hidden'}>
             <GeneralTab open={open} profile={displayProfile} onSaved={profileSaved} />
           </div>
-          {tab === 'providers' && <ProvidersTab />}
+          {tab === 'providers' && (
+            <ProvidersTab
+              initialConfiguration={providerConfiguration}
+              onChanged={onProvidersChanged}
+            />
+          )}
           {tab === 'server' && <ServerTab />}
         </div>
       </DialogContent>
@@ -228,38 +256,282 @@ function GeneralTab({
   )
 }
 
-function ProvidersTab() {
-  const [providers, setProviders] = useState(PROVIDERS)
-  const [keyEntryId, setKeyEntryId] = useState<string | null>(null)
+type ProviderView = ProviderConfigurationDto & { setting: Setting }
 
-  function setConnected(id: string, connected: boolean) {
-    setProviders((all) => all.map((p) => (p.id === id ? { ...p, connected } : p)))
-    setKeyEntryId(null)
+type ActiveAuthFlow = {
+  providerId: string
+  providerName: string
+  flowId: string
+  prompt?: Extract<ProviderAuthFlowEvent, { type: 'prompt' }>
+  notifications: Extract<ProviderAuthFlowEvent, { type: 'notification' }>[]
+  error?: string
+}
+
+function ProvidersTab({
+  initialConfiguration,
+  onChanged,
+}: {
+  initialConfiguration: ProviderView
+  onChanged: () => void
+}) {
+  const [configuration, setConfiguration] = useState(initialConfiguration)
+  const [authChoicesFor, setAuthChoicesFor] = useState<string | null>(null)
+  const [flow, setFlow] = useState<ActiveAuthFlow | null>(null)
+  const [answer, setAnswer] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const eventSourceRef = useRef<EventSource | null>(null)
+  const flowIdRef = useRef<string | null>(null)
+
+  useEffect(() => setConfiguration(initialConfiguration), [initialConfiguration])
+  useEffect(() => () => {
+    eventSourceRef.current?.close()
+    const flowId = flowIdRef.current
+    if (flowId) void fetch(`/api/provider-auth-flows/${flowId}`, { method: 'DELETE' })
+  }, [])
+
+  const connected = configuration.providers.filter((provider) => provider.connected)
+  const available = configuration.providers.filter((provider) => !provider.connected)
+  const modelOptions = configuration.models
+
+  async function reload() {
+    const updated = await getAiProviders()
+    setConfiguration(updated)
+    onChanged()
   }
 
-  const connected = providers.filter((p) => p.connected)
-  const popular = providers.filter((p) => !p.connected)
+  async function startLogin(provider: ProviderDto, authType: 'api_key' | 'oauth') {
+    setBusy(true)
+    setError(null)
+    setAuthChoicesFor(null)
+    try {
+      const response = await fetch(`/api/providers/${encodeURIComponent(provider.id)}/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ authType }),
+      })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error ?? 'Provider login could not start')
+
+      const nextFlow: ActiveAuthFlow = {
+        providerId: provider.id,
+        providerName: provider.name,
+        flowId: body.flowId,
+        notifications: [],
+      }
+      setFlow(nextFlow)
+      flowIdRef.current = body.flowId
+      const source = new EventSource(`/api/provider-auth-flows/${body.flowId}/stream`)
+      eventSourceRef.current = source
+      source.onmessage = (message) => {
+        const event = JSON.parse(message.data) as ProviderAuthFlowEvent
+        if (event.type === 'prompt') {
+          setAnswer('')
+          setFlow((current) => current ? { ...current, prompt: event } : current)
+        } else if (event.type === 'prompt_answered') {
+          setFlow((current) => current?.prompt?.promptId === event.promptId
+            ? { ...current, prompt: undefined }
+            : current)
+        } else if (event.type === 'notification') {
+          setFlow((current) => current
+            ? { ...current, notifications: [...current.notifications, event] }
+            : current)
+        } else if (event.type === 'complete') {
+          source.close()
+          eventSourceRef.current = null
+          flowIdRef.current = null
+          setFlow(null)
+          void reload().catch((cause) => setError(
+            cause instanceof Error ? cause.message : 'Provider list could not be reloaded',
+          ))
+        } else if (event.type === 'error') {
+          source.close()
+          eventSourceRef.current = null
+          flowIdRef.current = null
+          setFlow((current) => current ? { ...current, error: event.message } : current)
+        }
+      }
+      source.onerror = () => {
+        if (eventSourceRef.current !== source) return
+        source.close()
+        eventSourceRef.current = null
+        setFlow((current) => current
+          ? { ...current, error: 'The provider login connection closed unexpectedly' }
+          : current)
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Provider login could not start')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function submitPrompt() {
+    if (!flow?.prompt) return
+    setBusy(true)
+    try {
+      const response = await fetch(`/api/provider-auth-flows/${flow.flowId}/respond`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ promptId: flow.prompt.promptId, value: answer }),
+      })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error ?? 'Login response was rejected')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Login response was rejected')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function cancelFlow() {
+    if (!flow) return
+    eventSourceRef.current?.close()
+    eventSourceRef.current = null
+    flowIdRef.current = null
+    await fetch(`/api/provider-auth-flows/${flow.flowId}`, { method: 'DELETE' })
+    setFlow(null)
+  }
+
+  async function disconnect(providerId: string) {
+    setBusy(true)
+    setError(null)
+    try {
+      const catalog = await disconnectAiProvider({ data: { providerId } })
+      setConfiguration((current) => ({ ...catalog, setting: current.setting }))
+      onChanged()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Provider could not be disconnected')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function saveDefaults() {
+    setBusy(true)
+    setError(null)
+    try {
+      const setting = await saveAiModelSettings({
+        data: {
+          defaultAgentModel: configuration.setting.defaultAgentModel,
+          orchestratorModel: configuration.setting.orchestratorModel,
+        },
+      })
+      setConfiguration((current) => ({ ...current, setting }))
+      onChanged()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Model defaults could not be saved')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <div className="flex max-w-2xl flex-col gap-3.5">
+      <div className="flex items-center">
+        <h3 className="flex-1 text-sm font-semibold text-foreground/85">Model defaults</h3>
+        <Button
+          size="xs"
+          variant="ghost"
+          disabled={busy}
+          onClick={() => {
+            setBusy(true)
+            setError(null)
+            void refreshAiProviders({ data: {} })
+              .then((catalog) => setConfiguration((current) => ({
+                ...catalog,
+                setting: current.setting,
+              })))
+              .then(onChanged)
+              .catch((cause) => setError(
+                cause instanceof Error ? cause.message : 'Model catalogs could not be refreshed',
+              ))
+              .finally(() => setBusy(false))
+          }}
+        >
+          <RefreshCw data-icon="inline-start" /> Refresh catalogs
+        </Button>
+      </div>
+      <div className="grid grid-cols-2 gap-3 rounded-xl bg-card px-5 py-4">
+        <ModelDefaultField
+          label="Default agent"
+          value={configuration.setting.defaultAgentModel}
+          models={modelOptions}
+          onChange={(value) => setConfiguration((current) => ({
+            ...current,
+            setting: { ...current.setting, defaultAgentModel: value },
+          }))}
+        />
+        <ModelDefaultField
+          label="Group orchestrator"
+          value={configuration.setting.orchestratorModel}
+          models={modelOptions}
+          onChange={(value) => setConfiguration((current) => ({
+            ...current,
+            setting: { ...current.setting, orchestratorModel: value },
+          }))}
+        />
+        <div className="col-span-2 flex justify-end">
+          <Button size="sm" disabled={busy || modelOptions.length === 0} onClick={saveDefaults}>
+            Save defaults
+          </Button>
+        </div>
+      </div>
+
       <h3 className="text-sm font-semibold text-foreground/85">Connected providers</h3>
       {connected.length > 0 ? (
         <div className="rounded-xl bg-card px-5">
-          {connected.map((p) => (
-            <div key={p.id} className="flex items-center gap-3 border-b py-4 last:border-b-0">
-              <BotAvatar name={p.name} color={p.hue} className="size-6.5 text-xs" />
-              <span className="text-sm font-semibold">{p.name}</span>
-              <Badge variant="outline" className="text-[10px]">
-                {p.tag}
-              </Badge>
-              <span className="flex-1" />
-              <button
-                type="button"
-                onClick={() => setConnected(p.id, false)}
-                className="text-xs text-muted-foreground hover:text-destructive"
-              >
-                Disconnect
-              </button>
+          {connected.map((provider) => (
+            <div key={provider.id} className="border-b py-4 last:border-b-0">
+              <div className="flex items-center gap-3">
+                <BotAvatar name={provider.name} color={providerHue(provider.id)} className="size-6.5 text-xs" />
+                <span className="text-sm font-semibold">{provider.name}</span>
+                <Badge variant="outline" className="text-[10px]">
+                  {provider.connectionSource ?? 'connected'}
+                </Badge>
+                <span className="text-[10px] text-muted-foreground">
+                  {provider.modelCount} models
+                </span>
+                <span className="flex-1" />
+                {provider.authMethods.length > 0 && (
+                  <button
+                    type="button"
+                    disabled={busy || !!flow}
+                    onClick={() => setAuthChoicesFor((current) =>
+                      current === provider.id ? null : provider.id
+                    )}
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    {provider.connectionSource === 'stored' ? 'Reconnect' : 'Override'}
+                  </button>
+                )}
+                {provider.connectionSource === 'stored' ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void disconnect(provider.id)}
+                    className="text-xs text-muted-foreground hover:text-destructive"
+                  >
+                    Disconnect
+                  </button>
+                ) : provider.authMethods.length === 0 ? (
+                  <span className="text-[10px] text-muted-foreground">Managed externally</span>
+                ) : null}
+              </div>
+              {authChoicesFor === provider.id && (
+                <div className="mt-2.5 ml-9 flex flex-wrap gap-2">
+                  {provider.authMethods.map((method) => (
+                    <Button
+                      key={method.type}
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void startLogin(provider, method.type)}
+                    >
+                      {method.label}
+                    </Button>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -269,68 +541,228 @@ function ProvidersTab() {
         </div>
       )}
 
-      <h3 className="mt-3 text-sm font-semibold text-foreground/85">Popular providers</h3>
+      <h3 className="mt-3 text-sm font-semibold text-foreground/85">Available providers</h3>
       <div className="rounded-xl bg-card px-5">
-        {popular.map((p) => (
+        {available.map((provider) => (
           <ProviderRow
-            key={p.id}
-            provider={p}
-            keyEntry={keyEntryId === p.id}
-            onStart={() => (p.auth === 'key' ? setKeyEntryId(p.id) : setConnected(p.id, true))}
-            onSave={() => setConnected(p.id, true)}
-            onCancel={() => setKeyEntryId(null)}
+            key={provider.id}
+            provider={provider}
+            choosing={authChoicesFor === provider.id}
+            busy={busy || !!flow}
+            onChoose={() => setAuthChoicesFor((current) =>
+              current === provider.id ? null : provider.id
+            )}
+            onLogin={(authType) => void startLogin(provider, authType)}
           />
         ))}
       </div>
+      {flow && (
+        <AuthFlowPanel
+          flow={flow}
+          answer={answer}
+          busy={busy}
+          onAnswer={setAnswer}
+          onSubmit={() => void submitPrompt()}
+          onCancel={() => void cancelFlow()}
+        />
+      )}
+      {(error || configuration.error) && (
+        <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+          {error ?? configuration.error}
+        </p>
+      )}
     </div>
   )
 }
 
 function ProviderRow({
-  provider: p,
-  keyEntry,
-  onStart,
-  onSave,
-  onCancel,
+  provider,
+  choosing,
+  busy,
+  onChoose,
+  onLogin,
 }: {
-  provider: Provider
-  keyEntry: boolean
-  onStart: () => void
-  onSave: () => void
-  onCancel: () => void
+  provider: ProviderDto
+  choosing: boolean
+  busy: boolean
+  onChoose: () => void
+  onLogin: (authType: 'api_key' | 'oauth') => void
 }) {
   return (
     <div className="flex items-start gap-3 border-b py-4 last:border-b-0">
-      <BotAvatar name={p.name} color={p.hue} className="mt-0.5 size-6.5 text-xs" />
+      <BotAvatar
+        name={provider.name}
+        color={providerHue(provider.id)}
+        className="mt-0.5 size-6.5 text-xs"
+      />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold">{p.name}</span>
-          {p.badge && (
-            <Badge variant="outline" className="text-[10px]">
-              {p.badge}
-            </Badge>
-          )}
+          <span className="text-sm font-semibold">{provider.name}</span>
+          <Badge variant="outline" className="text-[10px]">{provider.modelCount} models</Badge>
         </div>
-        <p className="mt-1 text-xs leading-normal text-muted-foreground">{p.desc}</p>
-        {keyEntry && (
-          <div className="mt-2.5 flex gap-2">
-            <Input autoFocus placeholder="sk-…" className="font-mono text-xs" />
-            <Button size="sm" onClick={onSave}>
-              Save
-            </Button>
-            <Button size="sm" variant="ghost" onClick={onCancel}>
-              Cancel
-            </Button>
+        <p className="mt-1 text-xs leading-normal text-muted-foreground">
+          {provider.authMethods.length > 0
+            ? provider.authMethods.map((method) => method.label).join(' or ')
+            : 'Requires credentials configured on the server.'}
+        </p>
+        {choosing && provider.authMethods.length > 0 && (
+          <div className="mt-2.5 flex flex-wrap gap-2">
+            {provider.authMethods.map((method) => (
+              <Button key={method.type} size="sm" variant="outline" onClick={() => onLogin(method.type)}>
+                {method.label}
+              </Button>
+            ))}
           </div>
         )}
       </div>
-      {!keyEntry && (
-        <Button size="sm" variant="outline" onClick={onStart}>
+      {!choosing && provider.authMethods.length > 0 && (
+        <Button size="sm" variant="outline" disabled={busy} onClick={onChoose}>
           <Plus data-icon="inline-start" /> Connect
         </Button>
       )}
     </div>
   )
+}
+
+function ModelDefaultField({
+  label,
+  value,
+  models,
+  onChange,
+}: {
+  label: string
+  value: string
+  models: ProviderConfigurationDto['models']
+  onChange: (value: string) => void
+}) {
+  return (
+    <label className="flex min-w-0 flex-col gap-1.5 text-xs font-medium">
+      {label}
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-8 min-w-0 rounded-lg border border-input bg-transparent px-2 text-xs outline-none dark:bg-input/30"
+      >
+        {value && !models.some((model) => model.key === value) && (
+          <option value={value}>{value} (unavailable)</option>
+        )}
+        {models.map((model) => (
+          <option key={model.key} value={model.key}>
+            {model.providerName} — {model.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
+function AuthFlowPanel({
+  flow,
+  answer,
+  busy,
+  onAnswer,
+  onSubmit,
+  onCancel,
+}: {
+  flow: ActiveAuthFlow
+  answer: string
+  busy: boolean
+  onAnswer: (answer: string) => void
+  onSubmit: () => void
+  onCancel: () => void
+}) {
+  const prompt = flow.prompt?.prompt
+  return (
+    <div className="rounded-xl border bg-card px-5 py-4">
+      <div className="flex items-center gap-2">
+        <span className="flex-1 text-sm font-semibold">Connect {flow.providerName}</span>
+        <Button size="xs" variant="ghost" onClick={onCancel}>Cancel</Button>
+      </div>
+      <div className="mt-3 flex flex-col gap-2 text-xs text-muted-foreground">
+        {flow.notifications.map(({ notification }, index) => (
+          <div key={`${notification.type}-${index}`}>
+            {notification.type === 'auth_url' ? (
+              <div className="flex flex-col gap-1">
+                {notification.instructions && <span>{notification.instructions}</span>}
+                <a
+                  href={notification.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-info hover:underline"
+                >
+                  Open sign-in page <ExternalLink className="size-3" />
+                </a>
+              </div>
+            ) : notification.type === 'device_code' ? (
+              <div>
+                Open <a className="text-info hover:underline" href={notification.verificationUri} target="_blank" rel="noreferrer">{notification.verificationUri}</a>
+                {' '}and enter <code className="rounded bg-muted px-1 py-0.5 text-foreground">{notification.userCode}</code>
+              </div>
+            ) : notification.type === 'info' ? (
+              <div className="flex flex-col gap-1">
+                <span>{notification.message}</span>
+                {notification.links?.map((link) => (
+                  <a
+                    key={link.url}
+                    href={link.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-info hover:underline"
+                  >
+                    {link.label ?? link.url} <ExternalLink className="size-3" />
+                  </a>
+                ))}
+              </div>
+            ) : (
+              <div>{notification.message}</div>
+            )}
+          </div>
+        ))}
+        {prompt && (
+          <div className="mt-1 flex flex-col gap-2">
+            <label className="font-medium text-foreground">{prompt.message}</label>
+            {prompt.type === 'select' ? (
+              <select
+                autoFocus
+                value={answer}
+                onChange={(event) => onAnswer(event.target.value)}
+                className="h-8 rounded-lg border border-input bg-transparent px-2 text-xs text-foreground dark:bg-input/30"
+              >
+                <option value="">Choose…</option>
+                {prompt.options.map((option) => (
+                  <option key={option.id} value={option.id}>{option.label}</option>
+                ))}
+              </select>
+            ) : (
+              <Input
+                autoFocus
+                type={prompt.type === 'secret' ? 'password' : 'text'}
+                value={answer}
+                placeholder={prompt.placeholder}
+                onChange={(event) => onAnswer(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && answer) onSubmit()
+                }}
+                className="font-mono text-xs"
+              />
+            )}
+            {prompt.type === 'select' && answer && (
+              <p>{prompt.options.find((option) => option.id === answer)?.description}</p>
+            )}
+            <div><Button size="sm" disabled={busy || !answer} onClick={onSubmit}>Continue</Button></div>
+          </div>
+        )}
+        {!prompt && !flow.error && <div>Waiting for the provider…</div>}
+        {flow.error && <div className="text-destructive">{flow.error}</div>}
+      </div>
+    </div>
+  )
+}
+
+function providerHue(providerId: string) {
+  let hash = 0
+  for (const character of providerId) hash = (hash * 31 + character.charCodeAt(0)) | 0
+  return `hsl(${Math.abs(hash) % 360} 42% 48%)`
 }
 
 function ServerTab() {

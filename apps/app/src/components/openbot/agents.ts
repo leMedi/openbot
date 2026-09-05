@@ -9,15 +9,13 @@ export function agentAvatarUrl(agent: Agent) {
   return `/api/agents/${agent.id}/avatar?v=${encodeURIComponent(agent.avatarFileId)}`
 }
 
-export function botFromAgent(agent: Agent, model: string): Bot {
+export function botFromAgent(agent: Agent, defaultModel: string): Bot {
   return {
     id: agent.id,
     name: agent.name,
     color: agent.avatarColor,
     shape: agent.avatarShape,
-    // The server-configured model applies to every agent until the model
-    // providers and listing feature lands.
-    model,
+    model: agent.defaultModel ?? defaultModel,
     prompt: agent.description,
     grants: [],
     memory: '',

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ModelDto } from '@openbot/agent'
 import type { Agent, Conversation, SafeMcpAccount, SafeMcpServer } from '@openbot/db'
-import { ImageUp, Lock, Trash2 } from 'lucide-react'
+import { ImageUp, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -28,7 +29,8 @@ export function BotDialog({
   open,
   onOpenChange,
   agent,
-  serverModel,
+  models,
+  defaultAgentModel,
   mcpServers,
   mcpAccounts,
   grantedAccountIds,
@@ -39,8 +41,8 @@ export function BotDialog({
   onOpenChange: (open: boolean) => void
   /** When set, the dialog edits an existing agent; otherwise it creates one. */
   agent: Agent | null
-  /** Server-configured model (OPENBOT_AI_MODEL); read-only until model providers land. */
-  serverModel: string
+  models: ModelDto[]
+  defaultAgentModel: string
   mcpServers: SafeMcpServer[]
   mcpAccounts: SafeMcpAccount[]
   grantedAccountIds: string[]
@@ -51,6 +53,7 @@ export function BotDialog({
   const editing = !!agent
   const [name, setName] = useState(agent?.name ?? '')
   const [description, setDescription] = useState(agent?.description ?? '')
+  const [defaultModel, setDefaultModel] = useState(agent?.defaultModel ?? '')
   const [notifyOnUpdates, setNotifyOnUpdates] = useState(agent?.notifyOnUpdates ?? true)
   const [hiddenFromSidebar, setHiddenFromSidebar] = useState(
     agent?.hiddenFromSidebar ?? false,
@@ -110,6 +113,7 @@ export function BotDialog({
         description,
         avatarShape: shape.id,
         avatarColor: color,
+        defaultModel: defaultModel || null,
         notifyOnUpdates,
         hiddenFromSidebar,
       }
@@ -294,17 +298,23 @@ export function BotDialog({
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label className="text-[11px] font-semibold text-muted-foreground">Model</Label>
-                <div
-                  title="Configured by the server (OPENBOT_AI_MODEL)"
-                  className="flex h-8 cursor-not-allowed items-center gap-2 rounded-lg border border-input bg-muted/40 px-2.5 text-sm text-muted-foreground dark:bg-input/20"
+                <select
+                  value={defaultModel}
+                  onChange={(event) => setDefaultModel(event.target.value)}
+                  className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
                 >
-                  <span className="flex-1 truncate text-left">
-                    {serverModel || 'Not configured'}
-                  </span>
-                  <Lock className="size-3 shrink-0" />
-                </div>
+                  <option value="">Use default ({defaultAgentModel})</option>
+                  {models.map((model) => (
+                    <option key={model.key} value={model.key}>
+                      {model.providerName} — {model.name}
+                    </option>
+                  ))}
+                  {defaultModel && !models.some((model) => model.key === defaultModel) && (
+                    <option value={defaultModel}>{defaultModel} (unavailable)</option>
+                  )}
+                </select>
                 <p className="text-[10px] leading-normal text-muted-foreground/70">
-                  Set by the server. Model selection is coming with providers.
+                  Connected providers determine which models are available.
                 </p>
               </div>
             </div>

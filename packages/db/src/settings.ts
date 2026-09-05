@@ -14,3 +14,16 @@ export async function getSetting() {
   if (!current) throw new Error('Installation settings are missing')
   return current
 }
+
+export async function updateSettingModels(input: {
+  defaultAgentModel: string
+  orchestratorModel: string
+}) {
+  const [updated] = await db
+    .update(setting)
+    .set(input)
+    .where(eq(setting.id, SETTING_ID))
+    .returning()
+  if (!updated) throw new Error('Installation settings are missing')
+  return updated
+}

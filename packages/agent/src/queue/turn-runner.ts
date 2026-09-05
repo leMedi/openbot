@@ -13,6 +13,7 @@ import {
   getConversation,
   getGroup,
   getProfile,
+  getSetting,
   getTurn,
   type Group,
   listConversationMessages,
@@ -39,7 +40,11 @@ import {
   createMcpToolsForTurn,
   type McpToolRegistry,
 } from '@openbot/plugins'
-import { getAiConfig, getOpenbotModel, piAgentDirectory } from '../ai'
+import {
+  formatModelReference,
+  piAgentDirectory,
+  resolveConfiguredModel,
+} from '../ai'
 import { createDesktopDriver } from '../desktop/driver'
 import {
   computerApprovalFromWaitingState,
@@ -47,6 +52,7 @@ import {
 } from '../desktop/runtime'
 import { prepareConversationTurn } from '../prompt/assembly'
 import type { ConversationPromptContext } from '../prompt/system'
+import { parseOrchestratorAgentIds } from '../orchestration'
 import {
   agentToolDefinitions,
   backgroundToolDefinitions,
@@ -69,11 +75,13 @@ export type TurnStreamEvent =
   | { type: 'waiting'; turnId: string; state: WaitingState }
   | { type: 'error'; message: string; status?: 'failed' | 'cancelled' }
 
+type ActiveTurnEvent = TurnStreamEvent | { type: 'handoff' }
+
 type ActiveTurn = {
   delivered: ConversationMessage[]
   sendMessageCount: number
   controller: AbortController
-  subscribers: Set<(event: TurnStreamEvent) => void>
+  subscribers: Set<(event: ActiveTurnEvent) => void>
   /** Set once the pi session exists; cancellation aborts the running loop. */
   abortSession?: () => Promise<void>
 }
@@ -177,7 +185,16 @@ async function executeTurn(turnId: string) {
       ? { kind: 'group', group, members: members ?? [] }
       : { kind: 'private' }
 
-    const config = getAiConfig()
+    const setting = await getSetting()
+    const requestedModel = agent.defaultModel ?? setting.defaultAgentModel
+    const selectedModel = await resolveConfiguredModel(requestedModel)
+    if (!selectedModel) {
+      throw new Error(
+        `Model ${requestedModel} is unavailable. Connect its provider or choose another model.`,
+      )
+    }
+    const { runtime: modelRuntime, model } = selectedModel
+    const modelKey = formatModelReference({ provider: model.provider, modelId: model.id })
     const waitingState = claimed.waitingStateJson
       ? waitingStateSchema.parse(claimed.waitingStateJson)
       : undefined
@@ -344,8 +361,8 @@ async function executeTurn(turnId: string) {
 
     // Historical snapshot of what this execution actually used.
     await recordTurnExecution(turnId, {
-      modelProvider: 'pi',
-      modelId: config.model,
+      modelProvider: model.provider,
+      modelId: model.id,
       effectiveTools: {
         version: 1,
         tools: [
@@ -358,7 +375,7 @@ async function executeTurn(turnId: string) {
       runtimeContext: {
         ...claimed.runtimeContextJson,
         version: 1,
-        baseUrl: config.baseUrl,
+        model: modelKey,
         lane: claimed.lane,
         mode: claimed.mode,
         ...(waitingState && {
@@ -386,11 +403,10 @@ async function executeTurn(turnId: string) {
       ...(managementTools ? toPiMcpTools(managementTools) : []),
       ...toPiMcpTools(currentMcpRegistry),
     ]
-    const { runtime, model } = await getOpenbotModel(config)
     const created = await createAgentSession({
       cwd: workspace,
       agentDir,
-      modelRuntime: runtime,
+      modelRuntime,
       model,
       thinkingLevel: 'off',
       // Explicit allowlist: exactly our tools, none of pi's coding built-ins.
@@ -405,7 +421,7 @@ async function executeTurn(turnId: string) {
 
     console.info('[agent prompt]', {
       agent: { id: agent.id, name: agent.name },
-      model: config.model,
+      model: modelKey,
       sessionFile: created.session.sessionFile,
       systemPrompt: created.session.systemPrompt,
       prompt: prepared.promptText,
@@ -506,6 +522,24 @@ async function executeGroupTurn(turnId: string) {
   const claimed = await claimQueuedTurn(turnId)
   if (!claimed) return
 
+  const active: ActiveTurn = {
+    delivered: [],
+    sendMessageCount: 0,
+    controller: new AbortController(),
+    subscribers: new Set(),
+  }
+  activeTurns.set(turnId, active)
+  const emitTerminal = (event: TurnStreamEvent) => {
+    const subscribers = [...active.subscribers]
+    activeTurns.delete(turnId)
+    for (const subscriber of subscribers) subscriber(event)
+  }
+  const handoff = () => {
+    const subscribers = [...active.subscribers]
+    activeTurns.delete(turnId)
+    for (const subscriber of subscribers) subscriber({ type: 'handoff' })
+  }
+
   try {
     if (!claimed.targetGroupId) {
       throw new Error(`Turn ${turnId} is not group-targeted`)
@@ -521,14 +555,67 @@ async function executeGroupTurn(turnId: string) {
       .filter((m) => m.turnId === turnId && m.kind === 'message' && m.role === 'user')
       .map((m) => m.bodyText ?? '')
       .join('\n')
+    const setting = await getSetting()
+    const selectedModel = await resolveConfiguredModel(setting.orchestratorModel)
+    if (!selectedModel) {
+      throw new Error(
+        `Orchestrator model ${setting.orchestratorModel} is unavailable. Connect its provider or choose another model.`,
+      )
+    }
+    const { runtime: modelRuntime, model } = selectedModel
+    await recordTurnExecution(turnId, {
+      modelProvider: model.provider,
+      modelId: model.id,
+      effectiveTools: { version: 1, tools: [] },
+      effectivePermissions: { version: 1 },
+      runtimeContext: {
+        ...claimed.runtimeContextJson,
+        version: 1,
+        mode: claimed.mode,
+        lane: claimed.lane,
+        model: formatModelReference({ provider: model.provider, modelId: model.id }),
+      },
+    })
+
+    const roster = members.map((member) => ({ id: member.id, name: member.name }))
+    const response = await modelRuntime.completeSimple(
+      model,
+      {
+        systemPrompt:
+          'You route a message in a group of assistants. Select only the members needed to answer. ' +
+          'Honor explicit name mentions. Return JSON only as {"agentIds":["..."]}.',
+        messages: [{
+          role: 'user',
+          content: JSON.stringify({ group: group.name, members: roster, message: triggeringText }),
+          timestamp: Date.now(),
+        }],
+      },
+      { maxTokens: 512, signal: active.controller.signal },
+    )
+    if (response.stopReason === 'error' || response.stopReason === 'aborted') {
+      throw new Error(response.errorMessage ?? 'The group orchestrator model failed')
+    }
+    const responseText = response.content
+      .map((content) => content.type === 'text' ? content.text : '')
+      .join('')
+    const selectedIds = parseOrchestratorAgentIds(
+      responseText,
+      new Set(members.map((member) => member.id)),
+    )
     const mentioned = findMentionedMember(members, triggeringText)
-    const targets = mentioned ? [mentioned] : members
+    const fallbackTargets = mentioned ? [mentioned] : members
+    const targets = selectedIds?.length
+      ? selectedIds.flatMap((id) => members.find((member) => member.id === id) ?? [])
+      : fallbackTargets
 
     const { childTurns } = await queueGroupChildTurns({
       groupTurnId: turnId,
       targetAgentIds: targets.map((member) => member.id),
       orchestrationRound: 0,
     })
+    // The durable parent now points at its children. Attached watchers switch
+    // to their persisted/live streams instead of waiting on this executor.
+    handoff()
     // One member at a time: awaiting each agent's drain keeps the round
     // ordered, so a later member's transcript includes earlier answers.
     for (const childTurn of childTurns) {
@@ -538,11 +625,18 @@ async function executeGroupTurn(turnId: string) {
   } catch (error) {
     const message =
       error instanceof Error ? error.message : 'Group turn orchestration failed'
-    await finalizeTurnTerminal({
+    const settled = await finalizeTurnTerminal({
       turnId,
       status: 'failed',
       message,
     }).catch(() => {})
+    emitTerminal({
+      type: 'error',
+      message,
+      status: settled?.turn.status === 'cancelled' ? 'cancelled' : 'failed',
+    })
+  } finally {
+    activeTurns.delete(turnId)
   }
 }
 
@@ -685,7 +779,12 @@ export function watchTurn(
       const active = activeTurns.get(currentTurnId)
       if (!active) return false
       for (const message of active.delivered) onEvent({ type: 'message', message })
-      const subscriber = (event: TurnStreamEvent) => {
+      const subscriber = (event: ActiveTurnEvent) => {
+        if (event.type === 'handoff') {
+          detach()
+          void poll()
+          return
+        }
         if (event.type === 'message') {
           onEvent(event)
           return

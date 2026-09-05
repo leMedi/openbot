@@ -27,7 +27,7 @@ import { SettingsDialog } from '@/components/openbot/settings-dialog'
 import { Sidebar } from '@/components/openbot/sidebar'
 import { Button } from '@/components/ui/button'
 import { getAgents } from '@/server/agents'
-import { getServerConfig } from '@/server/config'
+import { getAiProviders } from '@/server/providers'
 import { getGroups } from '@/server/groups'
 import { getMcpConfiguration } from '@/server/mcp'
 import { getUserProfile } from '@/server/profile'
@@ -63,22 +63,28 @@ const LAST_CONVERSATION_KEY = 'openbot:last-conversation'
 
 export const Route = createFileRoute('/')({
   loader: async () => {
-    const [agents, groups, conversations, config, mcp, profile] = await Promise.all([
+    const [agents, groups, conversations, mcp, profile, providers] = await Promise.all([
       getAgents(),
       getGroups(),
       getConversations(),
-      getServerConfig(),
       getMcpConfiguration(),
       getUserProfile(),
+      getAiProviders(),
     ])
-    return { agents, groups, conversations, config, mcp, profile }
+    return { agents, groups, conversations, mcp, profile, providers }
   },
   component: OpenBot,
 })
 
 function OpenBot() {
-  const { agents, groups, conversations: conversationRows, config, mcp, profile } =
-    Route.useLoaderData()
+  const {
+    agents,
+    groups,
+    conversations: conversationRows,
+    mcp,
+    profile,
+    providers,
+  } = Route.useLoaderData()
   const router = useRouter()
 
   const [activeId, setActiveId] = useState(conversationRows[0]?.id ?? '')
@@ -110,8 +116,8 @@ function OpenBot() {
   }, [])
 
   const agentBots = useMemo(
-    () => agents.map((agent) => botFromAgent(agent, config.model)),
-    [agents, config.model],
+    () => agents.map((agent) => botFromAgent(agent, providers.setting.defaultAgentModel)),
+    [agents, providers.setting.defaultAgentModel],
   )
   // One combined view-model list: sidebar rows resolve their owner (agent or
   // group room) through the same lookup.
@@ -447,6 +453,8 @@ function OpenBot() {
         onOpenChange={setSettingsOpen}
         profile={profile}
         onProfileSaved={() => router.invalidate()}
+        providerConfiguration={providers}
+        onProvidersChanged={() => void router.invalidate()}
       />
       <NewConversationDialog
         open={newConvoOpen}
@@ -478,7 +486,8 @@ function OpenBot() {
           open={botDialog.open}
           onOpenChange={(open) => setBotDialog((s) => ({ ...s, open }))}
           agent={botDialog.agent}
-          serverModel={config.model}
+          models={providers.models}
+          defaultAgentModel={providers.setting.defaultAgentModel}
           mcpServers={mcp.servers}
           mcpAccounts={mcp.accounts}
           grantedAccountIds={mcp.grants

@@ -4,7 +4,7 @@ import {
   updateAgentProfile,
   updateAgentProfileAndMcpAccounts,
 } from '@openbot/db'
-import { createAgent } from '@openbot/agent'
+import { canonicalAvailableModelReference, createAgent } from '@openbot/agent'
 import { createServerFn } from '@tanstack/react-start'
 import * as z from 'zod'
 import { AVATAR_COLORS, AVATAR_SHAPES } from '@/components/openbot/data'
@@ -21,7 +21,7 @@ const agentProfileFields = z.object({
     .string()
     .refine((v) => AVATAR_COLORS.includes(v), 'Unknown avatar color'),
   defaultMode: z.string().trim().min(1).max(40),
-  defaultModel: z.string().trim().min(1).max(120).nullable(),
+  defaultModel: z.string().trim().min(1).max(512).nullable(),
   approvalMode: z.string().trim().min(1).max(40),
   notifyOnUpdates: z.boolean(),
   hiddenFromSidebar: z.boolean(),
@@ -52,14 +52,24 @@ export const getAgentById = createServerFn({ method: 'GET' })
 
 export const addAgent = createServerFn({ method: 'POST' })
   .validator((input: unknown) => agentCreateInput.parse(input))
-  .handler(({ data }) => {
+  .handler(async ({ data }) => {
     const { mcpAccountIds, ...profile } = data
+    if (profile.defaultModel) {
+      const canonical = await canonicalAvailableModelReference(profile.defaultModel)
+      if (!canonical) throw new Error(`Model ${profile.defaultModel} is not available`)
+      profile.defaultModel = canonical
+    }
     return createAgent(profile, mcpAccountIds)
   })
 
 export const updateAgent = createServerFn({ method: 'POST' })
   .validator((input: unknown) => agentUpdateInput.parse(input))
   .handler(async ({ data }) => {
+    if (data.patch.defaultModel) {
+      const canonical = await canonicalAvailableModelReference(data.patch.defaultModel)
+      if (!canonical) throw new Error(`Model ${data.patch.defaultModel} is not available`)
+      data.patch.defaultModel = canonical
+    }
     const updated = data.mcpAccountIds
       ? await updateAgentProfileAndMcpAccounts(
           data.id,
