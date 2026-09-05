@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import type { Profile } from '@openbot/db'
 import { ArrowUp, Plus, Server, SlidersHorizontal, Sun } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -6,6 +7,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import { saveUserProfile } from '@/server/profile'
 import { BotAvatar } from './bot-avatar'
 import { PROVIDERS, SERVER_ROWS, type Provider } from './data'
 
@@ -20,11 +22,29 @@ const TABS: { id: Tab; label: string; icon: typeof Sun; group: string }[] = [
 export function SettingsDialog({
   open,
   onOpenChange,
+  profile,
+  onProfileSaved,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  profile: Profile
+  onProfileSaved: (profile: Profile) => void
 }) {
   const [tab, setTab] = useState<Tab>('general')
+  const [displayProfile, setDisplayProfile] = useState(profile)
+
+  useEffect(() => {
+    if (!open) {
+      setDisplayProfile((current) =>
+        profile.updatedAt > current.updatedAt ? profile : current,
+      )
+    }
+  }, [open, profile])
+
+  function profileSaved(updated: Profile) {
+    setDisplayProfile(updated)
+    onProfileSaved(updated)
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -65,7 +85,9 @@ export function SettingsDialog({
           <h2 className="mb-5 text-xl font-bold tracking-tight">
             {TABS.find((t) => t.id === tab)?.label}
           </h2>
-          {tab === 'general' && <GeneralTab />}
+          <div className={tab === 'general' ? undefined : 'hidden'}>
+            <GeneralTab open={open} profile={displayProfile} onSaved={profileSaved} />
+          </div>
           {tab === 'providers' && <ProvidersTab />}
           {tab === 'server' && <ServerTab />}
         </div>
@@ -74,25 +96,133 @@ export function SettingsDialog({
   )
 }
 
-function GeneralTab() {
+function GeneralTab({
+  open,
+  profile,
+  onSaved,
+}: {
+  open: boolean
+  profile: Profile
+  onSaved: (profile: Profile) => void
+}) {
+  const [firstName, setFirstName] = useState(profile.firstName)
+  const [lastName, setLastName] = useState(profile.lastName)
+  const [about, setAbout] = useState(profile.about)
+  const [timezone, setTimezone] = useState(profile.timezone)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [timezones, setTimezones] = useState(() =>
+    Array.from(new Set([profile.timezone, 'UTC'].filter(Boolean))),
+  )
+
+  useEffect(() => {
+    const supported =
+      typeof Intl.supportedValuesOf === 'function'
+        ? Intl.supportedValuesOf('timeZone')
+        : []
+    const detected = Intl.DateTimeFormat().resolvedOptions().timeZone
+    setTimezones(
+      Array.from(
+        new Set([profile.timezone, detected, 'UTC', ...supported].filter(Boolean)),
+      ),
+    )
+    if (!profile.timezone) setTimezone(detected || 'UTC')
+  }, [])
+
+  useEffect(() => {
+    if (!open) {
+      setFirstName(profile.firstName)
+      setLastName(profile.lastName)
+      setAbout(profile.about)
+      setTimezone(profile.timezone)
+      setSaved(false)
+      setError(null)
+    } else if (!profile.timezone) {
+      setTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
+    }
+  }, [open, profile])
+
+  async function save() {
+    if (saving) return
+    setSaving(true)
+    setSaved(false)
+    setError(null)
+    try {
+      const updated = await saveUserProfile({
+        data: { firstName, lastName, about, timezone },
+      })
+      onSaved(updated)
+      setSaved(true)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Saving the profile failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <div className="flex max-w-xl flex-col gap-2.5">
       <h3 className="text-sm font-semibold text-foreground/85">Profile</h3>
       <div className="rounded-xl bg-card px-5 py-4">
         <div className="text-sm font-medium">Name</div>
         <div className="mt-2.5 flex gap-2">
-          <Input defaultValue="Mehdi" placeholder="First name" />
-          <Input placeholder="Last name" />
+          <Input
+            value={firstName}
+            onChange={(event) => setFirstName(event.target.value)}
+            placeholder="First name"
+            maxLength={80}
+          />
+          <Input
+            value={lastName}
+            onChange={(event) => setLastName(event.target.value)}
+            placeholder="Last name"
+            maxLength={80}
+          />
         </div>
+        <div className="my-4 h-px bg-border" />
+        <label htmlFor="profile-timezone" className="text-sm font-medium">
+          Timezone
+        </label>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          Helps your agents understand dates and local times.
+        </p>
+        <select
+          id="profile-timezone"
+          value={timezone}
+          onChange={(event) => setTimezone(event.target.value)}
+          className="mt-3 h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30"
+        >
+          {timezones.map((value) => (
+            <option key={value} value={value}>
+              {value.replaceAll('_', ' ')}
+            </option>
+          ))}
+        </select>
         <div className="my-4 h-px bg-border" />
         <div className="text-sm font-medium">About</div>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          Shared with every bot as context — role, timezone, preferences.
+          Shared with every agent as context, including your role and preferences.
         </p>
         <Textarea
-          placeholder="What should your bots know about you?"
+          value={about}
+          onChange={(event) => setAbout(event.target.value)}
+          placeholder="What should your agents know about you?"
           className="mt-3 min-h-28 text-xs"
+          maxLength={1000}
         />
+        <div className="mt-4 flex items-center justify-end gap-3">
+          <span aria-live="polite" className="mr-auto text-xs text-muted-foreground">
+            {error ? (
+              <span className="text-destructive">{error}</span>
+            ) : saved ? (
+              'Saved'
+            ) : null}
+          </span>
+          <Button size="sm" onClick={save} disabled={saving || !timezone}>
+            {saving ? 'Saving…' : 'Save Profile'}
+          </Button>
+        </div>
       </div>
     </div>
   )

@@ -12,6 +12,7 @@ import {
   getAgent,
   getConversation,
   getGroup,
+  getProfile,
   getTurn,
   type Group,
   listConversationMessages,
@@ -234,8 +235,11 @@ async function executeTurn(turnId: string) {
 
     // One boundary resolves the system prompt, session persistence, turn
     // prompt, and sender identity for either private or group execution.
-    const memory = await listPromptMemoryForAgent(agent.id)
-    const availableAgents = await listAgents()
+    const [memory, availableAgents, userProfile] = await Promise.all([
+      listPromptMemoryForAgent(agent.id),
+      listAgents(),
+      getProfile(),
+    ])
     const workspace = agentWorkspaceDirectory(agent.id)
     const wake = claimed.runtimeContextJson.wake
     const directMessage =
@@ -267,6 +271,7 @@ async function executeTurn(turnId: string) {
       : undefined
     const prepared = await prepareConversationTurn({
       agent,
+      userProfile,
       availableAgents,
       memory,
       conversation: conversationContext,

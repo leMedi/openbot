@@ -3,6 +3,7 @@ export { dataDirectory } from './env'
 export * from './ids'
 export * from './json-schemas'
 export * from './settings'
+export * from './profile'
 export * from './agents'
 export * from './avatars'
 export * from './groups'
@@ -16,6 +17,7 @@ export * from './memory'
 export * from './mcp'
 export {
   setting,
+  profile,
   agents,
   groups,
   conversations,
@@ -29,6 +31,7 @@ export {
 } from './schema'
 export type {
   Setting,
+  Profile,
   Agent,
   NewAgent,
   Group,

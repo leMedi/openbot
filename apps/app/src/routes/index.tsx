@@ -30,6 +30,7 @@ import { getAgents } from '@/server/agents'
 import { getServerConfig } from '@/server/config'
 import { getGroups } from '@/server/groups'
 import { getMcpConfiguration } from '@/server/mcp'
+import { getUserProfile } from '@/server/profile'
 import {
   cancelConversationTurn,
   getConversationMessages,
@@ -62,20 +63,22 @@ const LAST_CONVERSATION_KEY = 'openbot:last-conversation'
 
 export const Route = createFileRoute('/')({
   loader: async () => {
-    const [agents, groups, conversations, config, mcp] = await Promise.all([
+    const [agents, groups, conversations, config, mcp, profile] = await Promise.all([
       getAgents(),
       getGroups(),
       getConversations(),
       getServerConfig(),
       getMcpConfiguration(),
+      getUserProfile(),
     ])
-    return { agents, groups, conversations, config, mcp }
+    return { agents, groups, conversations, config, mcp, profile }
   },
   component: OpenBot,
 })
 
 function OpenBot() {
-  const { agents, groups, conversations: conversationRows, config, mcp } = Route.useLoaderData()
+  const { agents, groups, conversations: conversationRows, config, mcp, profile } =
+    Route.useLoaderData()
   const router = useRouter()
 
   const [activeId, setActiveId] = useState(conversationRows[0]?.id ?? '')
@@ -439,7 +442,12 @@ function OpenBot() {
         accounts={mcp.accounts}
         onChanged={() => router.invalidate()}
       />
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <SettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        profile={profile}
+        onProfileSaved={() => router.invalidate()}
+      />
       <NewConversationDialog
         open={newConvoOpen}
         onOpenChange={setNewConvoOpen}

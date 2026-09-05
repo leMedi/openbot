@@ -8,6 +8,7 @@ import {
   piSessionDirectory,
   type Agent,
   type MemoryItem,
+  type Profile,
 } from '@openbot/db'
 import {
   type ConversationPromptContext,
@@ -69,6 +70,7 @@ async function renderGroupTurnPrompt(input: GroupPromptInput): Promise<string> {
 
 export type PrepareConversationTurnInput = {
   agent: Agent
+  userProfile: Profile
   availableAgents: Agent[]
   memory: MemoryItem[]
   conversation: ConversationPromptContext
@@ -83,6 +85,7 @@ export type PrepareConversationTurnInput = {
 export async function prepareConversationTurn(input: PrepareConversationTurnInput) {
   const systemPrompt = renderSystemPrompt({
     agent: input.agent,
+    userProfile: input.userProfile,
     availableAgents: input.availableAgents,
     memory: input.memory,
     conversation: input.conversation,
