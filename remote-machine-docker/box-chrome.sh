@@ -155,7 +155,7 @@ page_target_ids() {
 }
 
 run_chrome() {
-  google-chrome-stable \
+  exec google-chrome-stable \
     --no-sandbox \
     --no-first-run \
     --no-default-browser-check \
