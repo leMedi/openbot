@@ -47,6 +47,10 @@ with no browser window, while `box-chrome --new-window` opens a blank window
 and `box-chrome <http-or-https-url>` opens that URL in a new window. All forms
 reuse the display's persistent profile. Chrome DevTools Protocol listens only
 on container loopback at port `9222 + display-number`.
+Chrome runs as the unprivileged `openbot` user with its process sandbox disabled
+because Docker's default security policy blocks Chrome's nested namespace
+sandbox. The container boundary remains the browser's security boundary; do not
+run this image with host networking, host PID namespaces, or privileged mode.
 `stop-agent-desktop <display-number> <owner-id>` tears down only a matching
 managed display session and refuses an owner mismatch.
 
