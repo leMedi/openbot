@@ -4,6 +4,10 @@ import { db } from './client'
 import type { DbExecutor } from './conversations'
 import { createId } from './ids'
 import {
+  type ComputerUseCompletionWake,
+  computerUseCompletionWakeSchema,
+  type ComputerUseWorkerContext,
+  computerUseWorkerContextSchema,
   type EffectiveTools,
   effectiveToolsSchema,
   type WaitingState,
@@ -516,6 +520,173 @@ export async function enqueueBackgroundAgentTurn(input: BackgroundAgentTurnInput
     .limit(1)
   if (!winner) throw new Error('Background turn could not be queued')
   return winner
+}
+
+export type ComputerUseWorkerTurnInput = {
+  parentTurnId: string
+  parentToolCallId: string
+  task: string
+  title: string
+}
+
+/** Idempotently queues one isolated computer-use worker under a running parent. */
+export function enqueueComputerUseWorkerTurn(input: ComputerUseWorkerTurnInput) {
+  const workerContext = computerUseWorkerContextSchema.parse({
+    version: 1,
+    type: 'computer-use-worker',
+    task: input.task,
+    title: input.title,
+    parentToolCallId: input.parentToolCallId,
+  })
+  const idempotencyKey = `computer-use:${input.parentTurnId}:${input.parentToolCallId}`
+
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select()
+      .from(schema.turns)
+      .where(eq(schema.turns.idempotencyKey, idempotencyKey))
+      .limit(1)
+    if (existing) {
+      const existingContext = computerUseWorkerContextSchema.parse(
+        existing.runtimeContextJson,
+      )
+      if (
+        existingContext.task !== workerContext.task ||
+        existingContext.title !== workerContext.title
+      ) {
+        throw new Error('A computerUse tool call cannot be retried with different input')
+      }
+      return existing
+    }
+
+    const [parent] = await tx
+      .select()
+      .from(schema.turns)
+      .where(eq(schema.turns.id, input.parentTurnId))
+      .limit(1)
+    if (!parent) throw new Error(`Turn ${input.parentTurnId} not found`)
+    if (!parent.targetAgentId || parent.status !== 'running') {
+      throw new Error('computerUse can only be launched by a running agent turn')
+    }
+
+    const [activeWorker] = await tx
+      .select()
+      .from(schema.turns)
+      .where(
+        and(
+          eq(schema.turns.targetAgentId, parent.targetAgentId),
+          eq(schema.turns.mode, 'computer-use'),
+          inArray(schema.turns.status, ['queued', 'running', 'waiting']),
+        ),
+      )
+      .limit(1)
+    if (activeWorker) {
+      throw new Error('A computerUse worker is already using this agent desktop')
+    }
+
+    const now = Date.now()
+    const [created] = await tx
+      .insert(schema.turns)
+      .values({
+        id: createId('trn'),
+        conversationId: parent.conversationId,
+        targetAgentId: parent.targetAgentId,
+        parentTurnId: parent.id,
+        lane: 'agent',
+        source: 'subagent',
+        status: 'queued',
+        mode: 'computer-use',
+        idempotencyKey,
+        runtimeContextJson: workerContext,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning()
+    if (!created) throw new Error('Computer-use worker could not be queued')
+    return created
+  })
+}
+
+export type ComputerUseWorkerCompletionInput = {
+  turnId: string
+  status: 'succeeded' | 'failed'
+  summary: string
+}
+
+/** Atomically settles a computer worker and queues its hidden parent revival. */
+export function finalizeComputerUseWorkerTurn(input: ComputerUseWorkerCompletionInput) {
+  return db.transaction(async (tx) => {
+    const [current] = await tx
+      .select()
+      .from(schema.turns)
+      .where(eq(schema.turns.id, input.turnId))
+      .limit(1)
+    if (!current) throw new Error(`Turn ${input.turnId} not found`)
+    if (current.mode !== 'computer-use' || current.source !== 'subagent') {
+      throw new Error(`Turn ${input.turnId} is not a computer-use worker`)
+    }
+    if (!current.parentTurnId) {
+      throw new Error(`Computer-use worker ${input.turnId} has no parent turn`)
+    }
+    const workerContext: ComputerUseWorkerContext =
+      computerUseWorkerContextSchema.parse(current.runtimeContextJson)
+    const wake: ComputerUseCompletionWake = computerUseCompletionWakeSchema.parse({
+      version: 1,
+      type: 'computer-use-completed',
+      childTurnId: current.id,
+      parentTurnId: current.parentTurnId,
+      title: workerContext.title,
+      status: input.status,
+      summary: input.summary,
+    })
+    const wakeIdempotencyKey = `computer-use-completion:${current.id}`
+    const [existingWake] = await tx
+      .select()
+      .from(schema.turns)
+      .where(eq(schema.turns.idempotencyKey, wakeIdempotencyKey))
+      .limit(1)
+    if (existingWake) {
+      return { turn: current, wakeTurn: existingWake, changed: false as const }
+    }
+    if (current.status !== 'running') {
+      return { turn: current, wakeTurn: undefined, changed: false as const }
+    }
+
+    const now = Date.now()
+    const [turn] = await tx
+      .update(schema.turns)
+      .set({
+        status: input.status,
+        errorJson:
+          input.status === 'failed' ? { version: 1, message: input.summary } : null,
+        completedAt: now,
+        updatedAt: now,
+      })
+      .where(
+        and(eq(schema.turns.id, current.id), eq(schema.turns.status, 'running')),
+      )
+      .returning()
+    if (!turn) throw new Error(`Computer-use worker ${input.turnId} could not be settled`)
+
+    const [wakeTurn] = await tx
+      .insert(schema.turns)
+      .values({
+        id: createId('trn'),
+        conversationId: turn.conversationId,
+        targetAgentId: turn.targetAgentId,
+        parentTurnId: turn.id,
+        lane: 'background',
+        source: 'computer-use-completion',
+        status: 'queued',
+        idempotencyKey: wakeIdempotencyKey,
+        runtimeContextJson: { version: 1, wake },
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning()
+    if (!wakeTurn) throw new Error('Computer-use completion wake could not be queued')
+    return { turn, wakeTurn, changed: true as const }
+  })
 }
 
 export type TurnTerminalInput = {

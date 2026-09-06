@@ -18,6 +18,12 @@ import {
   screenshotToolDefinition,
   SCREENSHOT_TOOL_NAME,
 } from './computer'
+import {
+  computerUseWorkerArgsSchema,
+  computerUseWorkerToolDefinition,
+  COMPUTER_USE_WORKER_TOOL_NAME,
+  executeComputerUseWorker,
+} from './computer-use-worker'
 import { executeRead, readArgsSchema, readToolDefinition } from './read'
 import {
   executeSendAgentMessage,
@@ -54,6 +60,15 @@ export const agentToolDefinitions: ToolDefinition[] = [
   readToolDefinition,
   awaitShellToolDefinition,
   screenshotToolDefinition,
+  computerUseWorkerToolDefinition,
+]
+
+/** Narrow capabilities available inside an isolated computer-use worker. */
+export const computerUseWorkerToolDefinitions: ToolDefinition[] = [
+  runShellToolDefinition,
+  readToolDefinition,
+  awaitShellToolDefinition,
+  screenshotToolDefinition,
   computerToolDefinition,
 ]
 
@@ -64,7 +79,7 @@ export const sendMessageOnlyToolDefinitions: ToolDefinition[] = [
 
 /** Background wakes may stay silent, but can surface a material outcome. */
 export const backgroundToolDefinitions: ToolDefinition[] = agentToolDefinitions.filter(
-  (tool) => tool.function.name !== COMPUTER_TOOL_NAME,
+  (tool) => tool.function.name !== COMPUTER_USE_WORKER_TOOL_NAME,
 )
 
 /**
@@ -95,6 +110,15 @@ export async function executeAgentToolCall(
     }
     if (call.function.name === COMPUTER_TOOL_NAME) {
       return respond(await executeComputerTool(call, args, context))
+    }
+    if (call.function.name === COMPUTER_USE_WORKER_TOOL_NAME) {
+      return respond(
+        await executeComputerUseWorker(
+          computerUseWorkerArgsSchema.parse(args),
+          call,
+          context,
+        ),
+      )
     }
     if (call.function.name === SEND_AGENT_MESSAGE_TOOL_NAME) {
       return respond(

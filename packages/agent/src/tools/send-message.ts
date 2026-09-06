@@ -172,6 +172,12 @@ export type ToolTurnContext = {
     idempotencyKey: string
     runtimeContext: VersionedObject
   }) => Promise<void>
+  /** Queues one isolated computer-use child under this turn. */
+  enqueueComputerUseWorker?: (input: {
+    parentToolCallId: string
+    task: string
+    title: string
+  }) => Promise<{ turnId: string }>
   /** Atomically accepts direct delivery and queues the recipient without waiting. */
   sendDirectAgentMessage: (
     input: Omit<DirectAgentMessageInput, 'senderAgentId'>,

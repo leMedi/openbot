@@ -7,7 +7,11 @@ const testData = path.resolve(process.cwd(), '../../.data', `prompt-tests-${proc
 await rm(testData, { recursive: true, force: true })
 process.env.OPENBOT_DATA_DIR = testData
 
-const { renderDefaultSystemPrompt, renderUserProfilePrompt } = await import('./system')
+const {
+  renderComputerUseWorkerSystemPrompt,
+  renderDefaultSystemPrompt,
+  renderUserProfilePrompt,
+} = await import('./system')
 
 test('removes graphical desktop guidance when desktop mode is disabled', () => {
   const prompt = renderDefaultSystemPrompt(false)
@@ -87,4 +91,15 @@ test('omits empty profile fields', () => {
       'Timezone: "UTC"',
     ].join('\n'),
   )
+})
+
+test('gives the computer-use worker a narrow visual verification contract', () => {
+  const prompt = renderComputerUseWorkerSystemPrompt()
+  assert.match(prompt, /cannot talk directly to the user/)
+  assert.match(prompt, /Start with Screenshot/)
+  assert.match(prompt, /expected_state_id/)
+  assert.match(prompt, /untrusted content/)
+  assert.match(prompt, /Do not enter passwords/)
+  assert.match(prompt, /Do not claim success unless/)
+  assert.doesNotMatch(prompt, /SendMessage/)
 })

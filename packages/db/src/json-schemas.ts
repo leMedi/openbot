@@ -23,6 +23,24 @@ export const versionedObjectSchema = z
   .object({ version: z.literal(1) })
   .catchall(jsonValueSchema)
 
+export const computerUseWorkerContextSchema = z.object({
+  version: z.literal(1),
+  type: z.literal('computer-use-worker'),
+  task: z.string().trim().min(1).max(20_000),
+  title: z.string().trim().min(1).max(120),
+  parentToolCallId: z.string().min(1).max(500),
+})
+
+export const computerUseCompletionWakeSchema = z.object({
+  version: z.literal(1),
+  type: z.literal('computer-use-completed'),
+  childTurnId: z.string().min(1),
+  parentTurnId: z.string().min(1),
+  title: z.string().trim().min(1).max(120),
+  status: z.enum(['succeeded', 'failed']),
+  summary: z.string().trim().min(1).max(20_000),
+})
+
 export const groupMembersSchema = z.object({
   version: z.literal(1),
   members: z.array(
@@ -312,6 +330,8 @@ export type Attachments = z.infer<typeof attachmentsSchema>
 export type Reactions = z.infer<typeof reactionsSchema>
 export type EffectiveTools = z.infer<typeof effectiveToolsSchema>
 export type WaitingState = z.infer<typeof waitingStateSchema>
+export type ComputerUseWorkerContext = z.infer<typeof computerUseWorkerContextSchema>
+export type ComputerUseCompletionWake = z.infer<typeof computerUseCompletionWakeSchema>
 export type SendMessagePayload = z.infer<typeof sendMessagePayloadSchema>
 export type DirectAgentMessagePayload = z.infer<typeof directAgentMessagePayloadSchema>
 export type DirectAgentMessageContext = z.infer<typeof directAgentMessageContextSchema>

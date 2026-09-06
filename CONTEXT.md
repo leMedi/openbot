@@ -125,9 +125,10 @@ The effective tool list is not an agent column. It is derived for each turn
 from runtime capabilities, MCP discovery, permissions, and execution context.
 Historical effective tools and permissions are snapshotted on the turn.
 
-Subagents are not persistent agent rows in the MVP. Their definitions are
-runtime inference capabilities, much like tools. Model-facing calls and results
-are retained in private Pi sessions or rendered group transcripts.
+Subagents are not persistent agent rows in the MVP. The built-in `computerUse`
+worker is a runtime inference capability represented by a durable child turn,
+with an isolated Pi session rather than the parent's conversation history.
+Persisted custom subagent definitions remain deferred.
 
 ## Groups
 
@@ -292,7 +293,10 @@ execution.
 Runtime conversation state and the UI transcript are deliberately separate.
 Private conversations continue the most recent append-only Pi JSONL session for
 their conversation ID, while each group member runs an in-memory Pi session and
-receives the shared database transcript from that member's perspective.
+receives the shared database transcript from that member's perspective. Each
+computer-use child turn continues a separate Pi session beneath its conversation
+directory so approvals and restarts resume the worker without adding its visual
+trajectory to the parent's model history.
 
 The system prompt is rebuilt from live user profile, agent, room, and memory
 state on every turn; it is not restored from model history. Conversation clear
@@ -331,10 +335,13 @@ command can later scan for and remove unreferenced files.
 `OPENBOT_DESKTOP_MODE` selects `per-agent` (the default) or `disabled`. In
 `per-agent` mode, Screenshot and Computer Use execute on the same Remote Desktop
 machine as the OpenBot server and Shell. Each newly created agent is assigned
-one dedicated graphical session on that machine. In `disabled` mode, agents run
-on the host without graphical sessions, VNC, screenshots, or Computer Use. The
-web/mobile client only renders durable results and approval prompts; it never
-captures its own screen or injects input.
+one dedicated graphical session on that machine. Ordinary agent turns have
+read-only Screenshot access and delegate mutations through `computerUse`. That
+tool queues one narrowly scoped child turn whose isolated worker alone receives
+the mutating Computer tool. In `disabled` mode, agents run on the host without
+graphical sessions, VNC, screenshots, or Computer Use. The web/mobile client
+only renders durable results and approval prompts; it never captures its own
+screen or injects input.
 
 Agent Window Management provisions and records ownership of an agent's X
 display. A local desktop-driver boundary for that agent discovers the assigned
@@ -342,7 +349,10 @@ display, captures screenshots, and executes normalized screenshot, click,
 move, drag, type, key, scroll, and wait actions. Coordinates are validated
 against current driver dimensions. A process-wide lease serializes access to
 each graphical session; read-only Screenshot calls never overlap an active
-Computer sequence.
+Computer sequence. The per-agent scheduler also permits only one unsettled
+computer-use worker and gives that worker exclusive turn-level ownership of the
+agent desktop until it succeeds, fails, or is cancelled; it retains ownership
+while waiting for approval.
 
 Screenshots are stored through `managed_files` and referenced by durable
 computer-use transcript rows. Reviewed actions carry a fingerprint over the
@@ -437,6 +447,13 @@ the persisted waiting-turn interaction and resumes from stored mid-turn
 history. Visible output reaches clients over a per-turn SSE route; execution
 never depends on a connected client.
 
+Computer-use delegation is implemented as the built-in `computerUse` tool. It
+queues one idempotent agent-lane child turn, runs that child with an isolated
+system prompt and only Read, shell, Screenshot, and Computer capabilities, then
+atomically settles the worker and queues a hidden background completion wake.
+The stream follows the parent, worker, and completion-wake lineage. Cancelling
+the parent also cancels its unsettled descendants.
+
 Direct agent messaging is implemented through `SendAgentMessage`. Acceptance
 atomically appends linked outbound and inbound transcript copies and queues an
 agent-lane recipient turn. Each agent has one private direct-message inbox,
@@ -486,8 +503,9 @@ Remaining implementation slices are:
   idempotent user-message acceptance, and atomic direct-agent delivery).
 - `packages/db/src/turns.ts`: durable turn queue (target-safe priority claims,
   waiting/resume, terminal settlement, execution snapshots, and atomic group
-  child-turn delegation).
-- `packages/db/src/pi-sessions.ts`: private Pi session paths and deletion lifecycle.
+  and computer-use child-turn delegation).
+- `packages/db/src/pi-sessions.ts`: private and computer-worker Pi session paths
+  and deletion lifecycle.
 - `packages/db/src/memory.ts`: scoped memory CRUD, metadata validation, and
   prompt-relevant memory selection.
 - `packages/db/src/files.ts`: managed-file repository and path containment.
@@ -506,8 +524,8 @@ Remaining implementation slices are:
   and model-reference runtime.
 - `packages/agent/src/provider-auth.ts`: runtime provider login interactions
   bridged to browser-safe events and prompts.
-- `apps/app/src/server/agent-tools.ts`: agent tool definitions and executor,
-  including the SendMessage delivery tool.
+- `packages/agent/src/tools/`: agent tool definitions and executors, including
+  SendMessage and computer-use delegation.
 - `packages/desktop-driver/`: protobuf-shaped JSON executor and reusable
   TypeScript client, including temporary screenshot-path augmentation.
 - `packages/agent/src/desktop/driver.ts`: server-local desktop-driver boundary
@@ -515,11 +533,13 @@ Remaining implementation slices are:
 - `packages/agent/src/desktop/runtime.ts`: per-turn review, lease, execution,
   screenshot persistence, audit, and normalized Computer Use outcomes.
 - `packages/agent/src/tools/computer.ts`: Screenshot and Computer model tools.
+- `packages/agent/src/tools/computer-use-worker.ts`: parent-facing computer-use
+  delegation contract.
 - `apps/app/src/server/mcp-oauth.server.ts`: runtime-held OAuth authorization
   flows, PKCE callback exchange, credential persistence, and token refresh.
 - `apps/app/src/server/send-message-reminders.ts`: delivery accounting and
   the reminder/nudge texts enforcing the SendMessage contract.
-- `apps/app/src/server/turn-runner.ts`: turn executor, group orchestrator,
+- `packages/agent/src/queue/turn-runner.ts`: turn executor, group orchestrator,
   per-target drains, and in-memory visible-output fan-out.
 - `apps/app/src/routes/api.agents.$agentId.avatar.ts`: agent avatar file-serving API.
 - `apps/app/src/routes/api.groups.$groupId.avatar.ts`: group avatar file-serving API.
