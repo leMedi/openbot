@@ -17,21 +17,46 @@ const desktopEnabled = desktopMode === 'per-agent'
 const vnc = desktopEnabled
   ? new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024 })
   : undefined
+const vncHeartbeat = vnc && setInterval(() => {
+  for (const socket of vnc.clients) {
+    if (socket.openbotAlive === false) {
+      socket.terminate()
+      continue
+    }
+    socket.openbotAlive = false
+    socket.ping()
+  }
+}, 15_000)
+vncHeartbeat?.unref()
 const staticRoot = join(process.cwd(), 'dist/client')
 const contentTypes = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff': 'font/woff', '.woff2': 'font/woff2' }
 
 vnc?.on('connection', async (socket, _request, agentId) => {
-  const agent = await getAgent(agentId)
+  socket.openbotAlive = true
+  socket.on('pong', () => { socket.openbotAlive = true })
+  let agent
+  try {
+    agent = await getAgent(agentId)
+  } catch {
+    socket.close(1011, 'Could not resolve agent desktop')
+    return
+  }
+  if (socket.readyState !== 1) return
   const display = agent?.xDisplayNumber
   if (display === null || display === undefined) {
     socket.close(1008, 'Agent desktop unavailable')
     return
   }
   const vncSocket = connect({ host: '127.0.0.1', port: 5900 + display })
+  vncSocket.setKeepAlive(true, 15_000)
+  socket.on('close', () => vncSocket.destroy())
+  socket.on('error', () => vncSocket.destroy())
   vncSocket.on('connect', () => {
+    if (socket.readyState !== 1) {
+      vncSocket.destroy()
+      return
+    }
     socket.on('message', (data) => vncSocket.write(data))
-    socket.on('close', () => vncSocket.destroy())
-    socket.on('error', () => vncSocket.destroy())
   })
   vncSocket.on('data', (data) => {
     if (socket.readyState === 1) socket.send(data)
@@ -39,6 +64,8 @@ vnc?.on('connection', async (socket, _request, agentId) => {
   vncSocket.on('error', () => socket.close(1011, 'VNC connection failed'))
   vncSocket.on('close', () => socket.close())
 })
+
+vnc?.on('close', () => clearInterval(vncHeartbeat))
 
 const server = createServer(async (request, response) => {
   const origin = request.headers.origin

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type RfbClient from '@novnc/novnc'
 import type { MemoryItem, MemoryKind, SafeMcpAccount, SafeMcpServer } from '@openbot/db'
 import { FileText, Maximize2, Pencil, Plus, Trash2 } from 'lucide-react'
@@ -20,6 +20,85 @@ import {
 import { BotAvatar } from './bot-avatar'
 import type { Bot, Conversation } from './data'
 import { createDesktopClipboardController } from './desktop-clipboard'
+import { desktopReconnectDelay, instrumentDesktopLiveness } from './desktop-liveness'
+
+type DesktopConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'error'
+
+const desktopConnectionLabels: Record<DesktopConnectionState, string> = {
+  connecting: 'Connecting',
+  connected: 'Connected',
+  reconnecting: 'Reconnecting',
+  disconnected: 'Disconnected',
+  error: 'Connection failed',
+}
+
+type ClipboardRfbInternals = {
+  _sock: object
+  _clipboardServerCapabilitiesFormats: Record<number, boolean>
+  _clipboardServerCapabilitiesActions: Record<number, boolean>
+}
+
+type ClipboardRfbMessages = {
+  extendedClipboardProvide: (socket: object, ...args: unknown[]) => unknown
+}
+
+const clipboardProvideWaiters = new WeakMap<ClipboardRfbMessages, {
+  original: ClipboardRfbMessages['extendedClipboardProvide']
+  waiters: Map<object, Set<() => void>>
+}>()
+
+function waitForClipboardProvide(messages: ClipboardRfbMessages, socket: object) {
+  let state = clipboardProvideWaiters.get(messages)
+  if (!state) {
+    const original = messages.extendedClipboardProvide
+    state = { original, waiters: new Map() }
+    clipboardProvideWaiters.set(messages, state)
+    messages.extendedClipboardProvide = function (providedSocket, ...args) {
+      const result = original.call(this, providedSocket, ...args)
+      const current = clipboardProvideWaiters.get(messages)
+      const matching = current?.waiters.get(providedSocket)
+      if (matching) for (const finish of [...matching]) finish()
+      return result
+    }
+  }
+
+  const activeState = state
+  const promise = new Promise<void>((resolve) => {
+    let settled = false
+    let timeout: number | undefined
+    const finish = () => {
+      if (settled) return
+      settled = true
+      window.clearTimeout(timeout)
+      const current = clipboardProvideWaiters.get(messages)
+      const socketWaiters = current?.waiters.get(socket)
+      socketWaiters?.delete(finish)
+      if (socketWaiters?.size === 0) current?.waiters.delete(socket)
+      if (current?.waiters.size === 0) {
+        messages.extendedClipboardProvide = current.original
+        clipboardProvideWaiters.delete(messages)
+      }
+      resolve()
+    }
+    const socketWaiters = activeState.waiters.get(socket) ?? new Set()
+    socketWaiters.add(finish)
+    activeState.waiters.set(socket, socketWaiters)
+    timeout = window.setTimeout(finish, 2_000)
+  })
+  return promise
+}
+
+function pasteRfbClipboard(rfb: RfbClient, RFB: typeof RfbClient, text: string) {
+  const internals = rfb as RfbClient & ClipboardRfbInternals
+  const messages = (RFB as unknown as { messages: ClipboardRfbMessages }).messages
+  const usesExtendedClipboard = internals._clipboardServerCapabilitiesFormats[1]
+    && internals._clipboardServerCapabilitiesActions[1 << 27]
+  const provided = usesExtendedClipboard
+    ? waitForClipboardProvide(messages, internals._sock)
+    : Promise.resolve()
+  rfb.clipboardPasteFrom(text)
+  return provided
+}
 
 export function Inspector({
   conversation,
@@ -53,6 +132,8 @@ export function Inspector({
   const [memoryDraft, setMemoryDraft] = useState('')
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [desktopOpen, setDesktopOpen] = useState(false)
+  const [desktopConnection, setDesktopConnection] = useState<DesktopConnectionState>('disconnected')
+  const [viewerPresent, setViewerPresent] = useState(false)
 
   useEffect(() => {
     if (!activeAgentId || !desktopEnabled) return
@@ -223,14 +304,26 @@ export function Inspector({
           <Maximize2 className="absolute right-2 top-2 z-10 size-3.5 text-white opacity-0 drop-shadow group-hover:opacity-100" />
         </button>
         <div className="mt-2 flex items-center gap-1.5">
-          <span className="size-1.5 rounded-full bg-success" />
-          <span className="text-xs text-muted-foreground">Shared machine</span>
+          <span className={`size-1.5 rounded-full ${desktopConnection === 'connected' ? 'bg-success' : desktopConnection === 'reconnecting' || desktopConnection === 'connecting' ? 'bg-warning' : 'bg-muted-foreground/40'}`} />
+          <span className="text-xs text-muted-foreground">
+            {desktopOpen
+              ? `${desktopConnectionLabels[desktopConnection]} · ${viewerPresent ? 'local operator active' : 'local operator away'}`
+              : 'Local viewer closed'}
+          </span>
         </div>
         <DesktopDialog
           open={desktopOpen}
-          onOpenChange={setDesktopOpen}
+          onOpenChange={(nextOpen) => {
+            setDesktopOpen(nextOpen)
+            if (!nextOpen) {
+              setDesktopConnection('disconnected')
+              setViewerPresent(false)
+            }
+          }}
           agentId={activeAgentId}
           title={conversation.title}
+          onConnectionChange={setDesktopConnection}
+          onPresenceChange={setViewerPresent}
         />
       </section>
       )}
@@ -431,49 +524,193 @@ function DesktopDialog({
   onOpenChange,
   agentId,
   title,
+  onConnectionChange,
+  onPresenceChange,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   agentId: string
   title: string
+  onConnectionChange: (connection: DesktopConnectionState) => void
+  onPresenceChange: (present: boolean) => void
 }) {
   const [viewerElement, setViewerElement] = useState<HTMLDivElement | null>(null)
-  const [connection, setConnection] = useState<'connecting' | 'connected' | 'error'>('connecting')
-  const [connectionError, setConnectionError] = useState<string | null>(null)
+  const [connection, setConnection] = useState<DesktopConnectionState>('connecting')
+  const [connectionMessage, setConnectionMessage] = useState<string | null>(null)
+  const [liveness, setLiveness] = useState<'checking' | 'healthy' | 'stalled'>('checking')
+  const [clipboardAccess, setClipboardAccess] = useState<'checking' | 'active' | 'shortcut-only'>('checking')
+  const [remoteClipboardText, setRemoteClipboardText] = useState('')
+  const [viewerPresent, setViewerPresent] = useState(false)
   const [connectionAttempt, setConnectionAttempt] = useState(0)
+  const reconnectAttempt = useRef(0)
+
+  useEffect(() => {
+    if (open) return
+    reconnectAttempt.current = 0
+    setViewerPresent(false)
+    setRemoteClipboardText('')
+    onPresenceChange(false)
+  }, [open, onPresenceChange])
+
+  useEffect(() => {
+    if (!open || !viewerElement) return
+    let lastPresence: boolean | null = null
+    const reportPresence = (present: boolean) => {
+      if (lastPresence === present) return
+      lastPresence = present
+      setViewerPresent(present)
+      onPresenceChange(present)
+    }
+    const onPresent = () => reportPresence(true)
+    const onAway = () => reportPresence(false)
+    const onFocusOut = (event: FocusEvent) => {
+      if (!(event.relatedTarget instanceof Node) || !viewerElement.contains(event.relatedTarget)) {
+        reportPresence(false)
+      }
+    }
+    const onVisibilityChange = () => reportPresence(document.visibilityState === 'visible'
+      && viewerElement.matches(':hover'))
+
+    reportPresence(false)
+    viewerElement.addEventListener('pointerenter', onPresent)
+    viewerElement.addEventListener('pointerleave', onAway)
+    viewerElement.addEventListener('pointermove', onPresent, { passive: true })
+    viewerElement.addEventListener('keydown', onPresent, true)
+    viewerElement.addEventListener('focusin', onPresent)
+    viewerElement.addEventListener('focusout', onFocusOut)
+    window.addEventListener('blur', onAway)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      viewerElement.removeEventListener('pointerenter', onPresent)
+      viewerElement.removeEventListener('pointerleave', onAway)
+      viewerElement.removeEventListener('pointermove', onPresent)
+      viewerElement.removeEventListener('keydown', onPresent, true)
+      viewerElement.removeEventListener('focusin', onPresent)
+      viewerElement.removeEventListener('focusout', onFocusOut)
+      window.removeEventListener('blur', onAway)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      reportPresence(false)
+    }
+  }, [open, viewerElement, onPresenceChange])
 
   useEffect(() => {
     if (!open || !viewerElement) return
     let disposed = false
-    let failed = false
+    let terminalFailure = false
+    let connected = false
+    let retryScheduled = false
+    let attemptExpired = false
     let rfb: RfbClient | undefined
     let removeClipboardHandlers: (() => void) | undefined
-    setConnection('connecting')
-    setConnectionError(null)
-    const fail = (message: string) => {
-      if (disposed || failed) return
-      failed = true
-      window.clearTimeout(connectionTimeout)
-      setConnection('error')
-      setConnectionError(message)
+    let livenessInstrumentation: ReturnType<typeof instrumentDesktopLiveness> | undefined
+    let removeRfbHandlers: (() => void) | undefined
+    let retryTimer: number | undefined
+
+    const updateConnection = (next: DesktopConnectionState, message: string | null = null) => {
+      if (disposed) return
+      setConnection(next)
+      setConnectionMessage(message)
+      onConnectionChange(next)
     }
+    const detachInteraction = () => {
+      removeClipboardHandlers?.()
+      removeClipboardHandlers = undefined
+      livenessInstrumentation?.dispose()
+      livenessInstrumentation = undefined
+    }
+    const startNextAttempt = () => {
+      if (disposed) return
+      retryScheduled = true
+      setConnectionAttempt((attempt) => attempt + 1)
+    }
+    const scheduleReconnect = (message: string) => {
+      if (disposed || terminalFailure || retryScheduled) return
+      connected = false
+      attemptExpired = true
+      detachInteraction()
+      setLiveness('checking')
+      window.clearTimeout(connectionTimeout)
+      if (!navigator.onLine) {
+        retryScheduled = true
+        updateConnection('reconnecting', 'Waiting for network access')
+        return
+      }
+      retryScheduled = true
+      const delay = desktopReconnectDelay(++reconnectAttempt.current)
+      updateConnection('reconnecting', `${message} Retrying in ${Math.ceil(delay / 1_000)}s.`)
+      retryTimer = window.setTimeout(startNextAttempt, delay)
+    }
+    const fail = (message: string) => {
+      if (disposed || terminalFailure) return
+      terminalFailure = true
+      connected = false
+      window.clearTimeout(connectionTimeout)
+      window.clearTimeout(retryTimer)
+      detachInteraction()
+      setLiveness('checking')
+      updateConnection('error', message)
+    }
+    updateConnection(reconnectAttempt.current > 0 ? 'reconnecting' : 'connecting')
+    setLiveness('checking')
     const connectionTimeout = window.setTimeout(() => {
-      fail('The desktop did not connect within 15 seconds')
+      scheduleReconnect('The desktop did not connect within 15 seconds.')
       rfb?.disconnect()
     }, 15_000)
+    const onOffline = () => {
+      if (disposed || terminalFailure) return
+      connected = false
+      attemptExpired = true
+      retryScheduled = true
+      window.clearTimeout(connectionTimeout)
+      window.clearTimeout(retryTimer)
+      detachInteraction()
+      setLiveness('checking')
+      updateConnection('reconnecting', 'Waiting for network access')
+      rfb?.disconnect()
+    }
+    const onOnline = () => {
+      if (disposed || terminalFailure || connected) return
+      window.clearTimeout(retryTimer)
+      startNextAttempt()
+    }
+    window.addEventListener('offline', onOffline)
+    window.addEventListener('online', onOnline)
+
     void import('@novnc/novnc').then(({ default: RFB }) => {
-      if (disposed || failed) return
+      if (disposed || terminalFailure || attemptExpired) return
       // The WebSocket endpoint is server-owned; the browser never receives a VNC port.
       const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
       rfb = new RFB(viewerElement, `${scheme}://${window.location.host}/api/agents/${encodeURIComponent(agentId)}/desktop/vnc`)
+      rfb.scaleViewport = true
+      rfb.resizeSession = false
+      rfb.viewOnly = false
+      const canvas = viewerElement.querySelector('canvas')
+      canvas?.setAttribute('aria-label', 'Remote agent desktop')
+      if (viewerElement === document.activeElement) rfb.focus()
+      const browserClipboard = window.isSecureContext && 'clipboard' in navigator
+        ? navigator.clipboard
+        : undefined
+      setClipboardAccess(browserClipboard ? 'checking' : 'shortcut-only')
       const clipboard = createDesktopClipboardController({
-        isMac: /Mac|iPhone|iPad/.test(navigator.platform ?? ''),
-        rfb,
-        writeClipboard: async (text) => navigator.clipboard?.writeText(text),
+        isMac: /Mac/i.test(navigator.platform ?? ''),
+        rfb: {
+          sendKey: (...args) => rfb?.sendKey(...args),
+          clipboardPasteFrom: (text) => pasteRfbClipboard(rfb as RfbClient, RFB, text),
+        },
+        readClipboard: browserClipboard ? () => browserClipboard.readText() : undefined,
+        writeClipboard: browserClipboard
+          ? (text) => browserClipboard.writeText(text)
+          : async () => { throw new Error('Clipboard API unavailable') },
+        onClipboardAccess: (available) => setClipboardAccess(available ? 'active' : 'shortcut-only'),
+        onRemoteClipboard: setRemoteClipboardText,
       })
       const onKeyDown = (event: KeyboardEvent) => clipboard.keyDown(event)
       const onKeyUp = (event: KeyboardEvent) => clipboard.keyUp(event)
-      const onPointerDown = () => clipboard.pointerDown()
+      const onPointerDown = () => { void clipboard.pointerDown() }
+      const onFocus = () => { void clipboard.syncHostClipboard() }
+      const onVisibilityChange = () => {
+        if (document.visibilityState === 'visible') void clipboard.syncHostClipboard()
+      }
       const onPaste = (event: ClipboardEvent) => {
         const target = event.target
         const viewerFocused = target instanceof Node && viewerElement.contains(target)
@@ -499,6 +736,8 @@ function DesktopDialog({
       viewerElement.addEventListener('pointerdown', onPointerDown, true)
       window.addEventListener('paste', onPaste, true)
       window.addEventListener('blur', onBlur)
+      window.addEventListener('focus', onFocus)
+      document.addEventListener('visibilitychange', onVisibilityChange)
       rfb.addEventListener('clipboard', onClipboard)
       removeClipboardHandlers = () => {
         clipboard.release()
@@ -507,45 +746,126 @@ function DesktopDialog({
         viewerElement.removeEventListener('pointerdown', onPointerDown, true)
         window.removeEventListener('paste', onPaste, true)
         window.removeEventListener('blur', onBlur)
+        window.removeEventListener('focus', onFocus)
+        document.removeEventListener('visibilitychange', onVisibilityChange)
         rfb?.removeEventListener('clipboard', onClipboard)
       }
-      rfb.addEventListener('connect', () => {
-        if (disposed || failed) return
+      livenessInstrumentation = instrumentDesktopLiveness({
+        rfb,
+        viewer: viewerElement,
+        isConnected: () => connected,
+        onStall: (report) => {
+          setLiveness('stalled')
+          console.warn('[desktop liveness]', report)
+        },
+        onRecovery: () => setLiveness('healthy'),
+      })
+      const onConnect = () => {
+        if (disposed || terminalFailure) return
+        connected = true
+        retryScheduled = false
+        reconnectAttempt.current = 0
         window.clearTimeout(connectionTimeout)
-        setConnection('connected')
-      })
-      rfb.addEventListener('disconnect', () => {
-        fail('The desktop connection closed')
-      })
-      rfb.addEventListener('securityfailure', (event) => {
+        window.clearTimeout(retryTimer)
+        updateConnection('connected')
+        setLiveness('healthy')
+        livenessInstrumentation?.connected()
+        void clipboard.syncHostClipboard()
+      }
+      const onDisconnect = (event: CustomEvent<{ clean: boolean }>) => {
+        scheduleReconnect(event.detail.clean
+          ? 'The desktop connection closed.'
+          : 'The desktop connection was interrupted.')
+      }
+      const onSecurityFailure = (event: CustomEvent<{ reason?: string }>) => {
         fail(event.detail.reason ?? 'The desktop rejected the connection')
-      })
-      rfb.scaleViewport = true
-      rfb.resizeSession = false
-      rfb.viewOnly = false
+      }
+      rfb.addEventListener('connect', onConnect)
+      rfb.addEventListener('disconnect', onDisconnect)
+      rfb.addEventListener('securityfailure', onSecurityFailure)
+      removeRfbHandlers = () => {
+        rfb?.removeEventListener('connect', onConnect)
+        rfb?.removeEventListener('disconnect', onDisconnect)
+        rfb?.removeEventListener('securityfailure', onSecurityFailure)
+      }
     }).catch((cause) => {
       fail(cause instanceof Error ? cause.message : 'Could not initialize the desktop viewer')
     })
     return () => {
       disposed = true
       window.clearTimeout(connectionTimeout)
-      removeClipboardHandlers?.()
+      window.clearTimeout(retryTimer)
+      window.removeEventListener('offline', onOffline)
+      window.removeEventListener('online', onOnline)
+      detachInteraction()
+      removeRfbHandlers?.()
       rfb?.disconnect()
     }
-  }, [open, agentId, viewerElement, connectionAttempt])
+  }, [open, agentId, viewerElement, connectionAttempt, onConnectionChange])
+
+  const retryNow = () => {
+    reconnectAttempt.current = 0
+    setConnectionAttempt((attempt) => attempt + 1)
+  }
+
+  const copyRemoteClipboardText = async () => {
+    if (!remoteClipboardText) return
+    try {
+      if (window.isSecureContext && 'clipboard' in navigator) {
+        await navigator.clipboard.writeText(remoteClipboardText)
+        setClipboardAccess('active')
+        return
+      }
+    } catch { /* Fall back to a user-activated document copy. */ }
+    const textarea = document.createElement('textarea')
+    textarea.value = remoteClipboardText
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.append(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    textarea.remove()
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex h-[90vh] w-[95vw] max-w-none flex-col sm:max-w-none">
-        <DialogHeader><DialogTitle>Live View · {title}</DialogTitle></DialogHeader>
-        <div ref={setViewerElement} className="min-h-0 flex-1 overflow-hidden rounded-lg bg-black" />
-        {connection === 'connecting' && <p className="text-center text-xs text-muted-foreground">Connecting to desktop…</p>}
-        {connection === 'error' && (
-          <div className="flex items-center justify-center gap-3 text-xs text-destructive">
-            <span>{connectionError}</span>
-            <Button size="xs" variant="outline" onClick={() => setConnectionAttempt((attempt) => attempt + 1)}>Retry</Button>
-          </div>
-        )}
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 pr-8">
+            <span className="flex-1">Live View · {title}</span>
+            <span className="flex items-center gap-1.5 text-xs font-normal text-muted-foreground">
+              <span className={`size-1.5 rounded-full ${connection === 'connected' ? 'bg-success' : connection === 'connecting' || connection === 'reconnecting' ? 'bg-warning' : 'bg-destructive'}`} />
+              {desktopConnectionLabels[connection]}
+            </span>
+          </DialogTitle>
+        </DialogHeader>
+        <div
+          ref={setViewerElement}
+          className="min-h-0 flex-1 overflow-hidden rounded-lg bg-black outline-none focus-within:ring-2 focus-within:ring-ring focus-visible:ring-2 focus-visible:ring-ring"
+          tabIndex={0}
+          aria-label="Interactive agent desktop"
+          onFocus={(event) => {
+            if (event.target !== event.currentTarget) return
+            const canvas = event.currentTarget.querySelector('canvas')
+            canvas?.setAttribute('aria-label', 'Remote agent desktop')
+            canvas?.focus()
+          }}
+        />
+        <div className="flex min-h-6 items-center justify-center gap-3 text-xs" aria-live="polite">
+          <span className="text-muted-foreground">{viewerPresent ? 'Local operator active' : 'Local operator away'}</span>
+          <span className="text-muted-foreground">
+            Clipboard {clipboardAccess === 'active' ? 'sync active' : clipboardAccess === 'checking' ? 'sync checking' : 'access restricted'}
+          </span>
+          {clipboardAccess === 'shortcut-only' && remoteClipboardText && (
+            <Button size="xs" variant="outline" onClick={() => void copyRemoteClipboardText()}>Copy remote text</Button>
+          )}
+          {connectionMessage && <span className={connection === 'error' ? 'text-destructive' : 'text-muted-foreground'}>{connectionMessage}</span>}
+          {connection === 'connected' && liveness === 'stalled' && <span className="text-warning">Desktop may be unresponsive</span>}
+          {connection === 'connected' && liveness !== 'stalled' && <span className="text-muted-foreground">Session responsive</span>}
+          {(connection === 'error' || connection === 'reconnecting' || liveness === 'stalled') && (
+            <Button size="xs" variant="outline" onClick={retryNow}>Retry now</Button>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   )

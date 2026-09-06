@@ -18,6 +18,7 @@ declare module '@novnc/novnc' {
     resizeSession: boolean
     viewOnly: boolean
     clipboardPasteFrom(text: string): void
+    focus(options?: FocusOptions): void
     sendKey(keysym: number, code: string, down?: boolean): void
     addEventListener<K extends keyof RfbEventMap>(
       type: K,
