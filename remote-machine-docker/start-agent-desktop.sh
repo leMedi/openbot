@@ -151,10 +151,30 @@ stop_recorded_process() {
     return
   fi
   pid=$(cat "$pid_file")
-  if recorded_process_matches "$name" "$pid"; then
-    kill -TERM "$pid" 2>/dev/null || true
-  fi
+  stop_matching_process "$name" "$pid"
   rm -f "$pid_file"
+}
+
+stop_matching_process() {
+  name=$1
+  pid=$2
+  if ! recorded_process_matches "$name" "$pid"; then
+    return
+  fi
+  kill -TERM "$pid" 2>/dev/null || true
+  attempts=0
+  while [ "$attempts" -lt 50 ] && recorded_process_matches "$name" "$pid"; do
+    attempts=$((attempts + 1))
+    sleep 0.1
+  done
+  if recorded_process_matches "$name" "$pid"; then
+    kill -KILL "$pid" 2>/dev/null || true
+    attempts=0
+    while [ "$attempts" -lt 20 ] && recorded_process_matches "$name" "$pid"; do
+      attempts=$((attempts + 1))
+      sleep 0.05
+    done
+  fi
 }
 
 start_process() {
@@ -180,17 +200,9 @@ cleanup_failed_start() {
         ''|0|*[!0-9]*) xvfb_pid= ;;
       esac
       if [ -n "$xvfb_pid" ] && recorded_process_matches xvfb "$xvfb_pid"; then
-        kill -TERM -- "-$xvfb_pid" 2>/dev/null || true
-        attempts=0
-        while [ "$attempts" -lt 20 ] \
-          && { [ -e "/tmp/.X$display_number-lock" ] || [ -S "/tmp/.X11-unix/X$display_number" ]; }; do
-          attempts=$((attempts + 1))
-          sleep 0.05
-        done
-        if [ -e "/tmp/.X$display_number-lock" ] || [ -S "/tmp/.X11-unix/X$display_number" ]; then
-          kill -KILL -- "-$xvfb_pid" 2>/dev/null || true
-        fi
+        stop_matching_process xvfb "$xvfb_pid"
       fi
+      rm -f "/tmp/.X$display_number-lock" "/tmp/.X11-unix/X$display_number"
       rm -f "$window_state"
     fi
     if [ "$metadata_was_present" -eq 1 ] && [ -f "$metadata_backup" ]; then

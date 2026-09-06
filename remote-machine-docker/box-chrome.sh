@@ -188,6 +188,14 @@ stop_failed_chrome() {
   rm -f "$pid_file"
 }
 
+report_chrome_start_failure() {
+  echo "Google Chrome did not become ready on DISPLAY=$DISPLAY" >&2
+  if [ -s "$log_file" ]; then
+    echo 'Chrome startup log:' >&2
+    tail -n 100 "$log_file" >&2
+  fi
+}
+
 ensure_chrome_ready() {
   process_id=
   if [ -f "$pid_file" ]; then
@@ -214,6 +222,7 @@ ensure_chrome_ready() {
     exit 1
   fi
 
+  : >"$log_file"
   run_chrome --no-startup-window 8>&- </dev/null >>"$log_file" 2>&1 &
   process_id=$!
   printf '%s\n' "$process_id" >"$pid_file"
@@ -229,7 +238,7 @@ ensure_chrome_ready() {
     sleep 0.1
   done
   stop_failed_chrome "$process_id"
-  echo "Google Chrome did not become ready on DISPLAY=$DISPLAY" >&2
+  report_chrome_start_failure
   exit 1
 }
 
