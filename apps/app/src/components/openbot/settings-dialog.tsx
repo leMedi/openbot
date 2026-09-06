@@ -13,6 +13,7 @@ import {
   ChevronRight,
   Copy,
   Database,
+  Download,
   ExternalLink,
   MessageCircle,
   Loader2,
@@ -54,6 +55,7 @@ import {
   getServerUpdate,
   startServerUpdate,
 } from '@/server/config'
+import { formatServerLogs, type ServerLogEntry, type ServerLogLevel } from '@/lib/server-logs'
 
 type Tab = 'general' | 'providers' | 'server' | 'data'
 
@@ -1205,8 +1207,95 @@ function ServerTab({
           <div className="flex items-center gap-3 py-3.5"><span className="flex-1 text-sm font-medium">{status?.updateAvailable ? `Update available: ${status.latestVersion}` : 'Status'}</span>{status?.updateAvailable ? <Button size="xs" onClick={update} disabled={updating}><ArrowUp data-icon="inline-start" />{updating ? 'Updating…' : `Update to ${status.latestVersion}`}</Button> : <span className="flex items-center gap-1 text-sm text-success"><Check className="size-4" /> Up to date</span>}<Button size="icon-xs" variant="ghost" onClick={check} disabled={checking} aria-label="Check for updates"><RefreshCw className={cn('size-4', checking && 'animate-spin')} /></Button></div>
         </div>
         <p className="mt-2 px-1 text-xs leading-normal text-muted-foreground/70">Last checked {status?.checkedAt ? new Date(status.checkedAt).toLocaleString() : 'never'}. Updates are checked hourly.</p>
-       </section>
-       {error && <p className="px-1 text-xs text-destructive">{error}</p>}
+      </section>
+      <ServerLogs open={open} />
+      {error && <p className="px-1 text-xs text-destructive">{error}</p>}
     </div>
+  )
+}
+
+const LOG_LEVEL_CLASS: Record<ServerLogLevel, string> = {
+  debug: 'text-muted-foreground/60',
+  info: 'text-success',
+  warn: 'text-warning',
+  error: 'text-destructive',
+}
+
+const MAX_VISIBLE_LOGS = 500
+
+function formatLogTime(iso: string) {
+  return new Date(iso).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+function ServerLogs({ open }: { open: boolean }) {
+  const [entries, setEntries] = useState<ServerLogEntry[]>([])
+  const [streaming, setStreaming] = useState(false)
+  const paneRef = useRef<HTMLDivElement | null>(null)
+  const pinnedRef = useRef(true)
+
+  useEffect(() => {
+    if (!open) return
+    const source = new EventSource('/api/server-logs/stream')
+    source.onopen = () => setStreaming(true)
+    source.onmessage = (message) => {
+      const entry = JSON.parse(message.data) as ServerLogEntry
+      setEntries((current) => {
+        if (current.some((item) => item.id === entry.id)) return current
+        const next = [...current, entry]
+        return next.length > MAX_VISIBLE_LOGS ? next.slice(next.length - MAX_VISIBLE_LOGS) : next
+      })
+    }
+    // EventSource reconnects on its own and resumes from Last-Event-ID.
+    source.onerror = () => setStreaming(false)
+    return () => { source.close(); setStreaming(false) }
+  }, [open])
+
+  useEffect(() => {
+    const pane = paneRef.current
+    if (pane && pinnedRef.current) pane.scrollTop = pane.scrollHeight
+  }, [entries])
+
+  function onScroll() {
+    const pane = paneRef.current
+    if (!pane) return
+    pinnedRef.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 24
+  }
+
+  function download() {
+    const url = URL.createObjectURL(new Blob([formatServerLogs(entries)], { type: 'text/plain' }))
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `openbot-server-logs-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.txt`
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
+
+  return (
+    <section>
+      <h3 className="mb-2 text-sm font-semibold text-foreground/85">Logs</h3>
+      <div className="overflow-hidden rounded-xl bg-card">
+        <div className="flex items-center gap-2.5 border-b px-4 py-3">
+          <span className="text-sm font-medium">Live logs</span>
+          <span className={cn('flex items-center gap-1.5 text-[11px] font-medium', streaming ? 'text-success' : 'text-muted-foreground')}>
+            <span className={cn('size-1.5 rounded-full', streaming ? 'animate-pulse bg-success' : 'bg-muted-foreground/50')} />
+            {streaming ? 'Streaming' : 'Reconnecting…'}
+          </span>
+          <span className="flex-1" />
+          <Button size="xs" variant="outline" onClick={download} disabled={entries.length === 0}><Download data-icon="inline-start" /> Download</Button>
+        </div>
+        <div ref={paneRef} onScroll={onScroll} className="h-[236px] overflow-y-auto bg-background px-4 py-2.5 font-mono text-[11.5px] leading-[1.8]">
+          {entries.length === 0
+            ? <p className="text-muted-foreground/60">{streaming ? 'Waiting for server output…' : 'Connecting to the server…'}</p>
+            : entries.map((entry) => (
+              <div key={entry.id} className="flex gap-3 whitespace-nowrap">
+                <span className="shrink-0 text-muted-foreground/60">{formatLogTime(entry.time)}</span>
+                <span className={cn('w-[46px] shrink-0 font-semibold uppercase', LOG_LEVEL_CLASS[entry.level])}>{entry.level}</span>
+                <span className="truncate text-foreground/85" title={entry.message}>{entry.message}</span>
+              </div>
+            ))}
+        </div>
+      </div>
+      <p className="mt-2 px-1 text-xs leading-normal text-muted-foreground/70">The last {MAX_VISIBLE_LOGS} lines of server output. Bots run on this server.</p>
+    </section>
   )
 }
