@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Validate shell scripts
-        run: sh -n remote-machine-docker/entrypoint.sh remote-machine-docker/request-update.sh remote-machine-docker/start-agent-desktop.sh
+        run: sh -n remote-machine-docker/entrypoint.sh remote-machine-docker/launch-chrome.sh remote-machine-docker/request-update.sh remote-machine-docker/start-agent-desktop.sh
 
       - uses: docker/setup-buildx-action@v3
 
@@ -47,7 +47,7 @@ jobs:
             type=sha,format=long,prefix=main-
           labels: |
             org.opencontainers.image.title=OpenBot Remote Machine
-            org.opencontainers.image.description=OpenBot with Openbox, TigerVNC, and Google Chrome
+            org.opencontainers.image.description=OpenBot with Openbox, LXPanel, TigerVNC, and Google Chrome
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
 
