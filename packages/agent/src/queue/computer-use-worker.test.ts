@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import test from 'node:test'
+import type { TurnStreamEvent } from './turn-runner'
 
 const testData = path.resolve(
   process.cwd(),
@@ -13,6 +14,7 @@ process.env.OPENBOT_DATA_DIR = testData
 
 const {
   acceptUserMessage,
+  appendConversationMessage,
   claimQueuedTurn,
   completeTurn,
   computerUseCompletionWakeSchema,
@@ -23,7 +25,7 @@ const {
   findNextQueuedTurnForAgent,
   getTurn,
 } = await import('@openbot/db')
-const { cancelTurnExecution } = await import('./turn-runner')
+const { cancelTurnExecution, watchTurn } = await import('./turn-runner')
 
 async function runningParent() {
   const created = await createAgent({ name: `Worker test ${crypto.randomUUID()}` })
@@ -152,4 +154,47 @@ test('worker failure is reported through a completion wake', async () => {
       .status,
     'failed',
   )
+})
+
+test('a persisted stream follows the parent, worker, and completion wake', async () => {
+  const context = await runningParent()
+  const worker = await enqueueComputerUseWorkerTurn({
+    parentTurnId: context.parent.id,
+    parentToolCallId: 'call_stream',
+    task: 'Open Settings.',
+    title: 'Open Settings',
+  })
+  await completeTurn(context.parent.id, { status: 'succeeded' })
+  assert.ok(await claimQueuedTurn(worker.id))
+  const completion = await finalizeComputerUseWorkerTurn({
+    turnId: worker.id,
+    status: 'succeeded',
+    summary: 'Settings opened.',
+  })
+  assert.ok(completion.wakeTurn)
+  assert.ok(await claimQueuedTurn(completion.wakeTurn.id))
+  const delivered = await appendConversationMessage({
+    conversationId: context.conversation.id,
+    turnId: completion.wakeTurn.id,
+    kind: 'message',
+    role: 'assistant',
+    direction: 'outbound',
+    bodyText: 'Settings is open.',
+    payload: {
+      version: 1,
+      deliveryKind: 'send-message',
+      type: 'text',
+      toolCallId: 'call_report',
+    },
+    senderAgentId: null,
+  })
+  await completeTurn(completion.wakeTurn.id, { status: 'succeeded' })
+
+  const events: TurnStreamEvent[] = []
+  await watchTurn(context.parent.id, (event) => events.push(event))
+
+  assert.deepEqual(events, [
+    { type: 'message', message: delivered },
+    { type: 'done', turnId: completion.wakeTurn.id },
+  ])
 })

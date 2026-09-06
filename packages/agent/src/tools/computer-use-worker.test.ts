@@ -3,6 +3,7 @@ import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import test from 'node:test'
 import type { Agent, ModelToolCall } from '@openbot/db'
+import type { ToolTurnContext } from './send-message'
 
 const testData = path.resolve(
   process.cwd(),
@@ -101,4 +102,35 @@ test('rejects unavailable and invalid computer-use delegation', async () => {
     await executeAgentToolCall(agent, toolCall({ task: '' })),
   )
   assert.match(invalid.error, /Invalid arguments/)
+})
+
+test('limits legacy parent Computer access to one resumed call', async () => {
+  let available = true
+  let executions = 0
+  const context = {
+    desktop: {
+      computer: async () => {
+        executions += 1
+        return { ok: true }
+      },
+    },
+    allowComputerCall: () => {
+      if (!available) return false
+      available = false
+      return true
+    },
+  } as unknown as ToolTurnContext
+  const call = (id: string): ModelToolCall => ({
+    id,
+    type: 'function',
+    function: {
+      name: 'Computer',
+      arguments: JSON.stringify({ action: 'wait', duration_ms: 1 }),
+    },
+  })
+
+  assert.equal(JSON.parse(await executeAgentToolCall(agent, call('first'), context)).ok, true)
+  const second = JSON.parse(await executeAgentToolCall(agent, call('second'), context))
+  assert.match(second.summary, /one previously approved action/)
+  assert.equal(executions, 1)
 })

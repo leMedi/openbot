@@ -184,6 +184,8 @@ export type ToolTurnContext = {
   ) => Promise<{ deliveryId: string; turn: Turn }>
   /** Fresh server-local Remote Desktop capability for this turn. */
   desktop?: DesktopToolRuntime
+  /** Optional runtime gate for legacy parent turns that resumed an old approval. */
+  allowComputerCall?: () => boolean
 }
 
 const ATTACHMENT_SIZE_LIMIT = 25 * 1024 * 1024

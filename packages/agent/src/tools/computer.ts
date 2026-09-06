@@ -123,5 +123,12 @@ export async function executeComputerTool(
   if (!parsed.success) {
     return context.desktop.persistInvalid(call.id, COMPUTER_TOOL_NAME, parsed.error)
   }
+  if (context.allowComputerCall && !context.allowComputerCall()) {
+    return {
+      ok: false,
+      status: 'invalid_input',
+      summary: 'Direct Computer access is limited to the one previously approved action',
+    }
+  }
   return context.desktop.computer(call.id, parsed.data)
 }

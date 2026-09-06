@@ -67,7 +67,11 @@ import {
   computerUseWorkerToolDefinitions,
   type ToolTurnContext,
 } from '../tools'
-import { COMPUTER_TOOL_NAME, SCREENSHOT_TOOL_NAME } from '../tools/computer'
+import {
+  computerToolDefinition,
+  COMPUTER_TOOL_NAME,
+  SCREENSHOT_TOOL_NAME,
+} from '../tools/computer'
 import { COMPUTER_USE_WORKER_TOOL_NAME } from '../tools/computer-use-worker'
 import { toPiBuiltinTools, toPiMcpTools } from '../tools/pi'
 import {
@@ -177,7 +181,6 @@ async function executeTurn(turnId: string) {
   let session: { dispose(): void } | undefined
   let conversationId: string | undefined
   let suspendedState: WaitingState | undefined
-  let computerWorkerTurnId: string | undefined
 
   try {
     const conversation = await getConversation(claimed.conversationId)
@@ -240,15 +243,22 @@ async function executeTurn(turnId: string) {
           }
         : undefined
     const computerApproval = computerApprovalFromWaitingState(waitingState)
+    let legacyComputerCallAvailable = !isComputerUseWorker && !!computerApproval
     const desktopEnabled = isAgentDesktopEnabled(agent.xDisplayNumber)
     if (isComputerUseWorker && !desktopEnabled) {
       throw new Error('The computer-use worker has no Remote Desktop')
     }
-    const configuredToolDefinitions = isComputerUseWorker
+    const baseToolDefinitions = isComputerUseWorker
       ? computerUseWorkerToolDefinitions
       : claimed.lane !== 'background'
         ? agentToolDefinitions
         : backgroundToolDefinitions
+    // A waiting Computer approval may have been created before ordinary turns
+    // lost direct Computer access. Let that exact persisted action finish.
+    const configuredToolDefinitions =
+      !isComputerUseWorker && computerApproval
+        ? [...baseToolDefinitions, computerToolDefinition]
+        : baseToolDefinitions
     const builtInToolDefinitions = desktopEnabled
       ? configuredToolDefinitions
       : configuredToolDefinitions.filter(
@@ -400,7 +410,6 @@ async function executeTurn(turnId: string) {
                 parentTurnId: turnId,
                 ...input,
               })
-              computerWorkerTurnId = worker.id
               return { turnId: worker.id }
             },
           }
@@ -413,6 +422,15 @@ async function executeTurn(turnId: string) {
         ensureDrainAfterCurrent(delivery.turn)
         return delivery
       },
+      ...(!isComputerUseWorker && computerApproval
+        ? {
+            allowComputerCall: () => {
+              if (!legacyComputerCallAvailable) return false
+              legacyComputerCallAvailable = false
+              return true
+            },
+          }
+        : {}),
     }
     if (desktopEnabled) {
       toolContext.desktop = new DesktopToolRuntime({
@@ -574,8 +592,14 @@ async function executeTurn(turnId: string) {
     }
 
     await finalizeTurnSuccess(turnId)
-    if (computerWorkerTurnId) emitHandoff([computerWorkerTurnId])
-    else emitTerminal({ type: 'done', turnId })
+    const computerWorkers = (await findChildTurns(turnId)).filter(
+      (child) => child.mode === 'computer-use',
+    )
+    if (computerWorkers.length > 0) {
+      emitHandoff(computerWorkers.map((worker) => worker.id))
+    } else {
+      emitTerminal({ type: 'done', turnId })
+    }
   } catch (error) {
     const message =
       (error instanceof Error ? error.message : '') || 'Turn execution failed'
@@ -964,7 +988,9 @@ export function watchTurn(
               child.source === 'computer-use-completion',
           )
           if (delegatedChildren.length > 0) {
-            siblings.push(...delegatedChildren.map((child) => child.id))
+            // A member's delegated work is part of that member's turn and must
+            // finish before an already queued later group member runs.
+            siblings.unshift(...delegatedChildren.map((child) => child.id))
           } else if (visibleRows.length === 0) {
             // A group orchestration turn succeeds by delegating: walk its
             // child turns (one per selected member) in round order.
