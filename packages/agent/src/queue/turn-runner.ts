@@ -453,6 +453,11 @@ async function executeTurn(turnId: string) {
         active.sendMessageCount += 1
         emit({ type: 'message', message })
       },
+      onReaction: (message) => {
+        active.delivered.push(message)
+        active.sendMessageCount += 1
+        emit({ type: 'message', message })
+      },
       suspend: async (state, delivery) => {
         const waiting = await deliverWidgetAndMarkTurnWaiting(turnId, state, {
           ...delivery,

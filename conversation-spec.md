@@ -90,7 +90,7 @@ Copy is unavailable for URLs, attachment paths, and structured payloads. Failed/
 - Tooltips/labels expose `You` and resolved reactor names.
 - User reactions update optimistically, then reconcile with the authoritative event; failure rolls back.
 - Clicking the current user's pill toggles their reaction.
-- Agent `ReactToMessage` targets only user messages using their `[t3u]` address and toggles the same emoji.
+- Agent `ReactToMessage` targets only user messages using their stable entry ID and toggles the same emoji.
 - A user reaction to an agent message may wake the agent with a hidden prompt; no reply is required.
 
 ## Waiting and Error States

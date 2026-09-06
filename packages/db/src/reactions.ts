@@ -10,6 +10,10 @@ export type ToggleUserReactionInput = {
   reaction: string
 }
 
+export type ToggleAgentReactionInput = ToggleUserReactionInput & {
+  agentId: string
+}
+
 /** Toggles the local user's reaction and atomically queues an author wake when added. */
 export async function toggleUserReaction(input: ToggleUserReactionInput) {
   const reaction = input.reaction.trim()
@@ -86,5 +90,52 @@ export async function toggleUserReaction(input: ToggleUserReactionInput) {
     }
 
     return { message: updated, applied, wakeTurn }
+  })
+}
+
+/** Toggles an agent-authored reaction on a user message without waking another agent. */
+export async function toggleAgentReaction(input: ToggleAgentReactionInput) {
+  const reaction = input.reaction.trim()
+  if (!reaction || reaction.length > 64) throw new Error('Reaction must be 1-64 characters')
+
+  return db.transaction(async (tx) => {
+    const [message] = await tx
+      .select()
+      .from(schema.conversationMessages)
+      .where(
+        and(
+          eq(schema.conversationMessages.conversationId, input.conversationId),
+          eq(schema.conversationMessages.id, input.messageId),
+        ),
+      )
+      .limit(1)
+    if (!message || message.kind !== 'message' || message.role !== 'user') {
+      throw new Error('User message not found')
+    }
+
+    const current = reactionsSchema.parse(message.reactionsJson)
+    const index = current.items.findIndex(
+      (item) => item.reaction === reaction && item.actorAgentId === input.agentId,
+    )
+    const applied = index === -1
+    const items = [...current.items]
+    if (applied) {
+      items.push({
+        reaction,
+        actorAgentId: input.agentId,
+        actorExternalId: null,
+        createdAt: Date.now(),
+      })
+    } else {
+      items.splice(index, 1)
+    }
+    const reactionsJson = reactionsSchema.parse({ version: 1, items })
+    const [updated] = await tx
+      .update(schema.conversationMessages)
+      .set({ reactionsJson, updatedAt: Date.now() })
+      .where(eq(schema.conversationMessages.id, message.id))
+      .returning()
+
+    return { message: updated, applied }
   })
 }

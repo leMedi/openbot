@@ -33,6 +33,12 @@ import {
 } from './computer-use-worker'
 import { executeRead, readArgsSchema, readToolDefinition } from './read'
 import {
+  executeReactToMessage,
+  REACT_TO_MESSAGE_TOOL_NAME,
+  reactToMessageArgsSchema,
+  reactToMessageToolDefinition,
+} from './react-to-message'
+import {
   executeSendAgentMessage,
   SEND_AGENT_MESSAGE_TOOL_NAME,
   sendAgentMessageArgsSchema,
@@ -61,6 +67,7 @@ export type { ToolTurnContext }
 
 export const agentToolDefinitions: ToolDefinition[] = [
   sendMessageToolDefinition,
+  reactToMessageToolDefinition,
   sendAgentMessageToolDefinition,
   ...memoryToolDefinitions,
   runShellToolDefinition,
@@ -122,6 +129,11 @@ export async function executeAgentToolCall(
     if (call.function.name === SEND_MESSAGE_TOOL_NAME) {
       return respond(
         await executeSendMessage(agent, sendMessageArgsSchema.parse(args), call, context),
+      )
+    }
+    if (call.function.name === REACT_TO_MESSAGE_TOOL_NAME) {
+      return respond(
+        await executeReactToMessage(agent, reactToMessageArgsSchema.parse(args), context),
       )
     }
     if (call.function.name === SCREENSHOT_TOOL_NAME) {

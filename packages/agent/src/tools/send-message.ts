@@ -162,6 +162,8 @@ export type ToolTurnContext = {
   priorDeliveries: ConversationMessage[]
   /** Called after a delivery row is committed; the runner streams and counts it. */
   onDelivered: (message: ConversationMessage) => void
+  /** Streams and counts an agent reaction as the visible output of its turn. */
+  onReaction?: (message: ConversationMessage) => void
   /** Persists a waiting interaction and stops the current model loop. */
   suspend: (
     state: WaitingState,

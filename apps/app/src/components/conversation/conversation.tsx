@@ -424,7 +424,9 @@ export function Conversation({
           // Reattach replays already-rendered rows; insert before the
           // working indicator, once.
           setEntries((all) => {
-            if (all.some((e) => e.id === entry.id)) return all
+            if (all.some((e) => e.id === entry.id)) {
+              return all.map((existing) => existing.id === entry.id ? entry : existing)
+            }
             const index = all.findIndex((e) => e.id === streamingId)
             if (index === -1) return [...all, entry]
             return [...all.slice(0, index), entry, ...all.slice(index)]

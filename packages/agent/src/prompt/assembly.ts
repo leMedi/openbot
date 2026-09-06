@@ -25,7 +25,7 @@ type PrivatePromptInput = {
 }
 
 /** The user text posted for this turn (multiple rows join into one prompt). */
-async function renderPrivateTurnPrompt(input: PrivatePromptInput): Promise<string> {
+export async function renderPrivateTurnPrompt(input: PrivatePromptInput): Promise<string> {
   const rows = await listConversationMessages(input.conversationId)
   return rows
     .filter(
@@ -34,7 +34,7 @@ async function renderPrivateTurnPrompt(input: PrivatePromptInput): Promise<strin
         message.kind === 'message' &&
         message.role === 'user',
     )
-    .map((message) => message.bodyText ?? '')
+    .map((message) => `[message_id: ${message.id}] ${message.bodyText ?? ''}`)
     .join('\n\n')
 }
 
@@ -58,7 +58,7 @@ async function renderGroupTurnPrompt(input: GroupPromptInput): Promise<string> {
   for (const row of rows) {
     if (row.kind !== 'message' || !row.bodyText) continue
     if (row.role === 'user') {
-      lines.push(`[user]: ${row.bodyText}`)
+      lines.push(`[user] [message_id: ${row.id}]: ${row.bodyText}`)
     } else if (row.senderAgentId === input.agent.id) {
       lines.push(`[you]: ${row.bodyText}`)
     } else if (row.senderAgentId) {
