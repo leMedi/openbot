@@ -298,4 +298,4 @@ if ! nc -z 127.0.0.1 "$rfb_port" >/dev/null 2>&1; then
   fi
 fi
 
-/usr/local/bin/box-chrome --prepare
+/usr/local/bin/box-chrome --prepare 9>&-
