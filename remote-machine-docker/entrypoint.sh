@@ -5,12 +5,53 @@ install_root=/opt/openbot
 release_root=$install_root/releases
 active_release=$install_root/active
 
+reconcile_agent_desktops() {
+  if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+    state_root=$XDG_RUNTIME_DIR/openbot/agent-window-management
+  else
+    state_root=/tmp/openbot-agent-window-management-$(id -u)
+  fi
+  [ -d "$state_root" ] || return 0
+
+  failed=0
+  for state in "$state_root"/display-*.json; do
+    [ -f "$state" ] || continue
+    display_number=$(jq -r '.displayNumber // empty' "$state" 2>/dev/null || true)
+    owner_id=$(jq -r '.ownerId // empty' "$state" 2>/dev/null || true)
+    case "$display_number" in
+      ''|*[!0-9]*)
+        echo "Invalid desktop ownership state: $state" >&2
+        failed=1
+        continue
+        ;;
+    esac
+    case "$owner_id" in
+      ''|*[!A-Za-z0-9._:-]*)
+        echo "Invalid desktop owner in state: $state" >&2
+        failed=1
+        continue
+        ;;
+    esac
+    if ! /usr/local/bin/stop-agent-desktop "$display_number" "$owner_id"; then
+      echo "Could not reconcile desktop :$display_number for $owner_id" >&2
+      failed=1
+    fi
+  done
+  if [ "$failed" -ne 0 ]; then
+    echo 'Desktop reconciliation failed; refusing destructive runtime cleanup' >&2
+    return 1
+  fi
+}
+
 clear_stale_desktop_runtime() {
   if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
     runtime_dir=$(readlink -m -- "$XDG_RUNTIME_DIR")
     case "$runtime_dir" in
       /run|/run/*|/tmp|/tmp/*)
-        rm -f "$runtime_dir/openbot/agent-desktops"/display-*/*.pid
+        rm -f "$runtime_dir/openbot/agent-desktops"/display-*/*.pid \
+          "$runtime_dir/openbot/agent-desktops"/display-*/session.json \
+          "$runtime_dir/openbot/agent-desktops"/display-*/session.json.*.tmp \
+          "$runtime_dir/openbot/agent-desktops"/display-*/session.json.rollback.*
         rm -f "$runtime_dir/openbot/agent-window-management"/display-*.json
         ;;
       *)
@@ -19,7 +60,10 @@ clear_stale_desktop_runtime() {
         ;;
     esac
   else
-    rm -f /tmp/openbot/agent-desktops/display-*/*.pid
+    rm -f /tmp/openbot/agent-desktops/display-*/*.pid \
+      /tmp/openbot/agent-desktops/display-*/session.json \
+      /tmp/openbot/agent-desktops/display-*/session.json.*.tmp \
+      /tmp/openbot/agent-desktops/display-*/session.json.rollback.*
     rm -f "/tmp/openbot-agent-window-management-$(id -u)"/display-*.json
   fi
   rm -f /tmp/.X[0-9]*-lock /tmp/.X11-unix/X[0-9]*
@@ -189,6 +233,7 @@ stop_server() {
   kill -TERM "$server_pid" 2>/dev/null || true
 }
 
+reconcile_agent_desktops
 clear_stale_desktop_runtime
 install_latest_openbot
 apply_profile_timezone

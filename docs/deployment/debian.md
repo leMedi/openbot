@@ -3,7 +3,8 @@
 Each push to `main` builds an `openbot-debian-x64` package and publishes it
 as an immutable GitHub prerelease tagged `main-<commit>`. It contains the
 application, its production dependencies, database migrations, a pinned Node
-runtime, the `start-window` and desktop-driver executables, and an installer.
+runtime, the `start-window`, `stop-window`, and desktop-driver executables, and
+an installer.
 The package supports x86-64 Debian machines.
 
 ## Install or update
@@ -54,12 +55,13 @@ sudo systemctl status openbot
 ```
 
 The installer installs the required X11 packages and configures the bundled
-`start-window` and `openbot-desktop-driver` commands for agent display
-provisioning and control. Their stable configured paths are:
+`start-window`, `stop-window`, and `openbot-desktop-driver` commands for agent
+display provisioning, teardown, and control. Their stable configured paths are:
 
 ```dotenv
 OPENBOT_DESKTOP_MODE=per-agent
 OPENBOT_START_WINDOW=/opt/openbot/current/runtime/bin/start-window
+OPENBOT_STOP_WINDOW=/opt/openbot/current/runtime/bin/stop-window
 OPENBOT_DESKTOP_DRIVER=/opt/openbot/current/runtime/bin/openbot-desktop-driver
 ```
 
@@ -67,7 +69,7 @@ OPENBOT_DESKTOP_DRIVER=/opt/openbot/current/runtime/bin/openbot-desktop-driver
 `disabled` on hosts without X11 to run agents without desktop provisioning,
 VNC, screenshots, or computer-control tools.
 
-Both commands run with the Node runtime packaged in the release; a system-wide
+All three commands run with the Node runtime packaged in the release; a system-wide
 Node installation is not required. On updates, the installer preserves custom
 non-empty command settings and fills missing or empty settings with these
 bundled defaults.

@@ -52,6 +52,7 @@ install_desktop_dependencies() {
 if [ ! -x "$artifact_root/run" ] ||
   [ ! -x "$artifact_root/runtime/bin/node" ] ||
   [ ! -x "$artifact_root/runtime/bin/start-window" ] ||
+  [ ! -x "$artifact_root/runtime/bin/stop-window" ] ||
   [ ! -x "$artifact_root/runtime/bin/openbot-desktop-driver" ]; then
   echo "Run this script from the extracted OpenBot artifact directory." >&2
   exit 1
@@ -118,6 +119,7 @@ if [ ! -d "$release_dir" ]; then
       "$release_stage/install-debian.sh" \
       "$release_stage/runtime/bin/node" \
       "$release_stage/runtime/bin/start-window" \
+      "$release_stage/runtime/bin/stop-window" \
       "$release_stage/runtime/bin/openbot-desktop-driver" ||
     ! sudo mv -T "$release_stage" "$release_dir"; then
     sudo rm -rf "$release_stage" || true
@@ -128,6 +130,7 @@ fi
 if [ ! -x "$release_dir/run" ] ||
   [ ! -x "$release_dir/runtime/bin/node" ] ||
   [ ! -x "$release_dir/runtime/bin/start-window" ] ||
+  [ ! -x "$release_dir/runtime/bin/stop-window" ] ||
   [ ! -x "$release_dir/runtime/bin/openbot-desktop-driver" ] ||
   [ ! -f "$release_dir/dist/server/server.js" ] ||
   [ ! -d "$release_dir/packages/db/drizzle" ]; then
@@ -150,6 +153,7 @@ OPENBOT_DESKTOP_DRIVER=/opt/openbot/current/runtime/bin/openbot-desktop-driver
 OPENBOT_DESKTOP_DRIVER_ARGS=[]
 OPENBOT_COMPUTER_TIMEOUT_MS=120000
 OPENBOT_START_WINDOW=/opt/openbot/current/runtime/bin/start-window
+OPENBOT_STOP_WINDOW=/opt/openbot/current/runtime/bin/stop-window
 HOST=127.0.0.1
 PORT=3000
 EOF
@@ -157,6 +161,14 @@ EOF
   rm -f "$config_tmp"
   trap - EXIT HUP INT TERM
   echo "Created $config_dir/openbot.env; configure the AI values after installation."
+fi
+if ! sudo grep -q '^OPENBOT_STOP_WINDOW=' "$config_dir/openbot.env"; then
+  printf '%s\n' 'OPENBOT_STOP_WINDOW=/opt/openbot/current/runtime/bin/stop-window' |
+    sudo tee -a "$config_dir/openbot.env" >/dev/null
+elif sudo grep -q '^OPENBOT_STOP_WINDOW=[[:space:]]*$' "$config_dir/openbot.env"; then
+  sudo sed -i \
+    's|^OPENBOT_STOP_WINDOW=[[:space:]]*$|OPENBOT_STOP_WINDOW=/opt/openbot/current/runtime/bin/stop-window|' \
+    "$config_dir/openbot.env"
 fi
 
 if ! sudo grep -q '^OPENBOT_START_WINDOW=' "$config_dir/openbot.env"; then

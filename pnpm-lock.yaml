@@ -95,6 +95,9 @@ importers:
       mermaid:
         specifier: ^11.17.2
         version: 11.17.2
+      playwright-core:
+        specifier: 1.62.1
+        version: 1.62.1
       react:
         specifier: 19.2.8
         version: 19.2.8
@@ -171,6 +174,9 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: ^0.84.4
         version: 0.84.4(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(ws@8.21.3)(zod@4.4.3)
+      '@openbot/browser-driver':
+        specifier: workspace:*
+        version: link:../browser-driver
       '@openbot/db':
         specifier: workspace:*
         version: link:../db
@@ -192,6 +198,22 @@ importers:
       zod:
         specifier: 4.4.3
         version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: 26.4.0
+        version: 26.4.0
+      tsx:
+        specifier: 4.23.12
+        version: 4.23.12
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+
+  packages/browser-driver:
+    dependencies:
+      playwright-core:
+        specifier: 1.62.1
+        version: 1.62.1
     devDependencies:
       '@types/node':
         specifier: 26.4.0
@@ -227,6 +249,9 @@ importers:
       drizzle-kit:
         specifier: 0.31.10
         version: 0.31.10
+      tsx:
+        specifier: 4.23.12
+        version: 4.23.12
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -4438,6 +4463,11 @@ packages:
   pkg-up@3.1.0:
     resolution: {integrity: sha512-nDywThFk1i4BQK4twPQ6TA4RT8bDY96yeuCVBWL3ePARCiEKDRSrNGbFIgUJpLp+XeIR65v8ra7WuJOFUBtkMA==}
     engines: {node: '>=8'}
+
+  playwright-core@1.62.1:
+    resolution: {integrity: sha512-wPYSwEBJY9GHraISXqyqtx0na0LpO3XEX7jNDhntbex7tzUS7kLnZsOlFruFJB4Hi/rhDMjXGqHewDZ68nYZVw==}
+    engines: {node: '>=20'}
+    hasBin: true
 
   points-on-curve@0.2.0:
     resolution: {integrity: sha512-0mYKnYYe9ZcqMCWhUjItv/oHjvgEsfKvnUTg8sAtnHr3GVy7rGkXCb6d5cSyqrWqL4k81b9CPg3urd+T7aop3A==}
@@ -9480,6 +9510,8 @@ snapshots:
   pkg-up@3.1.0:
     dependencies:
       find-up: 3.0.0
+
+  playwright-core@1.62.1: {}
 
   points-on-curve@0.2.0: {}
 

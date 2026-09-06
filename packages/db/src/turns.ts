@@ -4,6 +4,10 @@ import { db } from './client'
 import type { DbExecutor } from './conversations'
 import { createId } from './ids'
 import {
+  type BrowserUseCompletionWake,
+  browserUseCompletionWakeSchema,
+  type BrowserUseWorkerContext,
+  browserUseWorkerContextSchema,
   type ComputerUseCompletionWake,
   computerUseCompletionWakeSchema,
   type ComputerUseWorkerContext,
@@ -148,6 +152,57 @@ export function listQueuedTurns() {
     .orderBy(asc(schema.turns.createdAt), asc(schema.turns.id))
 }
 
+/** Atomically prevents any pending work for an agent from being claimed. */
+export function cancelUnsettledAgentTurns(agentId: string, message: string) {
+  return db.transaction(async (tx) => {
+    const turns = await tx
+      .select()
+      .from(schema.turns)
+      .where(and(
+        eq(schema.turns.targetAgentId, agentId),
+        inArray(schema.turns.status, ['queued', 'running', 'waiting']),
+      ))
+    if (turns.length === 0) return turns
+    const now = Date.now()
+    await tx
+      .update(schema.turns)
+      .set({
+        status: 'cancelled',
+        errorJson: { version: 1, message },
+        completedAt: now,
+        updatedAt: now,
+      })
+      .where(and(
+        eq(schema.turns.targetAgentId, agentId),
+        inArray(schema.turns.status, ['queued', 'running', 'waiting']),
+      ))
+    return turns
+  })
+}
+
+/** Restores work after a deletion attempt failed; interrupted work is requeued. */
+export function restoreAgentTurnsAfterFailedDeletion(
+  turns: Array<typeof schema.turns.$inferSelect>,
+) {
+  return db.transaction(async (tx) => {
+    for (const turn of turns) {
+      await tx
+        .update(schema.turns)
+        .set({
+          status: turn.status === 'running' ? 'queued' : turn.status,
+          errorJson: turn.errorJson,
+          completedAt: turn.completedAt,
+          startedAt: turn.status === 'running' ? null : turn.startedAt,
+          runtimeContextJson: turn.status === 'running'
+            ? { ...turn.runtimeContextJson, restartRecoveryAt: Date.now() }
+            : turn.runtimeContextJson,
+          updatedAt: Date.now(),
+        })
+        .where(and(eq(schema.turns.id, turn.id), eq(schema.turns.status, 'cancelled')))
+    }
+  })
+}
+
 /**
  * Atomically moves one queued turn to running. The status guard in the WHERE
  * clause means two concurrent claims can never both succeed; the loser gets
@@ -167,6 +222,18 @@ export async function claimQueuedTurn(id: string) {
       and(
         eq(schema.turns.id, id),
         eq(schema.turns.status, 'queued'),
+        sql`NOT EXISTS (
+          WITH RECURSIVE ancestors(id, parent_turn_id, status) AS (
+            SELECT parent.id, parent.parent_turn_id, parent.status
+            FROM turns AS parent
+            WHERE parent.id = ${schema.turns.parentTurnId}
+            UNION ALL
+            SELECT parent.id, parent.parent_turn_id, parent.status
+            FROM turns AS parent
+            JOIN ancestors ON parent.id = ancestors.parent_turn_id
+          )
+          SELECT 1 FROM ancestors WHERE status IN ('failed', 'cancelled')
+        )`,
         sql`${schema.turns.id} = (
           SELECT candidate.id FROM turns AS candidate
           WHERE candidate.status = 'queued'
@@ -685,6 +752,195 @@ export function finalizeComputerUseWorkerTurn(input: ComputerUseWorkerCompletion
       })
       .returning()
     if (!wakeTurn) throw new Error('Computer-use completion wake could not be queued')
+    return { turn, wakeTurn, changed: true as const }
+  })
+}
+
+export type BrowserUseWorkerTurnInput = {
+  parentTurnId: string
+  parentToolCallId: string
+  task: string
+  title: string
+}
+
+function isSqliteBusy(error: unknown) {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof error.code === 'string' &&
+    error.code.startsWith('SQLITE_BUSY')
+  )
+}
+
+/** Idempotently queues one isolated browser-use worker under a running parent. */
+export async function enqueueBrowserUseWorkerTurn(input: BrowserUseWorkerTurnInput) {
+  const workerContext = browserUseWorkerContextSchema.parse({
+    version: 1,
+    type: 'browser-use-worker',
+    task: input.task,
+    title: input.title,
+    parentToolCallId: input.parentToolCallId,
+  })
+  const idempotencyKey = `browser-use:${input.parentTurnId}:${input.parentToolCallId}`
+
+  const enqueue = () => db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select()
+      .from(schema.turns)
+      .where(eq(schema.turns.idempotencyKey, idempotencyKey))
+      .limit(1)
+    if (existing) {
+      const existingContext = browserUseWorkerContextSchema.parse(
+        existing.runtimeContextJson,
+      )
+      if (
+        existingContext.task !== workerContext.task ||
+        existingContext.title !== workerContext.title
+      ) {
+        throw new Error('A browserUse tool call cannot be retried with different input')
+      }
+      return existing
+    }
+
+    const [parent] = await tx
+      .select()
+      .from(schema.turns)
+      .where(eq(schema.turns.id, input.parentTurnId))
+      .limit(1)
+    if (!parent) throw new Error(`Turn ${input.parentTurnId} not found`)
+    if (!parent.targetAgentId || parent.status !== 'running') {
+      throw new Error('browserUse can only be launched by a running agent turn')
+    }
+
+    const [activeWorker] = await tx
+      .select()
+      .from(schema.turns)
+      .where(
+        and(
+          eq(schema.turns.targetAgentId, parent.targetAgentId),
+          eq(schema.turns.mode, 'browser-use'),
+          inArray(schema.turns.status, ['queued', 'running', 'waiting']),
+        ),
+      )
+      .limit(1)
+    if (activeWorker) {
+      throw new Error('A browserUse worker is already using this agent browser')
+    }
+
+    const now = Date.now()
+    const [created] = await tx
+      .insert(schema.turns)
+      .values({
+        id: createId('trn'),
+        conversationId: parent.conversationId,
+        targetAgentId: parent.targetAgentId,
+        parentTurnId: parent.id,
+        lane: 'agent',
+        source: 'subagent',
+        status: 'queued',
+        mode: 'browser-use',
+        idempotencyKey,
+        runtimeContextJson: workerContext,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning()
+    if (!created) throw new Error('Browser-use worker could not be queued')
+    return created
+  })
+
+  let lastError: unknown
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      return await enqueue()
+    } catch (error) {
+      lastError = error
+      if (!isSqliteBusy(error)) throw error
+      await new Promise((resolve) => setTimeout(resolve, 10 * (attempt + 1)))
+    }
+  }
+  throw lastError
+}
+
+export type BrowserUseWorkerCompletionInput = {
+  turnId: string
+  status: 'succeeded' | 'failed'
+  summary: string
+}
+
+/** Atomically settles a browser worker and queues its hidden parent revival. */
+export function finalizeBrowserUseWorkerTurn(input: BrowserUseWorkerCompletionInput) {
+  return db.transaction(async (tx) => {
+    const [current] = await tx
+      .select()
+      .from(schema.turns)
+      .where(eq(schema.turns.id, input.turnId))
+      .limit(1)
+    if (!current) throw new Error(`Turn ${input.turnId} not found`)
+    if (current.mode !== 'browser-use' || current.source !== 'subagent') {
+      throw new Error(`Turn ${input.turnId} is not a browser-use worker`)
+    }
+    if (!current.parentTurnId) {
+      throw new Error(`Browser-use worker ${input.turnId} has no parent turn`)
+    }
+    const workerContext: BrowserUseWorkerContext =
+      browserUseWorkerContextSchema.parse(current.runtimeContextJson)
+    const wake: BrowserUseCompletionWake = browserUseCompletionWakeSchema.parse({
+      version: 1,
+      type: 'browser-use-completed',
+      childTurnId: current.id,
+      parentTurnId: current.parentTurnId,
+      title: workerContext.title,
+      status: input.status,
+      summary: input.summary,
+    })
+    const wakeIdempotencyKey = `browser-use-completion:${current.id}`
+    const [existingWake] = await tx
+      .select()
+      .from(schema.turns)
+      .where(eq(schema.turns.idempotencyKey, wakeIdempotencyKey))
+      .limit(1)
+    if (existingWake) {
+      return { turn: current, wakeTurn: existingWake, changed: false as const }
+    }
+    if (current.status !== 'running') {
+      return { turn: current, wakeTurn: undefined, changed: false as const }
+    }
+
+    const now = Date.now()
+    const [turn] = await tx
+      .update(schema.turns)
+      .set({
+        status: input.status,
+        errorJson:
+          input.status === 'failed' ? { version: 1, message: input.summary } : null,
+        completedAt: now,
+        updatedAt: now,
+      })
+      .where(
+        and(eq(schema.turns.id, current.id), eq(schema.turns.status, 'running')),
+      )
+      .returning()
+    if (!turn) throw new Error(`Browser-use worker ${input.turnId} could not be settled`)
+
+    const [wakeTurn] = await tx
+      .insert(schema.turns)
+      .values({
+        id: createId('trn'),
+        conversationId: turn.conversationId,
+        targetAgentId: turn.targetAgentId,
+        parentTurnId: turn.id,
+        lane: 'background',
+        source: 'browser-use-completion',
+        status: 'queued',
+        idempotencyKey: wakeIdempotencyKey,
+        runtimeContextJson: { version: 1, wake },
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning()
+    if (!wakeTurn) throw new Error('Browser-use completion wake could not be queued')
     return { turn, wakeTurn, changed: true as const }
   })
 }

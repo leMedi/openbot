@@ -10,6 +10,11 @@ import {
 } from '@openbot/db'
 import * as z from 'zod'
 import {
+  activeAutomationLease,
+  releaseAutomationLease,
+  tryAcquireAutomationLease,
+} from '../automation/lease'
+import {
   actionSummary,
   type ComputerArgs,
   normalizeComputerArgs,
@@ -90,6 +95,8 @@ type DesktopApproval = {
 
 export type DesktopRuntimeOptions = {
   driver: DesktopDriver
+  /** Trusted graphical-session key; lets the lease cover display discovery too. */
+  leaseKey?: string
   reviewer?: DesktopReviewer
   approvalMode: string
   agentId: string
@@ -127,22 +134,9 @@ type ComputerResult = {
   stateId?: string
 }
 
-type Lease = { owner: string }
-const desktopLeases = new Map<string, Lease>()
-
 /** Visible for deterministic concurrency tests and process diagnostics. */
 export function activeDesktopLease(sessionId: string) {
-  return desktopLeases.get(sessionId)?.owner
-}
-
-function tryAcquireDesktop(sessionId: string, owner: string) {
-  if (desktopLeases.has(sessionId)) return false
-  desktopLeases.set(sessionId, { owner })
-  return true
-}
-
-function releaseDesktop(sessionId: string, owner: string) {
-  if (desktopLeases.get(sessionId)?.owner === owner) desktopLeases.delete(sessionId)
+  return activeAutomationLease(sessionId)
 }
 
 function screenshotState(screenshot: DesktopScreenshot) {
@@ -454,10 +448,19 @@ export class DesktopToolRuntime {
     const prior = await this.priorResult(toolCallId)
     if (prior) return prior
     const operation = combinedSignal(this.options.signal, this.timeoutMs)
+    const owner = `${this.options.turnId}:${toolCallId}:screenshot`
+    let leaseKey = this.options.leaseKey
     try {
+      if (leaseKey && !tryAcquireAutomationLease(leaseKey, owner)) {
+        return await this.persist(toolCallId, 'Screenshot', {
+          ok: false,
+          status: 'desktop_busy',
+          summary: 'The Remote Desktop is changing under another automation operation',
+        })
+      }
       const display = await this.options.driver.getDisplay(operation.signal)
-      const owner = `${this.options.turnId}:${toolCallId}:screenshot`
-      if (!tryAcquireDesktop(display.sessionId, owner)) {
+      leaseKey ??= display.sessionId
+      if (!this.options.leaseKey && !tryAcquireAutomationLease(leaseKey, owner)) {
         return await this.persist(toolCallId, 'Screenshot', {
           ok: false,
           status: 'desktop_busy',
@@ -469,7 +472,8 @@ export class DesktopToolRuntime {
       try {
         screenshot = await this.options.driver.captureScreenshot(operation.signal)
       } finally {
-        releaseDesktop(display.sessionId, owner)
+        releaseAutomationLease(leaseKey, owner)
+        leaseKey = undefined
       }
       if (screenshot.width !== display.width || screenshot.height !== display.height) {
         return await this.persist(toolCallId, 'Screenshot', {
@@ -500,6 +504,7 @@ export class DesktopToolRuntime {
         summary: failure.message,
       })
     } finally {
+      if (leaseKey) releaseAutomationLease(leaseKey, owner)
       operation.dispose()
     }
   }
@@ -510,9 +515,23 @@ export class DesktopToolRuntime {
     const operation = combinedSignal(this.options.signal, this.timeoutMs)
     let display: DesktopDisplay | undefined
     let owner: string | undefined
+    let leaseKey = this.options.leaseKey
     let fingerprint: string | undefined
     try {
-      display = await this.options.driver.getDisplay(operation.signal)
+      const observationOwner = `${this.options.turnId}:${toolCallId}:review`
+      if (leaseKey && !tryAcquireAutomationLease(leaseKey, observationOwner)) {
+        return await this.persist(toolCallId, 'Computer', {
+          ok: false,
+          status: 'desktop_busy',
+          summary: 'Another agent is currently controlling the Remote Desktop',
+        })
+      }
+      try {
+        display = await this.options.driver.getDisplay(operation.signal)
+      } finally {
+        if (leaseKey) releaseAutomationLease(leaseKey, observationOwner)
+      }
+      leaseKey ??= display.sessionId
       const normalized = normalizeComputerArgs(args)
       const boundsError = validateDisplayBounds(normalized.actions, display)
       if (boundsError) {
@@ -533,8 +552,7 @@ export class DesktopToolRuntime {
         })
       }
 
-      const observationOwner = `${this.options.turnId}:${toolCallId}:review`
-      if (!tryAcquireDesktop(display.sessionId, observationOwner)) {
+      if (!tryAcquireAutomationLease(leaseKey, observationOwner)) {
         return await this.persist(toolCallId, 'Computer', {
           ok: false,
           status: 'desktop_busy',
@@ -546,7 +564,7 @@ export class DesktopToolRuntime {
       try {
         before = await this.options.driver.captureScreenshot(operation.signal)
       } finally {
-        releaseDesktop(display.sessionId, observationOwner)
+        releaseAutomationLease(leaseKey, observationOwner)
       }
       if (before.width !== display.width || before.height !== display.height) {
         return await this.persist(toolCallId, 'Computer', {
@@ -685,7 +703,7 @@ export class DesktopToolRuntime {
       if (needsFinalScreenshot) actions.push({ action: 'screenshot' })
 
       owner = `${this.options.turnId}:${toolCallId}`
-      if (!tryAcquireDesktop(display.sessionId, owner)) {
+      if (!tryAcquireAutomationLease(leaseKey, owner)) {
         return await this.persist(toolCallId, 'Computer', {
           ok: false,
           status: 'desktop_busy',
@@ -790,7 +808,7 @@ export class DesktopToolRuntime {
         error instanceof DesktopDriverError ? error.execution?.screenshot : undefined,
       )
     } finally {
-      if (display && owner) releaseDesktop(display.sessionId, owner)
+      if (owner && leaseKey) releaseAutomationLease(leaseKey, owner)
       operation.dispose()
     }
   }

@@ -4,8 +4,9 @@
 
 import { SessionManager } from '@earendil-works/pi-coding-agent'
 import {
-  listConversationMessages,
+  browserUseWorkerSessionDirectory,
   computerUseWorkerSessionDirectory,
+  listConversationMessages,
   piSessionDirectory,
   type Agent,
   type MemoryItem,
@@ -13,6 +14,7 @@ import {
 } from '@openbot/db'
 import {
   type ConversationPromptContext,
+  renderBrowserUseWorkerSystemPrompt,
   renderComputerUseWorkerSystemPrompt,
   renderSystemPrompt,
 } from './system'
@@ -132,6 +134,23 @@ export type PrepareComputerUseWorkerTurnInput = {
   workspace: string
   task: string
   resumedText?: string
+}
+
+export type PrepareBrowserUseWorkerTurnInput = PrepareComputerUseWorkerTurnInput
+
+/** A resumable browser-worker history that never inherits the parent conversation. */
+export async function prepareBrowserUseWorkerTurn(
+  input: PrepareBrowserUseWorkerTurnInput,
+) {
+  return {
+    systemPrompt: renderBrowserUseWorkerSystemPrompt(),
+    sessionManager: SessionManager.continueRecent(
+      input.workspace,
+      await browserUseWorkerSessionDirectory(input.conversationId, input.turnId),
+    ),
+    promptText: input.resumedText ?? input.task,
+    senderAgentId: null,
+  }
 }
 
 /** A resumable model history that never inherits the parent conversation. */

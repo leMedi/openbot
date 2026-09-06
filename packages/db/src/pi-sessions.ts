@@ -23,6 +23,16 @@ export async function computerUseWorkerSessionDirectory(
   return directory
 }
 
+/** Keeps a browser worker's model history isolated from its parent conversation. */
+export async function browserUseWorkerSessionDirectory(
+  conversationId: string,
+  turnId: string,
+) {
+  const directory = path.join(sessionPath(conversationId), 'browser-use', turnId)
+  await mkdir(directory, { recursive: true })
+  return directory
+}
+
 /** Removes model history after its owning conversation has been deleted. */
 export function deletePiSessionDirectory(conversationId: string) {
   return rm(sessionPath(conversationId), { recursive: true, force: true }).catch(() => {})

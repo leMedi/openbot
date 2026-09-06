@@ -18,7 +18,7 @@ import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
-import { addAgent, updateAgent } from '@/server/agents'
+import { addAgent, removeAgent, updateAgent } from '@/server/agents'
 import { agentAvatarUrl } from './agents'
 import { BotAvatar } from './bot-avatar'
 import { ModelPicker } from './model-picker'
@@ -37,6 +37,7 @@ export function BotDialog({
   grantedAccountIds,
   onOpenPlugins,
   onSaved,
+  onDeleted,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -50,6 +51,7 @@ export function BotDialog({
   onOpenPlugins: () => void
   /** On create, `firstConversation` is the persisted conversation named after the agent. */
   onSaved: (saved: Agent, firstConversation: Conversation | null) => void
+  onDeleted: (agentId: string) => void | Promise<void>
 }) {
   const editing = !!agent
   const [name, setName] = useState(agent?.name ?? '')
@@ -67,6 +69,9 @@ export function BotDialog({
   const [avatarRemoved, setAvatarRemoved] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [grants, setGrants] = useState<string[]>(grantedAccountIds)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const createdRef = useRef<{ agent: Agent; conversation: Conversation } | null>(null)
@@ -160,6 +165,26 @@ export function BotDialog({
       setError(cause instanceof Error ? cause.message : 'Saving the bot failed')
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function confirmDelete() {
+    if (!agent || deleting) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await removeAgent({ data: { id: agent.id } })
+      setDeleteOpen(false)
+      onOpenChange(false)
+      try {
+        await onDeleted(agent.id)
+      } catch (cause) {
+        console.warn('Agent was deleted, but refreshing the agent list failed', cause)
+      }
+    } catch (cause) {
+      setDeleteError(cause instanceof Error ? cause.message : 'Deleting the bot failed')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -395,6 +420,19 @@ export function BotDialog({
         </div>
 
         <DialogFooter className="mx-0 mb-0 shrink-0 items-center border-t bg-card/50 px-5 py-3">
+          {editing && (
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={saving || deleting}
+              onClick={() => {
+                setDeleteError(null)
+                setDeleteOpen(true)
+              }}
+            >
+              <Trash2 className="size-3.5" /> Delete Agent
+            </Button>
+          )}
           <span className="mr-auto min-w-0 truncate text-[11px] text-muted-foreground/70">
             {error ? (
               <span className="text-destructive">{error}</span>
@@ -404,10 +442,46 @@ export function BotDialog({
               'Starts a first conversation.'
             )}
           </span>
-          <Button size="sm" disabled={!name.trim() || saving} onClick={save}>
+          <Button size="sm" disabled={!name.trim() || saving || deleting} onClick={save}>
             {saving ? 'Saving…' : editing ? 'Save Changes' : 'Create Bot'}
           </Button>
         </DialogFooter>
+
+        <Dialog
+          open={deleteOpen}
+          onOpenChange={(nextOpen) => {
+            if (!deleting) setDeleteOpen(nextOpen)
+          }}
+        >
+          <DialogContent className="sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Delete “{agent?.name}”?</DialogTitle>
+            </DialogHeader>
+            <p className="text-xs leading-normal text-muted-foreground">
+              This permanently deletes the bot, its private conversation history,
+              workspace, and browser profile. It will also be removed from every group.
+            </p>
+            {deleteError && <p className="text-xs text-destructive">{deleteError}</p>}
+            <DialogFooter>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={deleting}
+                onClick={() => setDeleteOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={deleting}
+                onClick={confirmDelete}
+              >
+                {deleting ? 'Deleting…' : 'Delete Agent'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </DialogContent>
     </Dialog>
   )

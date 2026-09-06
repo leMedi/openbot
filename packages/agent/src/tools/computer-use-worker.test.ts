@@ -46,6 +46,7 @@ test('scopes mutating computer control to the computer-use worker', () => {
       'AwaitShell',
       'Screenshot',
       'computerUse',
+      'browserUse',
     ],
   )
   assert.deepEqual(

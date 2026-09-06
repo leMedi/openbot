@@ -10,6 +10,13 @@ import {
   updateMemoryArgsSchema,
 } from '@openbot/memory'
 import * as z from 'zod'
+import { browserToolDefinitions, executeBrowserTool } from './browser'
+import {
+  browserUseWorkerArgsSchema,
+  browserUseWorkerToolDefinition,
+  BROWSER_USE_WORKER_TOOL_NAME,
+  executeBrowserUseWorker,
+} from './browser-use-worker'
 import {
   computerToolDefinition,
   COMPUTER_TOOL_NAME,
@@ -61,6 +68,7 @@ export const agentToolDefinitions: ToolDefinition[] = [
   awaitShellToolDefinition,
   screenshotToolDefinition,
   computerUseWorkerToolDefinition,
+  browserUseWorkerToolDefinition,
 ]
 
 /** Narrow capabilities available inside an isolated computer-use worker. */
@@ -72,6 +80,15 @@ export const computerUseWorkerToolDefinitions: ToolDefinition[] = [
   computerToolDefinition,
 ]
 
+/** Narrow capabilities available inside an isolated browser-use worker. */
+export const browserUseWorkerToolDefinitions: ToolDefinition[] = [
+  runShellToolDefinition,
+  readToolDefinition,
+  awaitShellToolDefinition,
+  screenshotToolDefinition,
+  ...browserToolDefinitions,
+]
+
 /** Degraded toolset for rounds after the tool budget runs out. */
 export const sendMessageOnlyToolDefinitions: ToolDefinition[] = [
   sendMessageToolDefinition,
@@ -79,7 +96,9 @@ export const sendMessageOnlyToolDefinitions: ToolDefinition[] = [
 
 /** Background wakes may stay silent, but can surface a material outcome. */
 export const backgroundToolDefinitions: ToolDefinition[] = agentToolDefinitions.filter(
-  (tool) => tool.function.name !== COMPUTER_USE_WORKER_TOOL_NAME,
+  (tool) =>
+    tool.function.name !== COMPUTER_USE_WORKER_TOOL_NAME &&
+    tool.function.name !== BROWSER_USE_WORKER_TOOL_NAME,
 )
 
 /**
@@ -119,6 +138,18 @@ export async function executeAgentToolCall(
           context,
         ),
       )
+    }
+    if (call.function.name === BROWSER_USE_WORKER_TOOL_NAME) {
+      return respond(
+        await executeBrowserUseWorker(
+          browserUseWorkerArgsSchema.parse(args),
+          call,
+          context,
+        ),
+      )
+    }
+    if (call.function.name.startsWith('browser_')) {
+      return respond(await executeBrowserTool(call, args, context))
     }
     if (call.function.name === SEND_AGENT_MESSAGE_TOOL_NAME) {
       return respond(

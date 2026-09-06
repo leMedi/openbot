@@ -42,6 +42,14 @@ start and whenever an agent desktop is (re)launched; an already-running
 desktop keeps its timezone until it is restarted or the container recreates
 it on the next start.
 
+Inside an agent desktop, `box-chrome --prepare` starts Google Chrome Stable
+with no browser window, while `box-chrome --new-window` opens a blank window
+and `box-chrome <http-or-https-url>` opens that URL in a new window. All forms
+reuse the display's persistent profile. Chrome DevTools Protocol listens only
+on container loopback at port `9222 + display-number`.
+`stop-agent-desktop <display-number> <owner-id>` tears down only a matching
+managed display session and refuses an owner mismatch.
+
 An optional `GITHUB_TOKEN` environment variable can be passed to increase the
 GitHub API rate limit used during startup. It is not required for this public
 repository.

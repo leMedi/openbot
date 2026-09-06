@@ -13,6 +13,7 @@
   "dependencies": {
     "@earendil-works/pi-ai": "0.84.4",
     "@earendil-works/pi-coding-agent": "^0.84.4",
+    "@openbot/browser-driver": "workspace:*",
     "@openbot/db": "workspace:*",
     "@openbot/desktop-driver": "workspace:*",
     "@openbot/memory": "workspace:*",

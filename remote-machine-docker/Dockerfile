@@ -46,9 +46,11 @@ RUN useradd --uid 1000 --create-home --shell /bin/sh openbot \
     && install -d -o openbot -g openbot -m 0700 /run/openbot /var/lib/openbot
 
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/openbot-entrypoint
+COPY --chmod=0755 box-chrome.sh /usr/local/bin/box-chrome
 COPY --chmod=0755 launch-chrome.sh /usr/local/bin/openbot-launch-chrome
 COPY --chmod=0755 request-update.sh /usr/local/bin/openbot-request-update
 COPY --chmod=0755 start-agent-desktop.sh /usr/local/bin/start-agent-desktop
+COPY --chmod=0755 stop-agent-desktop.sh /usr/local/bin/stop-agent-desktop
 COPY applications/ /usr/share/applications/
 COPY lxpanel/panel /etc/xdg/lxpanel/openbot/panels/panel
 
@@ -63,6 +65,7 @@ ENV HOME=/home/openbot \
     OPENBOT_GITHUB_REPO=leMedi/openbot \
     OPENBOT_PUBLIC_URL=http://localhost:3000 \
     OPENBOT_START_WINDOW=/usr/local/bin/start-agent-desktop \
+    OPENBOT_STOP_WINDOW=/usr/local/bin/stop-agent-desktop \
     OPENBOT_UPDATE_COMMAND=/usr/local/bin/openbot-request-update \
     HOST=0.0.0.0 \
     PORT=3000 \

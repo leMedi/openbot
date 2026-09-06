@@ -19,6 +19,7 @@ import {
 } from '@openbot/db'
 import * as z from 'zod'
 import type { DesktopToolRuntime } from '../desktop/runtime'
+import type { BrowserToolRuntime } from '../browser/runtime'
 import { agentWorkspaceDirectory, resolveWorkspacePath } from './shell/workspace'
 
 export const SEND_MESSAGE_TOOL_NAME = 'SendMessage'
@@ -178,12 +179,22 @@ export type ToolTurnContext = {
     task: string
     title: string
   }) => Promise<{ turnId: string }>
+  /** Queues one isolated browser-use child under this turn. */
+  enqueueBrowserUseWorker?: (input: {
+    parentToolCallId: string
+    task: string
+    title: string
+  }) => Promise<{ turnId: string }>
   /** Atomically accepts direct delivery and queues the recipient without waiting. */
   sendDirectAgentMessage: (
     input: Omit<DirectAgentMessageInput, 'senderAgentId'>,
   ) => Promise<{ deliveryId: string; turn: Turn }>
   /** Fresh server-local Remote Desktop capability for this turn. */
   desktop?: DesktopToolRuntime
+  /** Trusted page-level browser automation available only to browser-use workers. */
+  browser?: BrowserToolRuntime
+  /** Trusted X display inherited by managed shell commands for this agent. */
+  desktopDisplayNumber?: number
   /** Optional runtime gate for legacy parent turns that resumed an old approval. */
   allowComputerCall?: () => boolean
 }

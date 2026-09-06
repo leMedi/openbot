@@ -8,6 +8,7 @@ import {
   readManagedFile,
 } from './files'
 import { createId } from './ids'
+import { deletePiSessionDirectories } from './pi-sessions'
 import * as schema from './schema'
 
 export type AgentProfileInput = {
@@ -153,6 +154,89 @@ export async function updateAgentProfileAndMcpAccounts(
     }
     return updated
   })
+}
+
+/**
+ * Deletes an agent and all of its durable ownership records. Group membership
+ * is stored in JSON, so it must be updated explicitly inside the transaction.
+ */
+export async function deleteAgent(id: string) {
+  const cleanup = await db.transaction(async (tx) => {
+    const [agent] = await tx
+      .select({ avatarFileId: schema.agents.avatarFileId })
+      .from(schema.agents)
+      .where(eq(schema.agents.id, id))
+      .limit(1)
+    if (!agent) return null
+
+    const conversationIds = (
+      await tx
+        .select({ id: schema.conversations.id })
+        .from(schema.conversations)
+        .where(eq(schema.conversations.ownerAgentId, id))
+    ).map(({ id }) => id)
+
+    const attachmentRows = await tx
+      .select({ attachments: schema.conversationMessages.attachmentsJson })
+      .from(schema.conversationMessages)
+      .where(inArray(
+        schema.conversationMessages.conversationId,
+        tx
+          .select({ id: schema.conversations.id })
+          .from(schema.conversations)
+          .where(eq(schema.conversations.ownerAgentId, id)),
+      ))
+    const attachmentFileIds = [...new Set(
+      attachmentRows.flatMap(({ attachments }) =>
+        attachments.items.map((attachment) => attachment.fileId)),
+    )]
+
+    await tx
+      .update(schema.conversationMessages)
+      .set({ turnId: null })
+      .where(inArray(
+        schema.conversationMessages.turnId,
+        tx
+          .select({ id: schema.turns.id })
+          .from(schema.turns)
+          .where(eq(schema.turns.targetAgentId, id)),
+      ))
+
+    const groups = await tx
+      .select({ id: schema.groups.id, membersJson: schema.groups.membersJson })
+      .from(schema.groups)
+    const updatedAt = Date.now()
+    for (const group of groups) {
+      const members = group.membersJson.members.filter((member) => member.agentId !== id)
+      if (members.length === group.membersJson.members.length) continue
+      await tx
+        .update(schema.groups)
+        .set({ membersJson: { ...group.membersJson, members }, updatedAt })
+        .where(eq(schema.groups.id, group.id))
+    }
+
+    const deleted = await tx
+      .delete(schema.agents)
+      .where(eq(schema.agents.id, id))
+      .returning({ id: schema.agents.id })
+    if (deleted.length === 0) return null
+    return { conversationIds, avatarFileId: agent.avatarFileId, attachmentFileIds }
+  })
+
+  if (!cleanup) return false
+  const cleanupResults = await Promise.allSettled([
+    deletePiSessionDirectories(cleanup.conversationIds),
+    ...[
+      ...(cleanup.avatarFileId ? [cleanup.avatarFileId] : []),
+      ...cleanup.attachmentFileIds,
+    ].map((fileId) => deleteManagedFileIfUnreferenced(fileId)),
+  ])
+  for (const result of cleanupResults) {
+    if (result.status === 'rejected') {
+      console.warn('[agent durable cleanup failed]', { agentId: id, error: result.reason })
+    }
+  }
+  return true
 }
 
 export async function setAgentAvatar(agentId: string, upload: AvatarUpload) {

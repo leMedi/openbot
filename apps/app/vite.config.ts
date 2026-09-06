@@ -5,6 +5,7 @@ import tailwindcss from '@tailwindcss/vite'
 
 const config = defineConfig({
   resolve: { tsconfigPaths: true },
+  ssr: { external: ['playwright-core'] },
   plugins: [tailwindcss(), tanstackStart(), viteReact()],
 })
 

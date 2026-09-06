@@ -9,6 +9,7 @@ process.env.OPENBOT_DATA_DIR = testData
 
 const {
   renderComputerUseWorkerSystemPrompt,
+  renderBrowserUseWorkerSystemPrompt,
   renderDefaultSystemPrompt,
   renderUserProfilePrompt,
 } = await import('./system')
@@ -102,4 +103,23 @@ test('gives the computer-use worker a narrow visual verification contract', () =
   assert.match(prompt, /Do not enter passwords/)
   assert.match(prompt, /Do not claim success unless/)
   assert.doesNotMatch(prompt, /SendMessage/)
+})
+
+test('gives the browser-use worker the Grok page-level operating contract', () => {
+  const prompt = renderBrowserUseWorkerSystemPrompt()
+  assert.match(prompt, /cannot talk directly to the user/)
+  assert.match(prompt, /snapshot-act-verify/)
+  assert.match(prompt, /Refs belong to the latest snapshot/)
+  assert.match(prompt, /own logical tab/)
+  assert.match(prompt, /logins persist through shared cookies/)
+  assert.match(prompt, /exact URL/)
+  assert.match(prompt, /passwords, complete 2FA or captchas, make payments/)
+  assert.match(prompt, /fallback through computerUse/)
+  assert.doesNotMatch(prompt, /SendMessage/)
+})
+
+test('guides desktop parents to browserUse first and computerUse for fallback', () => {
+  const prompt = renderDefaultSystemPrompt(true)
+  assert.match(prompt, /Prefer browserUse for browser-only work/)
+  assert.match(prompt, /Use computerUse for native desktop apps/)
 })

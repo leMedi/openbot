@@ -46,6 +46,7 @@ jobs:
           cp scripts/update-debian.sh "$out/update-debian.sh"
           cp "$(command -v node)" "$out/runtime/bin/node"
           cp packages/desktop-use-tools/dist/start-window.cjs "$out/runtime/bin/start-window"
+          cp packages/desktop-use-tools/dist/stop-window.cjs "$out/runtime/bin/stop-window"
           cp packages/desktop-driver/dist/openbot-desktop-driver.cjs \
             "$out/runtime/bin/openbot-desktop-driver"
           # The bundled desktop tools are CommonJS files. The deployed app's
@@ -61,7 +62,8 @@ jobs:
           cp -aL "$native_binding" "$out/node_modules/@libsql/linux-x64-gnu"
           printf '%s\n' "$GITHUB_SHA" > "$out/VERSION"
           chmod 0755 "$out/run" "$out/install-debian.sh" "$out/update-debian.sh" "$out/runtime/bin/node" \
-            "$out/runtime/bin/start-window" "$out/runtime/bin/openbot-desktop-driver"
+            "$out/runtime/bin/start-window" "$out/runtime/bin/stop-window" \
+            "$out/runtime/bin/openbot-desktop-driver"
 
           mkdir -p artifact
           tar -C "$RUNNER_TEMP" -czf artifact/openbot-debian-x64.tar.gz openbot
@@ -73,15 +75,24 @@ jobs:
           set -euo pipefail
           app="$RUNNER_TEMP/openbot"
           test -x "$app/runtime/bin/start-window"
+          test -x "$app/runtime/bin/stop-window"
           test -x "$app/runtime/bin/openbot-desktop-driver"
           "$app/runtime/bin/node" --check "$app/runtime/bin/start-window"
+          "$app/runtime/bin/node" --check "$app/runtime/bin/stop-window"
           "$app/runtime/bin/node" --check "$app/runtime/bin/openbot-desktop-driver"
           "$app/runtime/bin/node" --check "$app/runtime/run-server.mjs"
+          "$app/runtime/bin/node" -e \
+            "require.resolve('playwright-core', { paths: ['$app'] })"
           PATH="$app/runtime/bin:$PATH" \
             "$app/runtime/bin/start-window" \
             >"$RUNNER_TEMP/start-window-smoke.log" 2>&1 || start_window_status=$?
           test "${start_window_status:-0}" -eq 1
           grep -q 'Usage: start-window' "$RUNNER_TEMP/start-window-smoke.log"
+          PATH="$app/runtime/bin:$PATH" \
+            "$app/runtime/bin/stop-window" \
+            >"$RUNNER_TEMP/stop-window-smoke.log" 2>&1 || stop_window_status=$?
+          test "${stop_window_status:-0}" -eq 1
+          grep -q 'Usage: stop-window' "$RUNNER_TEMP/stop-window-smoke.log"
           PATH="$app/runtime/bin:$PATH" \
             "$app/runtime/bin/openbot-desktop-driver" </dev/null \
             >"$RUNNER_TEMP/desktop-driver-smoke.json" || driver_status=$?
@@ -93,6 +104,7 @@ jobs:
           export OPENBOT_DESKTOP_DRIVER="$app/runtime/bin/openbot-desktop-driver"
           export OPENBOT_DESKTOP_DRIVER_ARGS='[]'
           export OPENBOT_START_WINDOW="$app/runtime/bin/start-window"
+          export OPENBOT_STOP_WINDOW="$app/runtime/bin/stop-window"
           export HOST=127.0.0.1
           export PORT=3000
           "$app/run" >"$RUNNER_TEMP/openbot.log" 2>&1 &

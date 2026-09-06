@@ -74,6 +74,16 @@ Configure the OpenBot server to use the built executable when creating agents:
 OPENBOT_START_WINDOW=/absolute/path/to/start-window
 ```
 
+## `stop-window`
+
+`stop-window <display-number> <owner-id>` verifies the persisted owner, stops
+the managed Xvfb process group, and removes its ownership state. Repeating a
+successful stop is safe. Configure it for agent deletion:
+
+```dotenv
+OPENBOT_STOP_WINDOW=/absolute/path/to/stop-window
+```
+
 ### Runtime state
 
 Ownership and PID state is stored in:

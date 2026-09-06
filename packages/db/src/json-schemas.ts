@@ -41,6 +41,24 @@ export const computerUseCompletionWakeSchema = z.object({
   summary: z.string().trim().min(1).max(20_000),
 })
 
+export const browserUseWorkerContextSchema = z.object({
+  version: z.literal(1),
+  type: z.literal('browser-use-worker'),
+  task: z.string().trim().min(1).max(20_000),
+  title: z.string().trim().min(1).max(120),
+  parentToolCallId: z.string().min(1).max(500),
+})
+
+export const browserUseCompletionWakeSchema = z.object({
+  version: z.literal(1),
+  type: z.literal('browser-use-completed'),
+  childTurnId: z.string().min(1),
+  parentTurnId: z.string().min(1),
+  title: z.string().trim().min(1).max(120),
+  status: z.enum(['succeeded', 'failed']),
+  summary: z.string().trim().min(1).max(20_000),
+})
+
 export const groupMembersSchema = z.object({
   version: z.literal(1),
   members: z.array(
@@ -201,6 +219,86 @@ const computerScreenshotSchema = z.object({
   cursor: computerCursorSchema.optional(),
 })
 
+export const browserToolNameSchema = z.enum([
+  'browser_navigate',
+  'browser_snapshot',
+  'browser_click',
+  'browser_mouse_click_xy',
+  'browser_type',
+  'browser_fill',
+  'browser_select_option',
+  'browser_press_key',
+  'browser_scroll',
+  'browser_drag',
+  'browser_get_bounding_box',
+  'browser_highlight',
+  'browser_cdp',
+  'browser_tabs',
+  'browser_take_screenshot',
+])
+
+const browserScreenshotSchema = z.object({
+  fileId: z.string().min(1),
+  url: z.string().min(1),
+  mediaType: z.literal('image/png'),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
+})
+
+export const browserOutcomeSchema = z.enum([
+  'success',
+  'invalid_input',
+  'approval_required',
+  'review_blocked',
+  'stale_browser',
+  'browser_unavailable',
+  'browser_busy',
+  'timeout',
+  'cancelled',
+  'driver_failure',
+  'unknown_outcome',
+])
+
+/** Durable, client-safe result/audit projections for browser automation. */
+export const browserUsePayloadSchema = z.discriminatedUnion('event', [
+  z.object({
+    version: z.literal(1),
+    event: z.literal('browser-use'),
+    toolCallId: z.string().min(1),
+    name: browserToolNameSchema,
+    preview: z.string(),
+    status: z.enum(['success', 'failed']),
+    outcome: browserOutcomeSchema,
+    detail: z.string(),
+    data: z.string().optional(),
+    viewId: z.string().min(1).optional(),
+    url: z.string().optional(),
+    title: z.string().optional(),
+    fingerprint: z.string().min(1).optional(),
+    stateId: z.string().min(1).optional(),
+    screenshot: browserScreenshotSchema.optional(),
+  }),
+  z.object({
+    version: z.literal(1),
+    event: z.literal('browser-use-progress'),
+    toolCallId: z.string().min(1),
+    name: browserToolNameSchema,
+    preview: z.string().min(1),
+    status: z.literal('pending'),
+    fingerprint: z.string().min(1),
+  }),
+  z.object({
+    version: z.literal(1),
+    event: z.literal('browser-use-audit'),
+    toolCallId: z.string().min(1),
+    name: browserToolNameSchema,
+    fingerprint: z.string().min(1),
+    stage: z.enum(['review_decision', 'execution_started']),
+    decision: z.enum(['allowed', 'blocked', 'approval_required', 'approved']).optional(),
+    summary: z.string().min(1),
+  }),
+])
+
 export const computerOutcomeSchema = z.enum([
   'success',
   'invalid_input',
@@ -332,6 +430,9 @@ export type EffectiveTools = z.infer<typeof effectiveToolsSchema>
 export type WaitingState = z.infer<typeof waitingStateSchema>
 export type ComputerUseWorkerContext = z.infer<typeof computerUseWorkerContextSchema>
 export type ComputerUseCompletionWake = z.infer<typeof computerUseCompletionWakeSchema>
+export type BrowserUseWorkerContext = z.infer<typeof browserUseWorkerContextSchema>
+export type BrowserUseCompletionWake = z.infer<typeof browserUseCompletionWakeSchema>
+export type BrowserUsePayload = z.infer<typeof browserUsePayloadSchema>
 export type SendMessagePayload = z.infer<typeof sendMessagePayloadSchema>
 export type DirectAgentMessagePayload = z.infer<typeof directAgentMessagePayloadSchema>
 export type DirectAgentMessageContext = z.infer<typeof directAgentMessageContextSchema>

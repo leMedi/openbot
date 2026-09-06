@@ -4,7 +4,11 @@ import {
   updateAgentProfile,
   updateAgentProfileAndMcpAccounts,
 } from '@openbot/db'
-import { canonicalAvailableModelReference, createAgent } from '@openbot/agent'
+import {
+  canonicalAvailableModelReference,
+  createAgent,
+  deleteAgent as deleteManagedAgent,
+} from '@openbot/agent'
 import { createServerFn } from '@tanstack/react-start'
 import * as z from 'zod'
 import { AVATAR_COLORS, AVATAR_SHAPES } from '@/components/openbot/data'
@@ -37,6 +41,10 @@ const agentUpdateInput = z.object({
   patch: agentProfileFields.partial(),
   mcpAccountIds: z.array(z.string().min(1)).optional(),
 })
+
+export const agentDeleteInputSchema = z
+  .object({ id: z.string().regex(/^agt_[A-Za-z0-9_-]{22}$/, 'Invalid agent id') })
+  .strict()
 
 export const getAgents = createServerFn({ method: 'GET' }).handler(() =>
   listAgents(),
@@ -79,4 +87,12 @@ export const updateAgent = createServerFn({ method: 'POST' })
       : await updateAgentProfile(data.id, data.patch)
     if (!updated) throw new Error(`Agent ${data.id} not found`)
     return updated
+  })
+
+export const removeAgent = createServerFn({ method: 'POST' })
+  .validator((input: unknown) => agentDeleteInputSchema.parse(input))
+  .handler(async ({ data }) => {
+    const deleted = await deleteManagedAgent(data.id)
+    if (!deleted) throw new Error(`Agent ${data.id} not found`)
+    return { id: data.id }
   })

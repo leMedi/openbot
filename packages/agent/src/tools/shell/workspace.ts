@@ -22,12 +22,13 @@ export function resolveWorkspacePath(workspace: string, relative: string) {
 }
 
 /** Minimal command environment: server credentials never reach agent shells. */
-export function shellEnvironment(workspace: string) {
+export function shellEnvironment(workspace: string, displayNumber?: number) {
   return {
     PATH: process.env.PATH,
     HOME: workspace,
     LANG: process.env.LANG ?? 'en_US.UTF-8',
     TERM: 'dumb',
+    ...(displayNumber === undefined ? {} : { DISPLAY: `:${String(displayNumber)}` }),
   }
 }
 
@@ -102,6 +103,7 @@ export async function startBackgroundShell(
   command: string,
   cwd: string,
   onCompletion?: ShellCompletionCallback,
+  displayNumber?: number,
 ) {
   const workspace = agentWorkspaceDirectory(agentId)
   const shellId = nextShellId(agentId)
@@ -111,7 +113,7 @@ export async function startBackgroundShell(
   const child = spawn('/bin/sh', ['-c', command], {
     cwd,
     detached: true,
-    env: shellEnvironment(workspace),
+    env: shellEnvironment(workspace, displayNumber),
   })
 
   const meta: ShellMeta = {

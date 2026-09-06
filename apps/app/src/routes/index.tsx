@@ -303,6 +303,25 @@ function OpenBot() {
     }
   }
 
+  async function handleAgentDeleted(agentId: string) {
+    const deletedConversationIds = new Set(
+      conversationRows
+        .filter((conversation) => conversation.ownerAgentId === agentId)
+        .map((conversation) => conversation.id),
+    )
+    const activeWasDeleted = deletedConversationIds.has(activeId)
+    await router.invalidate()
+    if (!activeWasDeleted) return
+
+    const next = conversations.find(
+      (conversation) => !deletedConversationIds.has(conversation.id),
+    )
+    setTranscript(null)
+    setActiveId(next?.id ?? '')
+    setMobileDetail(false)
+    if (!next) localStorage.removeItem(LAST_CONVERSATION_KEY)
+  }
+
   const sidebar = (
     <Sidebar
       mobile={isMobile}
@@ -545,6 +564,7 @@ function OpenBot() {
             await router.invalidate()
             if (firstConversation) openConversation(firstConversation.id)
           }}
+          onDeleted={handleAgentDeleted}
         />
       )}
       <RenameConversationDialog

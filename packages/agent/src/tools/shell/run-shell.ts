@@ -119,6 +119,7 @@ export async function executeRunShell(
           })
         }
       : undefined,
+    context?.desktopDisplayNumber,
   )
   const meta = shell.meta
   const shellView = {
