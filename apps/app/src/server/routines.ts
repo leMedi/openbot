@@ -9,7 +9,6 @@ import {
   routineDefinitionInputSchema,
   setRoutineEnabled,
   updateRoutine,
-  validateRoutineSchedule,
 } from '@openbot/db'
 import { createServerFn } from '@tanstack/react-start'
 import * as z from 'zod'
@@ -41,10 +40,7 @@ export const getRoutineHistory = createServerFn({ method: 'GET' })
 
 export const addRoutine = createServerFn({ method: 'POST' })
   .validator((input: unknown) => createInput.parse(input))
-  .handler(({ data }) => {
-    validateRoutineSchedule(data.cronExpression, data.timezone)
-    return createRoutine(data)
-  })
+  .handler(({ data }) => createRoutine(data))
 
 export const editRoutine = createServerFn({ method: 'POST' })
   .validator((input: unknown) => updateInput.parse(input))
