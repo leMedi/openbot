@@ -88,6 +88,19 @@ export const subagentControlPayloadSchema = z.object({
   message: z.string().trim().min(1).max(20_000),
 })
 
+export const subagentSummarySchema = z.object({
+  id: z.string().min(1),
+  agentId: z.string().min(1).nullable(),
+  type: z.enum(['executor', 'computerUse', 'browserUse']),
+  title: z.string().min(1),
+  status: z.enum(['queued', 'running', 'waiting', 'succeeded', 'failed', 'cancelled']),
+  startedAt: z.number().int().nonnegative().nullable(),
+  elapsedMs: z.number().int().nonnegative().nullable(),
+  attemptCount: z.number().int().nonnegative(),
+  toolCallCount: z.number().int().nonnegative(),
+  recentActivity: z.array(z.string()),
+})
+
 export const groupMembersSchema = z.object({
   version: z.literal(1),
   members: z.array(
@@ -464,6 +477,7 @@ export type BrowserUseCompletionWake = z.infer<typeof browserUseCompletionWakeSc
 export type GeneralSubagentContext = z.infer<typeof generalSubagentContextSchema>
 export type GeneralSubagentCompletionWake = z.infer<typeof generalSubagentCompletionWakeSchema>
 export type SubagentControlPayload = z.infer<typeof subagentControlPayloadSchema>
+export type SubagentSummary = z.infer<typeof subagentSummarySchema>
 export type BrowserUsePayload = z.infer<typeof browserUsePayloadSchema>
 export type SendMessagePayload = z.infer<typeof sendMessagePayloadSchema>
 export type DirectAgentMessagePayload = z.infer<typeof directAgentMessagePayloadSchema>

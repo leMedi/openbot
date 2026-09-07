@@ -13,7 +13,6 @@ import * as z from 'zod'
 import { browserToolDefinitions, executeBrowserTool } from './browser'
 import {
   browserUseWorkerArgsSchema,
-  browserUseWorkerToolDefinition,
   BROWSER_USE_WORKER_TOOL_NAME,
   executeBrowserUseWorker,
 } from './browser-use-worker'
@@ -27,7 +26,6 @@ import {
 } from './computer'
 import {
   computerUseWorkerArgsSchema,
-  computerUseWorkerToolDefinition,
   COMPUTER_USE_WORKER_TOOL_NAME,
   executeComputerUseWorker,
 } from './computer-use-worker'

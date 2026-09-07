@@ -3,6 +3,7 @@ import {
   findUnsettledForegroundTurn,
   listConversationMessages,
   respondToWaitingTurn,
+  SUPERSEDED_TURN_MESSAGE,
   toggleUserReaction,
 } from '@openbot/db'
 import { createServerFn } from '@tanstack/react-start'
@@ -60,7 +61,12 @@ export const sendConversationMessage = createServerFn({ method: 'POST' })
     // A new user message supersedes the current turn. Cancel it before
     // accepting the replacement so the scheduler cannot start both turns.
     const unsettled = await findUnsettledForegroundTurn(data.conversationId)
-    if (unsettled) await cancelTurnExecution(unsettled.id)
+    if (unsettled) {
+      await cancelTurnExecution(unsettled.id, {
+        preserveSubagents: true,
+        message: SUPERSEDED_TURN_MESSAGE,
+      })
+    }
 
     const accepted = await acceptUserMessage({
       conversationId: data.conversationId,

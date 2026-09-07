@@ -8,7 +8,7 @@ import {
 } from './subagent-management'
 
 const worker = {
-  id: 'trn_worker', type: 'general-subagent', title: 'Inspect', status: 'running',
+  id: 'trn_worker', type: 'executor', title: 'Inspect', status: 'running',
   startedAt: 100, elapsedMs: 50, attemptCount: 1,
 }
 const calls: unknown[] = []

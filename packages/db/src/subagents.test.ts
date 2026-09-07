@@ -20,6 +20,7 @@ const {
   findUnsettledForegroundTurn,
   generalSubagentCompletionWakeSchema,
   generalSubagentContextSchema,
+  getTurn,
   listSubagentTurns,
   listConversationMessages,
   listPendingSubagentSteers,
@@ -99,6 +100,42 @@ test('general subagent completion queues an idempotent parent wake', async () =>
   })
   assert.equal(duplicate.changed, false)
   assert.equal(duplicate.wakeTurn?.id, completion.wakeTurn.id)
+})
+
+test('successful settlement waits for accepted steering to be applied', async () => {
+  const context = await runningParent()
+  const worker = await enqueueGeneralSubagentTurn({
+    parentTurnId: context.parent.id,
+    parentToolCallId: 'call_steered_completion',
+    task: 'Inspect the scheduler.',
+    title: 'Inspect scheduler',
+  })
+  assert.ok(await claimQueuedSubagentTurn(worker.id))
+  await requestSubagentSteer({
+    agentId: context.agent.id,
+    requestingTurnId: context.parent.id,
+    subagentTurnId: worker.id,
+    toolCallId: 'call_late_steer',
+    message: 'Also verify foreground isolation.',
+  })
+
+  const blocked = await finalizeGeneralSubagentTurn({
+    turnId: worker.id,
+    status: 'succeeded',
+    summary: 'Initial report.',
+  })
+  assert.equal(blocked.changed, false)
+  assert.equal(blocked.steeringPending, true)
+  assert.equal((await getTurn(worker.id))?.status, 'running')
+
+  await markSubagentSteersApplied(await listPendingSubagentSteers(worker.id))
+  const settled = await finalizeGeneralSubagentTurn({
+    turnId: worker.id,
+    status: 'succeeded',
+    summary: 'Verified scheduler and foreground isolation.',
+  })
+  assert.equal(settled.changed, true)
+  assert.ok(settled.wakeTurn)
 })
 
 test('subagent steering is durable, idempotent, and scoped to the owning agent', async () => {

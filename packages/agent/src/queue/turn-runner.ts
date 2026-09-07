@@ -45,6 +45,7 @@ import {
   recordTurnExecution,
   requestSubagentSteer,
   restoreAgentTurnsAfterFailedDeletion,
+  subagentSummarySchema,
   type WaitingState,
   waitingStateSchema,
   directAgentMessageContextSchema,
@@ -203,21 +204,30 @@ async function projectSubagents(
     conversations.set(id, await listConversationMessages(id))
   }))
   return workers.map((worker) => {
-    const context = worker.mode === 'computer-use'
-      ? computerUseWorkerContextSchema.parse(worker.runtimeContextJson)
+    const projection = worker.mode === 'computer-use'
+      ? {
+          type: 'computerUse' as const,
+          context: computerUseWorkerContextSchema.parse(worker.runtimeContextJson),
+        }
       : worker.mode === 'browser-use'
-        ? browserUseWorkerContextSchema.parse(worker.runtimeContextJson)
-        : generalSubagentContextSchema.parse(worker.runtimeContextJson)
+        ? {
+            type: 'browserUse' as const,
+            context: browserUseWorkerContextSchema.parse(worker.runtimeContextJson),
+          }
+        : {
+            type: 'executor' as const,
+            context: generalSubagentContextSchema.parse(worker.runtimeContextJson),
+          }
     const activity = (conversations.get(worker.conversationId) ?? []).filter((message) =>
       message.turnId === worker.id &&
       message.bodyText &&
       message.payloadJson.event !== 'subagent-control')
     const live = activeTurns.get(worker.id)?.runtimeActivity?.()
-    return {
+    return subagentSummarySchema.parse({
       id: worker.id,
       agentId: worker.targetAgentId,
-      type: worker.mode,
-      title: context.title,
+      type: projection.type,
+      title: projection.context.title,
       status: worker.status,
       startedAt: worker.startedAt,
       elapsedMs: worker.startedAt == null ? null : Math.max(0, now - worker.startedAt),
@@ -227,7 +237,7 @@ async function projectSubagents(
         message.payloadJson.event === 'computer-use' ||
         message.payloadJson.event === 'browser-use').length,
       recentActivity: live?.recentActivity ?? activity.slice(-5).map((message) => message.bodyText!),
-    }
+    })
   })
 }
 
@@ -933,7 +943,7 @@ async function executeTurn(turnId: string) {
     }
 
     throwOnModelError(created.session.state.messages)
-    const subagentSummary = isSubagentWorker
+    let subagentSummary = isSubagentWorker
       ? created.session.getLastAssistantText()?.trim()
       : undefined
     if (isSubagentWorker && !subagentSummary) {
@@ -967,26 +977,48 @@ async function executeTurn(turnId: string) {
     }
 
     if (isSubagentWorker) {
-      const settled = await retryDurable(() => isGeneralSubagent
-        ? finalizeGeneralSubagentTurn({
-            turnId,
-            status: 'succeeded',
-            summary: (subagentSummary as string).slice(0, 20_000),
-          })
-        : isBrowserUseWorker
-          ? finalizeBrowserUseWorkerTurn({
+      while (true) {
+        const settled = await retryDurable(() => isGeneralSubagent
+          ? finalizeGeneralSubagentTurn({
               turnId,
               status: 'succeeded',
               summary: (subagentSummary as string).slice(0, 20_000),
             })
-          : finalizeComputerUseWorkerTurn({
-              turnId,
-              status: 'succeeded',
-              summary: (subagentSummary as string).slice(0, 20_000),
-            }))
-      if (settled.wakeTurn) emitHandoff([settled.wakeTurn.id])
-      else emitTerminal({ type: 'done', turnId })
-      return
+          : isBrowserUseWorker
+            ? finalizeBrowserUseWorkerTurn({
+                turnId,
+                status: 'succeeded',
+                summary: (subagentSummary as string).slice(0, 20_000),
+              })
+            : finalizeComputerUseWorkerTurn({
+                turnId,
+                status: 'succeeded',
+                summary: (subagentSummary as string).slice(0, 20_000),
+              }))
+        if ('steeringPending' in settled && settled.steeringPending) {
+          const pending = await listPendingSubagentSteers(turnId)
+          if (pending.length === 0) continue
+          try {
+            await promptAllowingSuspension([
+              '[subagent_steering]',
+              'The parent provided updated guidance before completion. Preserve useful progress and continue:',
+              '',
+              ...pending.map((steer) => steer.message),
+            ].join('\n'))
+          } catch (error) {
+            if ((await listPendingSubagentSteers(turnId)).length === 0) throw error
+          }
+          if (finishSuspension()) return
+          await markSubagentSteersApplied(pending)
+          throwOnModelError(created.session.state.messages)
+          subagentSummary = created.session.getLastAssistantText()?.trim()
+          if (!subagentSummary) throw new Error('Subagent steering produced no final report')
+          continue
+        }
+        if (settled.wakeTurn) emitHandoff([settled.wakeTurn.id])
+        else emitTerminal({ type: 'done', turnId })
+        return
+      }
     }
 
     await finalizeTurnSuccess(turnId)
@@ -1193,9 +1225,14 @@ function abortActiveTurn(turnId: string) {
   void active.abortSession?.().catch(() => {})
 }
 
-async function cancelUnsettledDescendants(parentTurnId: string, message: string) {
+async function cancelUnsettledDescendants(
+  parentTurnId: string,
+  message: string,
+  preserveSubagents = false,
+) {
   const cancelled: string[] = []
   for (const child of await findChildTurns(parentTurnId)) {
+    if (preserveSubagents && child.source === 'subagent') continue
     if (['queued', 'running', 'waiting'].includes(child.status)) {
       const result = await finalizeTurnTerminal({
         turnId: child.id,
@@ -1207,20 +1244,32 @@ async function cancelUnsettledDescendants(parentTurnId: string, message: string)
         abortActiveTurn(child.id)
       }
     }
-    cancelled.push(...(await cancelUnsettledDescendants(child.id, message)))
+    cancelled.push(...(await cancelUnsettledDescendants(
+      child.id,
+      message,
+      preserveSubagents,
+    )))
   }
   return cancelled
 }
 
 /** Settles a durable turn and every pending descendant before interrupting sessions. */
-export async function cancelTurnExecution(turnId: string) {
+export async function cancelTurnExecution(
+  turnId: string,
+  options: { preserveSubagents?: boolean; message?: string } = {},
+) {
+  const message = options.message ?? 'Cancelled by user'
   const result = await finalizeTurnTerminal({
     turnId,
     status: 'cancelled',
-    message: 'Cancelled by user',
+    message,
   })
   if (result.changed) abortActiveTurn(result.turn.id)
-  const descendants = await cancelUnsettledDescendants(turnId, 'Cancelled by user')
+  const descendants = await cancelUnsettledDescendants(
+    turnId,
+    message,
+    options.preserveSubagents,
+  )
   const changedIds = [...new Set([
     ...(result.changed ? [result.turn.id] : []),
     ...descendants,

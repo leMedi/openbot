@@ -16,8 +16,6 @@ import {
 import * as schema from './schema'
 
 export type MessageAppendInput = {
-  /** Optional deterministic identity for an idempotent transcript side effect. */
-  id?: string
   conversationId: string
   kind: 'message' | 'tool_call' | 'tool_result' | 'status' | 'system' | 'other'
   role?: 'user' | 'assistant' | 'system' | 'tool'
@@ -58,7 +56,7 @@ export async function appendConversationMessage(
   const [message] = await executor
     .insert(schema.conversationMessages)
     .values({
-      id: input.id ?? createId('ent'),
+      id: createId('ent'),
       conversationId: input.conversationId,
       turnId: input.turnId ?? null,
       sequenceNo,

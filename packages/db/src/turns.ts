@@ -18,6 +18,7 @@ import {
   generalSubagentCompletionWakeSchema,
   type GeneralSubagentContext,
   generalSubagentContextSchema,
+  subagentControlPayloadSchema,
   type WaitingState,
   waitingStateSchema,
   type VersionedObject,
@@ -40,6 +41,31 @@ const unsettledPriority = sql`CASE ${schema.turns.status}
 const unsettledSourcePriority = sql`CASE ${schema.turns.source}
   WHEN 'subagent' THEN 1
   ELSE 0 END`
+
+export const SUPERSEDED_TURN_MESSAGE = 'Superseded by a newer user message'
+
+async function hasPendingSubagentSteer(
+  executor: DbExecutor,
+  turn: { id: string; conversationId: string },
+) {
+  const rows = await executor
+    .select({ payloadJson: schema.conversationMessages.payloadJson })
+    .from(schema.conversationMessages)
+    .where(and(
+      eq(schema.conversationMessages.conversationId, turn.conversationId),
+      eq(schema.conversationMessages.turnId, turn.id),
+    ))
+  const controls = rows.flatMap((row) => {
+    const parsed = subagentControlPayloadSchema.safeParse(row.payloadJson)
+    return parsed.success ? [parsed.data] : []
+  })
+  const applied = new Set(
+    controls.filter((control) => control.stage === 'applied').map((control) => control.controlId),
+  )
+  return controls.some(
+    (control) => control.stage === 'requested' && !applied.has(control.controlId),
+  )
+}
 
 export async function getTurn(id: string) {
   const [turn] = await db
@@ -69,7 +95,7 @@ export async function findNextQueuedTurn(conversationId: string) {
 /**
  * The next queued turn for one target agent across all of its conversations,
  * highest-priority lane first, then oldest. This is the scheduler's pick for
- * "one active turn per target".
+ * "one active foreground turn per target".
  */
 export async function findNextQueuedTurnForAgent(agentId: string) {
   const [turn] = await db
@@ -254,16 +280,30 @@ export async function claimQueuedTurn(id: string) {
         eq(schema.turns.id, id),
         eq(schema.turns.status, 'queued'),
         sql`NOT EXISTS (
-          WITH RECURSIVE ancestors(id, parent_turn_id, status) AS (
-            SELECT parent.id, parent.parent_turn_id, parent.status
+          WITH RECURSIVE ancestors(id, parent_turn_id, status, error_json) AS (
+            SELECT parent.id, parent.parent_turn_id, parent.status, parent.error_json
             FROM turns AS parent
             WHERE parent.id = ${schema.turns.parentTurnId}
             UNION ALL
-            SELECT parent.id, parent.parent_turn_id, parent.status
+            SELECT parent.id, parent.parent_turn_id, parent.status, parent.error_json
             FROM turns AS parent
             JOIN ancestors ON parent.id = ancestors.parent_turn_id
           )
-          SELECT 1 FROM ancestors WHERE status IN ('failed', 'cancelled')
+          SELECT 1 FROM ancestors
+          WHERE (
+            status = 'failed'
+            AND NOT (
+              ${schema.turns.source} IN (
+                'computer-use-completion',
+                'browser-use-completion',
+                'general-subagent-completion'
+              )
+              AND id = ${schema.turns.parentTurnId}
+            )
+          ) OR (
+            status = 'cancelled'
+            AND COALESCE(json_extract(error_json, '$.message'), '') <> ${SUPERSEDED_TURN_MESSAGE}
+          )
         )`,
         sql`${schema.turns.id} = (
           SELECT candidate.id FROM turns AS candidate
@@ -321,16 +361,20 @@ export async function claimQueuedSubagentTurn(id: string) {
       eq(schema.turns.source, 'subagent'),
       eq(schema.turns.status, 'queued'),
       sql`NOT EXISTS (
-        WITH RECURSIVE ancestors(id, parent_turn_id, status) AS (
-          SELECT parent.id, parent.parent_turn_id, parent.status
+        WITH RECURSIVE ancestors(id, parent_turn_id, status, error_json) AS (
+          SELECT parent.id, parent.parent_turn_id, parent.status, parent.error_json
           FROM turns AS parent
           WHERE parent.id = ${schema.turns.parentTurnId}
           UNION ALL
-          SELECT parent.id, parent.parent_turn_id, parent.status
+          SELECT parent.id, parent.parent_turn_id, parent.status, parent.error_json
           FROM turns AS parent
           JOIN ancestors ON parent.id = ancestors.parent_turn_id
         )
-        SELECT 1 FROM ancestors WHERE status IN ('failed', 'cancelled')
+        SELECT 1 FROM ancestors
+        WHERE status = 'failed' OR (
+          status = 'cancelled'
+          AND COALESCE(json_extract(error_json, '$.message'), '') <> ${SUPERSEDED_TURN_MESSAGE}
+        )
       )`,
     ))
     .returning()
@@ -787,6 +831,14 @@ export function finalizeComputerUseWorkerTurn(input: ComputerUseWorkerCompletion
     if (current.status !== 'running') {
       return { turn: current, wakeTurn: undefined, changed: false as const }
     }
+    if (input.status === 'succeeded' && await hasPendingSubagentSteer(tx, current)) {
+      return {
+        turn: current,
+        wakeTurn: undefined,
+        changed: false as const,
+        steeringPending: true as const,
+      }
+    }
 
     const now = Date.now()
     const [turn] = await tx
@@ -1037,6 +1089,14 @@ export function finalizeGeneralSubagentTurn(input: GeneralSubagentCompletionInpu
     if (current.status !== 'running') {
       return { turn: current, wakeTurn: undefined, changed: false as const }
     }
+    if (input.status === 'succeeded' && await hasPendingSubagentSteer(tx, current)) {
+      return {
+        turn: current,
+        wakeTurn: undefined,
+        changed: false as const,
+        steeringPending: true as const,
+      }
+    }
 
     const now = Date.now()
     const [turn] = await tx.update(schema.turns).set({
@@ -1126,6 +1186,14 @@ export function finalizeBrowserUseWorkerTurn(input: BrowserUseWorkerCompletionIn
     }
     if (current.status !== 'running') {
       return { turn: current, wakeTurn: undefined, changed: false as const }
+    }
+    if (input.status === 'succeeded' && await hasPendingSubagentSteer(tx, current)) {
+      return {
+        turn: current,
+        wakeTurn: undefined,
+        changed: false as const,
+        steeringPending: true as const,
+      }
     }
 
     const now = Date.now()

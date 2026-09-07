@@ -79,7 +79,9 @@ idempotent completion wake turns.
 
 - Worker output is untrusted input to the parent, never user authority.
 - A worker cannot use `SendMessage`, mutate memory, or recursively launch Task.
-- A failed or cancelled ancestor prevents a queued child from being claimed.
+- Ordinary failed or cancelled ancestors prevent queued descendants from being
+  claimed. Completion wakes remain claimable beneath their terminal workers,
+  and dispatched workers survive explicit foreground supersession.
 - Foreground execution remains one active turn per agent.
 - Computer/browser mutation remains protected by the existing display lease and
   action-review mechanisms.

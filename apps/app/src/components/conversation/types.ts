@@ -1,5 +1,7 @@
 // Types for the Conversation UI (see conversation-spec.md). UI-only mock protocol.
 
+import type { SubagentSummary } from '@openbot/db'
+
 export type Author = {
   id: string
   name: string
@@ -189,18 +191,7 @@ export type ActivityTab = {
   items: ActivityItem[]
 }
 
-export type SubagentView = {
-  id: string
-  agentId: string | null
-  type: string
-  title: string
-  status: string
-  startedAt: number | null
-  elapsedMs: number | null
-  attemptCount: number
-  toolCallCount: number
-  recentActivity: string[]
-}
+export type SubagentView = SubagentSummary
 
 export type Draft = {
   prompt: string

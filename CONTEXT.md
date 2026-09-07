@@ -285,9 +285,13 @@ user > agent > background
 Temporary subagent child turns run in independent execution slots so their
 parent and later foreground turns can continue concurrently. That exclusivity
 and worker admission are enforced by the server scheduler and enqueue
-transactions, not a database constraint. A turn waiting for user input persists
-the prompt, options, originating tool call, and resume data in
-`waiting_state_json`.
+transactions, not a database constraint. A newer user message supersedes its
+active foreground turn without cancelling temporary workers already dispatched
+by that turn. Ordinary failed or cancelled ancestors block descendant claims;
+a worker completion wake remains claimable beneath its terminal worker, and a
+dispatched worker remains claimable beneath a specifically superseded parent.
+A turn waiting for user input persists the prompt, options, originating tool
+call, and resume data in `waiting_state_json`.
 
 If the server restarts while a turn is running, startup resets it to queued and
 increments `attempt_count`. Tool side effects still require their own
@@ -450,8 +454,9 @@ persisted waiting-turn resume, durable Pi session history, durable user and
 agent memory, singleton user profile settings, and single-agent turn execution
 with streamed visible output are
 implemented. User message acceptance is idempotent by request ID or stable
-idempotency key. Per-target claims enforce one active turn and
-`user > agent > background` priority. A turn is executed by the server-side runner
+idempotency key. Per-target claims enforce one active foreground turn and
+`user > agent > background` priority; temporary subagents use separately
+bounded concurrent execution slots. A turn is executed by the server-side runner
 (`packages/agent/src/queue/turn-runner.ts`): it claims the queued turn, resolves
 the agent model or installation default through Pi's authenticated catalog,
 snapshots the effective provider/model/tools/permissions/runtime context, and

@@ -26,13 +26,6 @@ function elapsed(worker: SubagentView) {
   return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`
 }
 
-function workerType(type: string) {
-  if (type === 'general-subagent') return 'executor'
-  if (type === 'computer-use') return 'computerUse'
-  if (type === 'browser-use') return 'browserUse'
-  return type
-}
-
 export function SubagentPanel({ load, steer, stop }: SubagentPanelProps) {
   const [open, setOpen] = useState(false)
   const [workers, setWorkers] = useState<SubagentView[]>([])
@@ -127,7 +120,7 @@ export function SubagentPanel({ load, steer, stop }: SubagentPanelProps) {
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-xs font-semibold">{worker.title}</div>
                   <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                    <Badge variant="outline" className="h-4 px-1.5 text-[9px]">{workerType(worker.type)}</Badge>
+                    <Badge variant="outline" className="h-4 px-1.5 text-[9px]">{worker.type}</Badge>
                     <Badge
                       variant={worker.status === 'waiting' ? 'warning' : 'secondary'}
                       className="h-4 px-1.5 text-[9px]"

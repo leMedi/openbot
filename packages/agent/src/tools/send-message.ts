@@ -12,6 +12,7 @@ import {
   type DirectAgentMessageInput,
   type ModelToolCall,
   type SendMessagePayload,
+  type SubagentSummary,
   type ToolDefinition,
   type Turn,
   type VersionedObject,
@@ -194,17 +195,7 @@ export type ToolTurnContext = {
     title: string
   }) => Promise<{ turnId: string }>
   /** Durable status projection for temporary workers owned by this agent. */
-  listSubagents?: () => Promise<Array<{
-    id: string
-    type: string
-    title: string
-    status: string
-    startedAt: number | null
-    elapsedMs: number | null
-    attemptCount: number
-    toolCallCount: number
-    recentActivity: string[]
-  }>>
+  listSubagents?: () => Promise<SubagentSummary[]>
   /** Interrupts and continues a live worker with additional guidance. */
   messageSubagent?: (input: {
     subagentId: string

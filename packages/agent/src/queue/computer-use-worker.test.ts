@@ -25,6 +25,7 @@ const {
   finalizeComputerUseWorkerTurn,
   findNextQueuedTurnForAgent,
   getTurn,
+  SUPERSEDED_TURN_MESSAGE,
 } = await import('@openbot/db')
 const { cancelTurnExecution, watchTurn } = await import('./turn-runner')
 
@@ -131,6 +132,25 @@ test('cancelling a parent also cancels its queued computer worker', async () => 
   assert.equal((await getTurn(worker.id))?.status, 'cancelled')
 })
 
+test('foreground supersession preserves and unblocks a queued worker', async () => {
+  const context = await runningParent()
+  const worker = await enqueueComputerUseWorkerTurn({
+    parentTurnId: context.parent.id,
+    parentToolCallId: 'call_preserved',
+    task: 'Open Settings.',
+    title: 'Open Settings',
+  })
+
+  await cancelTurnExecution(context.parent.id, {
+    preserveSubagents: true,
+    message: SUPERSEDED_TURN_MESSAGE,
+  })
+
+  assert.equal((await getTurn(context.parent.id))?.status, 'cancelled')
+  assert.equal((await getTurn(worker.id))?.status, 'queued')
+  assert.equal((await claimQueuedSubagentTurn(worker.id))?.id, worker.id)
+})
+
 test('worker failure is reported through a completion wake', async () => {
   const context = await runningParent()
   const worker = await enqueueComputerUseWorkerTurn({
@@ -155,6 +175,7 @@ test('worker failure is reported through a completion wake', async () => {
       .status,
     'failed',
   )
+  assert.equal((await claimQueuedTurn(completion.wakeTurn!.id))?.id, completion.wakeTurn!.id)
 })
 
 test('a persisted stream follows the parent, worker, and completion wake', async () => {
