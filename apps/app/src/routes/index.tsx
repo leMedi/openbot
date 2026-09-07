@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createFileRoute, useRouter } from '@tanstack/react-router'
 import type { Agent, ConversationMessage, Group } from '@openbot/db'
-import { BotIcon, MessageCircle, PanelRight } from 'lucide-react'
+import { BotIcon, CalendarClock, MessageCircle, PanelRight } from 'lucide-react'
 import {
   activityFromMessages,
   authorForMessage,
@@ -24,6 +24,7 @@ import {
   RenameConversationDialog,
 } from '@/components/openbot/modals'
 import { PluginsDialog } from '@/components/openbot/plugins-dialog'
+import { RoutinesDialog } from '@/components/openbot/routines-dialog'
 import { SettingsDialog } from '@/components/openbot/settings-dialog'
 import { Sidebar } from '@/components/openbot/sidebar'
 import { Button } from '@/components/ui/button'
@@ -111,6 +112,7 @@ function OpenBot() {
 
   const [pluginsOpen, setPluginsOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [routinesOpen, setRoutinesOpen] = useState(false)
   const [updateAvailable, setUpdateAvailable] = useState(false)
   const [newConvoOpen, setNewConvoOpen] = useState(false)
   const [botDialog, setBotDialog] = useState<{ open: boolean; agent: Agent | null }>({
@@ -169,6 +171,25 @@ function OpenBot() {
     }
     if (activeId) localStorage.setItem(LAST_CONVERSATION_KEY, activeId)
   }, [activeId])
+
+  // Scheduled turns have no composer-known turn id. A global stream refreshes
+  // their delivery conversation when a routine emits or settles.
+  useEffect(() => {
+    const source = new EventSource('/api/routines/stream')
+    source.onmessage = (message) => {
+      try {
+        const event = JSON.parse(message.data) as { conversationId?: string }
+        if (event.conversationId === activeId) {
+          void getConversationMessages({ data: { conversationId: activeId } })
+            .then(({ rows, pendingTurnId }) => {
+              setTranscript({ conversationId: activeId, rows, pendingTurnId })
+            })
+        }
+        void router.invalidate()
+      } catch { /* Ignore malformed live updates. */ }
+    }
+    return () => source.close()
+  }, [activeId, router])
 
   const findConversation = (id: string) =>
     conversations.find((c) => c.id === id) ?? null
@@ -462,7 +483,18 @@ function OpenBot() {
         }}
         onBack={isMobile ? () => setMobileDetail(false) : undefined}
         headerActions={
-          isMobile ? undefined : (
+          isMobile ? (
+            activeAgent ? (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Manage routines"
+                onClick={() => setRoutinesOpen(true)}
+              >
+                <CalendarClock className="size-4" />
+              </Button>
+            ) : undefined
+          ) : (
             <Button
               variant="ghost"
               size="icon-sm"
@@ -519,6 +551,7 @@ function OpenBot() {
               activeAgentId={activeAgent?.id}
               desktopEnabled={desktopMode === 'per-agent' && activeAgent?.xDisplayNumber != null}
               onOpenPlugins={() => setPluginsOpen(true)}
+              onOpenRoutines={() => setRoutinesOpen(true)}
               mcpServers={mcp.servers}
               mcpAccounts={mcp.accounts}
               mcpGrants={mcp.grants}
@@ -534,6 +567,15 @@ function OpenBot() {
         accounts={mcp.accounts}
         onChanged={() => router.invalidate()}
       />
+      {activeAgent && active && (
+        <RoutinesDialog
+          open={routinesOpen}
+          onOpenChange={setRoutinesOpen}
+          agentId={activeAgent.id}
+          conversationId={active.id}
+          defaultTimezone={profile.timezone}
+        />
+      )}
       <SettingsDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}

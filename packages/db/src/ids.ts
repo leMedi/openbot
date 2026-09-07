@@ -12,6 +12,7 @@ export type IdPrefix =
   | 'dlv'
   | 'mcp'
   | 'acc'
+  | 'rtn'
 
 export function createId(prefix: IdPrefix) {
   return `${prefix}_${randomBytes(16).toString('base64url')}`

@@ -262,6 +262,33 @@ turn's status records whether processing has completed.
 A turn is both a durable scheduler item and a historical execution record.
 There is no separate runs table.
 
+### Routines
+
+A routine is a durable, agent-owned standing instruction bound to one private
+delivery conversation. Its definition stores a name, instruction, five-field
+cron expression, IANA timezone, enabled state, revision, and next run time.
+Each firing is an ordinary hidden background turn with `source = routine` and
+`routine_id`; `runtime_context_json` snapshots the definition and scheduled
+slot so editing the routine cannot rewrite execution history.
+
+The server process owns cron scheduling. Due enqueueing is transactional and
+uses a stable routine/slot idempotency key. At most one queued, running, or
+waiting turn exists per routine. Missed slots coalesce into one immediate run
+after the prior run settles; there is no unbounded backfill. Schedules run no
+more often than every 15 minutes.
+
+Routine turns can use SendMessage, memory, connected MCP tools, routine
+management, and read persistent workspace files. They cannot launch temporary
+workers, browser/computer automation, or detached shell work because those
+lifecycles can outlive the parent turn. Model-requested mutations require a
+durable approval interaction; direct user edits in the routines UI do not.
+
+Routine run history is the associated turns, capped to the latest 20 in the
+management UI. Clearing a delivery conversation deletes its turn history under
+the normal conversation lifecycle and rebinds definitions to the fresh
+conversation. Deleting a bound conversation rebinds definitions to another
+private conversation for the agent, creating one if necessary.
+
 A turn targets exactly one agent or one group. It stores:
 
 - Conversation and optional parent turn.
@@ -430,7 +457,7 @@ constraints enforce parseable JSON and stable relational lifecycle values.
 The following are explicitly outside the MVP schema:
 
 - Projects and project memory.
-- Automations, routines, notices, and run history.
+- Event-triggered automations and notices.
 - Workflows and workflow versions.
 - Slack, Discord, and other communication channels.
 - Tool approval and retirement rules.
@@ -471,6 +498,12 @@ session history. A widget send suspends the turn through
 the persisted waiting-turn interaction and resumes from stored mid-turn
 history. Visible output reaches clients over a per-turn SSE route; execution
 never depends on a connected client.
+
+Cron routines are implemented with durable definitions, transactional
+coalescing enqueue, startup scheduling/recovery, typed hidden wake prompts,
+turn-backed run history, approval-gated `ManageRoutine` mutations, direct UI
+management, and a global SSE stream for scheduled output whose turn ID was not
+known by a composer.
 
 Computer-use delegation is selected through the built-in `Task` tool with
 `subagent_type: "computerUse"`. It queues one idempotent agent-lane child turn,
@@ -539,6 +572,8 @@ Remaining implementation slices are:
 - `packages/db/src/turns.ts`: durable turn queue (target-safe priority claims,
   waiting/resume, terminal settlement, execution snapshots, and atomic group,
   computer-use, and browser-use child-turn delegation).
+- `packages/db/src/routines.ts` and `routine-schedule.ts`: routine CRUD,
+  cron/timezone validation, due enqueueing, and turn-backed run history.
 - `packages/db/src/pi-sessions.ts`: private and worker Pi session paths and
   deletion lifecycle.
 - `packages/db/src/memory.ts`: scoped memory CRUD, metadata validation, and
@@ -586,10 +621,13 @@ Remaining implementation slices are:
   the reminder/nudge texts enforcing the SendMessage contract.
 - `packages/agent/src/queue/turn-runner.ts`: turn executor, group orchestrator,
   per-target drains, and in-memory visible-output fan-out.
+- `packages/agent/src/queue/routine-scheduler.ts`: process-local cron authority.
+- `packages/agent/src/tools/manage-routine.ts`: approval-gated model routine management.
 - `apps/app/src/routes/api.agents.$agentId.avatar.ts`: agent avatar file-serving API.
 - `apps/app/src/routes/api.groups.$groupId.avatar.ts`: group avatar file-serving API.
 - `apps/app/src/routes/api.turns.$turnId.stream.ts`: per-turn SSE stream of
   visible output.
+- `apps/app/src/routes/api.routines.stream.ts`: global scheduled-turn events.
 - `apps/app/src/routes/api.files.$fileId.ts`: managed-file serving API for
   transcript attachments.
 - `apps/app/src/routes/api.mcp.oauth.start.ts` and

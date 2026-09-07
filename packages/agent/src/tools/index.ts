@@ -79,6 +79,12 @@ import {
   stopSubagentToolDefinition,
   STOP_SUBAGENT_TOOL_NAME,
 } from './subagent-management'
+import {
+  executeManageRoutine,
+  manageRoutineArgsSchema,
+  manageRoutineToolDefinition,
+  MANAGE_ROUTINE_TOOL_NAME,
+} from './manage-routine'
 
 export { SEND_MESSAGE_TOOL_NAME }
 export type { ToolTurnContext }
@@ -96,6 +102,7 @@ export const agentToolDefinitions: ToolDefinition[] = [
   checkSubagentToolDefinition,
   messageSubagentToolDefinition,
   stopSubagentToolDefinition,
+  manageRoutineToolDefinition,
 ]
 
 /** Narrow capabilities available inside an isolated computer-use worker. */
@@ -137,8 +144,20 @@ export const backgroundToolDefinitions: ToolDefinition[] = agentToolDefinitions.
     tool.function.name !== TASK_TOOL_NAME &&
     tool.function.name !== CHECK_SUBAGENT_TOOL_NAME &&
     tool.function.name !== MESSAGE_SUBAGENT_TOOL_NAME &&
-    tool.function.name !== STOP_SUBAGENT_TOOL_NAME,
+    tool.function.name !== STOP_SUBAGENT_TOOL_NAME &&
+    tool.function.name !== MANAGE_ROUTINE_TOOL_NAME,
 )
+
+/** Routine runs can deliver, use memory/MCP, and inspect their workspace, but
+ * cannot launch work whose lifecycle can outlive the parent run. */
+export const routineToolDefinitions: ToolDefinition[] = [
+  ...backgroundToolDefinitions.filter(
+    (tool) => [SEND_MESSAGE_TOOL_NAME, 'updateMemory', 'recallMemory', 'Read'].includes(
+      tool.function.name,
+    ),
+  ),
+  manageRoutineToolDefinition,
+]
 
 /**
  * Executes one model-requested tool call and returns the tool-role message
@@ -212,6 +231,16 @@ export async function executeAgentToolCall(
         await executeSendAgentMessage(
           agent,
           sendAgentMessageArgsSchema.parse(args),
+          call,
+          context,
+        ),
+      )
+    }
+    if (call.function.name === MANAGE_ROUTINE_TOOL_NAME) {
+      return respond(
+        await executeManageRoutine(
+          agent.id,
+          manageRoutineArgsSchema.parse(args),
           call,
           context,
         ),

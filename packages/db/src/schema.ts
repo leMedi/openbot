@@ -144,6 +144,29 @@ export const conversations = sqliteTable('conversations', {
   index('conversations_agent_owner_idx').on(table.ownerAgentId, table.updatedAt),
 ])
 
+export const routines = sqliteTable('routines', {
+  id: text('id').primaryKey(),
+  agentId: text('agent_id')
+    .notNull()
+    .references(() => agents.id, { onDelete: 'cascade' }),
+  conversationId: text('conversation_id')
+    .notNull()
+    .references(() => conversations.id),
+  name: text('name').notNull(),
+  instruction: text('instruction').notNull(),
+  cronExpression: text('cron_expression').notNull(),
+  timezone: text('timezone').notNull(),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  revision: integer('revision').notNull().default(1),
+  nextRunAt: integer('next_run_at'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+}, (table) => [
+  check('routines_revision_check', sql`${table.revision} > 0`),
+  index('routines_agent_idx').on(table.agentId, table.createdAt),
+  index('routines_due_idx').on(table.enabled, table.nextRunAt),
+])
+
 export const turns = sqliteTable('turns', {
   id: text('id').primaryKey(),
   conversationId: text('conversation_id')
@@ -159,6 +182,9 @@ export const turns = sqliteTable('turns', {
     (): AnySQLiteColumn => turns.id,
     { onDelete: 'set null' },
   ),
+  routineId: text('routine_id').references(() => routines.id, {
+    onDelete: 'set null',
+  }),
   lane: text('lane').notNull(),
   source: text('source').notNull(),
   status: text('status').notNull().default('queued'),
@@ -222,6 +248,7 @@ export const turns = sqliteTable('turns', {
   index('turns_queue_idx').on(table.status, table.lane, table.createdAt),
   index('turns_conversation_idx').on(table.conversationId, table.createdAt),
   index('turns_parent_idx').on(table.parentTurnId),
+  index('turns_routine_idx').on(table.routineId, table.createdAt),
 ])
 
 export const conversationMessages = sqliteTable('conversation_messages', {
@@ -399,6 +426,8 @@ export type Conversation = typeof conversations.$inferSelect
 export type NewConversation = typeof conversations.$inferInsert
 export type Turn = typeof turns.$inferSelect
 export type NewTurn = typeof turns.$inferInsert
+export type Routine = typeof routines.$inferSelect
+export type NewRoutine = typeof routines.$inferInsert
 export type ConversationMessage = typeof conversationMessages.$inferSelect
 export type NewConversationMessage = typeof conversationMessages.$inferInsert
 export type MemoryItem = typeof memoryItems.$inferSelect

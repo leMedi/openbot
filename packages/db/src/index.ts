@@ -11,6 +11,8 @@ export * from './conversations'
 export * from './messages'
 export * from './reactions'
 export * from './turns'
+export * from './routines'
+export * from './routine-schedule'
 export * from './subagent-controls'
 export * from './pi-sessions'
 export * from './files'
@@ -27,6 +29,7 @@ export {
   managedFiles,
   memoryItems,
   turns,
+  routines,
   mcpServers,
   mcpAccounts,
   agentMcpAccounts,
@@ -48,6 +51,8 @@ export type {
   NewMemoryItem,
   Turn,
   NewTurn,
+  Routine,
+  NewRoutine,
   McpServer,
   NewMcpServer,
   McpAccount,

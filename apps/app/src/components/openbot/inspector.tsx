@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type RfbClient from '@novnc/novnc'
 import type { MemoryItem, MemoryKind, SafeMcpAccount, SafeMcpServer } from '@openbot/db'
-import { FileText, Maximize2, Pencil, Plus, Trash2 } from 'lucide-react'
+import { CalendarClock, FileText, Maximize2, Pencil, Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -106,6 +106,7 @@ export function Inspector({
   activeAgentId,
   desktopEnabled,
   onOpenPlugins,
+  onOpenRoutines,
   mcpServers,
   mcpAccounts,
   mcpGrants,
@@ -115,6 +116,7 @@ export function Inspector({
   activeAgentId?: string
   desktopEnabled: boolean
   onOpenPlugins: () => void
+  onOpenRoutines: () => void
   mcpServers: SafeMcpServer[]
   mcpAccounts: SafeMcpAccount[]
   mcpGrants: { agentId: string; accountId: string; enabledAt: number }[]
@@ -361,6 +363,33 @@ export function Inspector({
           <p className="text-xs text-muted-foreground/70">No accounts scoped to this bot.</p>
         )}
       </section>
+
+      {/* Routines */}
+      {activeAgentId && (
+        <section>
+          <div className="mb-2 flex items-center">
+            <h3 className="flex-1 text-[11px] font-semibold text-muted-foreground">Routines</h3>
+            <button
+              type="button"
+              onClick={onOpenRoutines}
+              className="text-xs font-medium text-info hover:opacity-80"
+            >
+              Manage
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenRoutines}
+            className="flex w-full items-center gap-2 rounded-lg border bg-card px-3 py-2.5 text-left hover:border-foreground/20"
+          >
+            <CalendarClock className="size-4 text-muted-foreground" />
+            <div>
+              <div className="text-xs font-medium">Scheduled routines</div>
+              <div className="text-[10px] text-muted-foreground">Create recurring work for this bot.</div>
+            </div>
+          </button>
+        </section>
+      )}
 
       {/* Memory */}
       <section>

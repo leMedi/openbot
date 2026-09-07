@@ -134,7 +134,7 @@ test('describes only capabilities OpenBot actually exposes', () => {
   assert.doesNotMatch(prompt, /\bWebSearch\b|\bWebFetch\b|\bGenerateImage\b/)
   assert.doesNotMatch(prompt, /Grok Bot/)
   assert.doesNotMatch(prompt, /request_smart_mode_approval|smart_mode_block_reason/)
-  assert.doesNotMatch(prompt, /scheduled routine|\[routine\]|a routine, or a web page/)
+  assert.match(prompt, /ManageRoutine creates and maintains durable recurring instructions/)
 })
 
 test('renders live MCP and desktop capability state separately from policy', () => {

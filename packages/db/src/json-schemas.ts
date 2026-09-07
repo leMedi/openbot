@@ -412,6 +412,55 @@ export const directAgentMessageContextSchema = z.object({
   content: z.string().min(1).max(20_000),
 })
 
+export const routineWakeSchema = z.object({
+  version: z.literal(1),
+  type: z.literal('routine'),
+  routineId: z.string().min(1),
+  routineRevision: z.number().int().positive(),
+  name: z.string().trim().min(1).max(120),
+  instruction: z.string().trim().min(1).max(20_000),
+  cronExpression: z.string().trim().min(1).max(100),
+  timezone: z.string().trim().min(1).max(100),
+  scheduledFor: z.number().int().nonnegative(),
+})
+
+const routineCreateOperationSchema = z.object({
+  action: z.literal('create'),
+  routineId: z.string().min(1),
+  name: z.string().trim().min(1).max(120),
+  instruction: z.string().trim().min(1).max(20_000),
+  cronExpression: z.string().trim().min(1).max(100),
+  timezone: z.string().trim().min(1).max(100),
+  enabled: z.boolean(),
+})
+
+const routineUpdateOperationSchema = z.object({
+  action: z.literal('update'),
+  routineId: z.string().min(1),
+  expectedRevision: z.number().int().positive(),
+  name: z.string().trim().min(1).max(120).optional(),
+  instruction: z.string().trim().min(1).max(20_000).optional(),
+  cronExpression: z.string().trim().min(1).max(100).optional(),
+  timezone: z.string().trim().min(1).max(100).optional(),
+})
+
+const routineIdOperationSchema = z.object({
+  action: z.enum(['pause', 'resume', 'delete']),
+  routineId: z.string().min(1),
+})
+
+export const routineOperationSchema = z.discriminatedUnion('action', [
+  routineCreateOperationSchema,
+  routineUpdateOperationSchema,
+  routineIdOperationSchema,
+])
+
+export const routineApprovalResumeSchema = z.object({
+  version: z.literal(1),
+  type: z.literal('routine-approval'),
+  operation: routineOperationSchema,
+})
+
 export const apiKeyCredentialsSchema = z.object({
   version: z.literal(1),
   apiKey: z.string().min(1),
@@ -482,6 +531,9 @@ export type BrowserUsePayload = z.infer<typeof browserUsePayloadSchema>
 export type SendMessagePayload = z.infer<typeof sendMessagePayloadSchema>
 export type DirectAgentMessagePayload = z.infer<typeof directAgentMessagePayloadSchema>
 export type DirectAgentMessageContext = z.infer<typeof directAgentMessageContextSchema>
+export type RoutineWake = z.infer<typeof routineWakeSchema>
+export type RoutineOperation = z.infer<typeof routineOperationSchema>
+export type RoutineApprovalResume = z.infer<typeof routineApprovalResumeSchema>
 export type ApiKeyCredentials = z.infer<typeof apiKeyCredentialsSchema>
 export type OauthCredentials = z.infer<typeof oauthCredentialsSchema>
 export type McpCredentials = ApiKeyCredentials | OauthCredentials

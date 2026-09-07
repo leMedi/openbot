@@ -18,6 +18,7 @@ const {
   backgroundToolDefinitions,
   computerUseWorkerToolDefinitions,
   executeAgentToolCall,
+  routineToolDefinitions,
 } = await import('./index')
 
 const agent = {
@@ -50,6 +51,7 @@ test('scopes mutating computer control to the computer-use worker', () => {
       'CheckSubagent',
       'MessageSubagent',
       'StopSubagent',
+      'ManageRoutine',
     ],
   )
   assert.deepEqual(
@@ -63,6 +65,16 @@ test('scopes mutating computer control to the computer-use worker', () => {
   assert.equal(
     backgroundToolDefinitions.some((tool) => tool.function.name === 'Computer'),
     false,
+  )
+  assert.deepEqual(
+    routineToolDefinitions.map((tool) => tool.function.name),
+    [
+      'SendMessage',
+      'updateMemory',
+      'recallMemory',
+      'Read',
+      'ManageRoutine',
+    ],
   )
 })
 

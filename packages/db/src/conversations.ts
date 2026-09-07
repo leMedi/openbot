@@ -1,4 +1,4 @@
-import { desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, ne, sql } from 'drizzle-orm'
 import { db } from './client'
 import { createId } from './ids'
 import { deletePiSessionDirectory } from './pi-sessions'
@@ -136,21 +136,42 @@ export async function clearConversation(id: string) {
       .limit(1)
     if (!existing) throw new Error(`Conversation ${id} not found`)
 
-    await tx.delete(schema.conversations).where(eq(schema.conversations.id, id))
-
-    const [fresh] = await tx
+    // Group ownership and the dedicated agent inbox are unique. Group rooms
+    // cannot own routines, so they retain the original delete-then-insert
+    // order. An agent inbox uses a temporary origin until the old row is gone.
+    if (existing.ownerGroupId) {
+      await tx.delete(schema.conversations).where(eq(schema.conversations.id, id))
+    }
+    const temporaryOrigin = existing.origin === 'agent-direct'
+      ? 'conversation-clear-replacement'
+      : existing.origin
+    let [fresh] = await tx
       .insert(schema.conversations)
       .values({
         id: createId('cnv'),
         ownerAgentId: existing.ownerAgentId,
         ownerGroupId: existing.ownerGroupId,
         title: existing.title,
-        origin: existing.origin,
+        origin: temporaryOrigin,
         purpose: existing.purpose,
         createdAt: now,
         updatedAt: now,
       })
       .returning()
+    await tx
+      .update(schema.routines)
+      .set({ conversationId: fresh!.id, updatedAt: now })
+      .where(eq(schema.routines.conversationId, id))
+    if (!existing.ownerGroupId) {
+      await tx.delete(schema.conversations).where(eq(schema.conversations.id, id))
+    }
+    if (temporaryOrigin !== existing.origin) {
+      [fresh] = await tx
+        .update(schema.conversations)
+        .set({ origin: existing.origin })
+        .where(eq(schema.conversations.id, fresh!.id))
+        .returning()
+    }
     return fresh
   })
   await deletePiSessionDirectory(id)
@@ -158,11 +179,54 @@ export async function clearConversation(id: string) {
 }
 
 export async function deleteConversation(id: string) {
-  const deleted = await db
-    .delete(schema.conversations)
-    .where(eq(schema.conversations.id, id))
-    .returning({ id: schema.conversations.id })
-  if (deleted.length === 0) return false
+  const deleted = await db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select()
+      .from(schema.conversations)
+      .where(eq(schema.conversations.id, id))
+      .limit(1)
+    if (!existing) return false
+    const [boundRoutine] = await tx
+      .select({ id: schema.routines.id })
+      .from(schema.routines)
+      .where(eq(schema.routines.conversationId, id))
+      .limit(1)
+    if (boundRoutine) {
+      if (!existing.ownerAgentId) {
+        throw new Error('Group conversations cannot own routines')
+      }
+      let [replacement] = await tx
+        .select()
+        .from(schema.conversations)
+        .where(and(
+          eq(schema.conversations.ownerAgentId, existing.ownerAgentId),
+          ne(schema.conversations.id, id),
+        ))
+        .orderBy(desc(schema.conversations.updatedAt))
+        .limit(1)
+      if (!replacement) {
+        [replacement] = await tx
+          .insert(schema.conversations)
+          .values({
+            id: createId('cnv'),
+            ownerAgentId: existing.ownerAgentId,
+            title: existing.title,
+            origin: 'routine-rebind',
+            purpose: existing.purpose,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          })
+          .returning()
+      }
+      await tx
+        .update(schema.routines)
+        .set({ conversationId: replacement!.id, updatedAt: Date.now() })
+        .where(eq(schema.routines.conversationId, id))
+    }
+    await tx.delete(schema.conversations).where(eq(schema.conversations.id, id))
+    return true
+  })
+  if (!deleted) return false
   await deletePiSessionDirectory(id)
   return true
 }
