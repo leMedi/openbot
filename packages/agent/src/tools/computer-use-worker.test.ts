@@ -38,6 +38,7 @@ test('scopes mutating computer control to the computer-use worker', () => {
     agentToolDefinitions.map((tool) => tool.function.name),
     [
       'SendMessage',
+      'ReactToMessage',
       'SendAgentMessage',
       'updateMemory',
       'recallMemory',
@@ -47,6 +48,10 @@ test('scopes mutating computer control to the computer-use worker', () => {
       'Screenshot',
       'computerUse',
       'browserUse',
+      'Task',
+      'CheckSubagent',
+      'MessageSubagent',
+      'StopSubagent',
     ],
   )
   assert.deepEqual(

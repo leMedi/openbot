@@ -189,6 +189,19 @@ export type ActivityTab = {
   items: ActivityItem[]
 }
 
+export type SubagentView = {
+  id: string
+  agentId: string | null
+  type: string
+  title: string
+  status: string
+  startedAt: number | null
+  elapsedMs: number | null
+  attemptCount: number
+  toolCallCount: number
+  recentActivity: string[]
+}
+
 export type Draft = {
   prompt: string
   richText?: unknown

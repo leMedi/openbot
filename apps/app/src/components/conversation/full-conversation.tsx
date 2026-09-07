@@ -102,7 +102,7 @@ export function FullConversationDialog({
   tabs: ActivityTab[]
   onClose: () => void
 }) {
-  const [tabs, setTabs] = useState(initialTabs)
+  const tabs = initialTabs
   const [activeId, setActiveId] = useState(initialTabs[0]?.id ?? 'root')
   const [pos, setPos] = useState({ x: 0, y: 0 })
   const drag = useRef<{ startX: number; startY: number; baseX: number; baseY: number } | null>(
@@ -112,32 +112,6 @@ export function FullConversationDialog({
   const stickToBottom = useRef(true)
 
   useHotkeys('escape', onClose, { enableOnFormTags: true, enableOnContentEditable: true })
-
-  // Running subagent data refreshes every two seconds (mocked ticks);
-  // activity follows appended entries.
-  useEffect(() => {
-    const t = setInterval(() => {
-      setTabs((all) =>
-        all.map((tab) =>
-          tab.status === 'running'
-            ? {
-                ...tab,
-                items: [
-                  ...tab.items,
-                  {
-                    kind: 'tool',
-                    text: `poll_status() — batch ${tab.items.length + 1} still processing`,
-                    toolName: 'fetch_orders',
-                    toolStatus: 'pending',
-                  },
-                ],
-              }
-            : tab,
-        ),
-      )
-    }, 2000)
-    return () => clearInterval(t)
-  }, [])
 
   const active = tabs.find((t) => t.id === activeId) ?? tabs[0]
 

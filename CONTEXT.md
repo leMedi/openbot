@@ -126,10 +126,12 @@ The effective tool list is not an agent column. It is derived for each turn
 from runtime capabilities, MCP discovery, permissions, and execution context.
 Historical effective tools and permissions are snapshotted on the turn.
 
-Subagents are not persistent agent rows in the MVP. The built-in `computerUse`
-and `browserUse` workers are runtime inference capabilities represented by
-durable child turns, with isolated Pi sessions rather than the parent's
-conversation history. Persisted custom subagent definitions remain deferred.
+Subagents are not persistent agent rows. `Task` starts temporary `executor`,
+`computerUse`, or `browserUse` workers represented by durable child turns, with
+isolated Pi sessions rather than the parent's conversation history. Executor
+workers are bounded to four unsettled executions per agent; the graphical
+worker kinds retain their stricter per-agent admission limits. Persisted custom
+subagent definitions remain deferred.
 
 ## Groups
 
@@ -273,16 +275,19 @@ A turn targets exactly one agent or one group. It stores:
 - Attempt count and execution timestamps.
 - Group orchestration round and position where applicable.
 
-The scheduler permits one active turn per target and prioritizes lanes in this
-order:
+The scheduler permits one active foreground turn per target and prioritizes
+foreground lanes in this order:
 
 ```text
 user > agent > background
 ```
 
-That exclusivity is enforced by the server scheduler, not a database
-constraint. A turn waiting for user input persists the prompt, options,
-originating tool call, and resume data in `waiting_state_json`.
+Temporary subagent child turns run in independent execution slots so their
+parent and later foreground turns can continue concurrently. That exclusivity
+and worker admission are enforced by the server scheduler and enqueue
+transactions, not a database constraint. A turn waiting for user input persists
+the prompt, options, originating tool call, and resume data in
+`waiting_state_json`.
 
 If the server restarts while a turn is running, startup resets it to queued and
 increments `attempt_count`. Tool side effects still require their own
@@ -339,9 +344,11 @@ Remote Desktop machine as the OpenBot server and Shell. Each newly created
 agent is assigned one dedicated graphical session on that machine. Ordinary
 agent turns have read-only Screenshot access and delegate page-level automation
 through `browserUse`, falling back to `computerUse` for visual or native UI
-work. Each delegation queues one narrowly scoped durable child turn; only the
-browser worker receives the Browser tools and only the computer worker receives
-the mutating Computer tool. In `disabled` mode, agents run on the host without
+work. Each delegation queues one narrowly scoped durable child turn and starts
+it in an independent execution slot; only the browser worker receives Browser
+tools and only the computer worker receives the mutating Computer tool. Workers
+can be inspected, durably steered, or stopped while foreground work continues.
+In `disabled` mode, agents run on the host without
 graphical sessions, VNC, browser automation, screenshots, or Computer Use. The
 web/mobile client only renders durable results and approval prompts; it never
 captures its own screen or injects input.

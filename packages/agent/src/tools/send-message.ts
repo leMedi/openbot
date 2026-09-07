@@ -187,6 +187,32 @@ export type ToolTurnContext = {
     task: string
     title: string
   }) => Promise<{ turnId: string }>
+  /** Queues one isolated general-purpose temporary worker. */
+  enqueueGeneralSubagent?: (input: {
+    parentToolCallId: string
+    task: string
+    title: string
+  }) => Promise<{ turnId: string }>
+  /** Durable status projection for temporary workers owned by this agent. */
+  listSubagents?: () => Promise<Array<{
+    id: string
+    type: string
+    title: string
+    status: string
+    startedAt: number | null
+    elapsedMs: number | null
+    attemptCount: number
+    toolCallCount: number
+    recentActivity: string[]
+  }>>
+  /** Interrupts and continues a live worker with additional guidance. */
+  messageSubagent?: (input: {
+    subagentId: string
+    message: string
+    toolCallId: string
+  }) => Promise<unknown>
+  /** Cancels an accessible worker. */
+  stopSubagent?: (subagentId: string) => Promise<unknown>
   /** Atomically accepts direct delivery and queues the recipient without waiting. */
   sendDirectAgentMessage: (
     input: Omit<DirectAgentMessageInput, 'senderAgentId'>,

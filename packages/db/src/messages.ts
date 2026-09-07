@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
-import { and, asc, eq, or } from 'drizzle-orm'
+import { and, asc, eq, or, sql } from 'drizzle-orm'
 import { db } from './client'
 import { allocateConversationSequence, type DbExecutor } from './conversations'
 import { createId } from './ids'
@@ -16,6 +16,8 @@ import {
 import * as schema from './schema'
 
 export type MessageAppendInput = {
+  /** Optional deterministic identity for an idempotent transcript side effect. */
+  id?: string
   conversationId: string
   kind: 'message' | 'tool_call' | 'tool_result' | 'status' | 'system' | 'other'
   role?: 'user' | 'assistant' | 'system' | 'tool'
@@ -56,7 +58,7 @@ export async function appendConversationMessage(
   const [message] = await executor
     .insert(schema.conversationMessages)
     .values({
-      id: createId('ent'),
+      id: input.id ?? createId('ent'),
       conversationId: input.conversationId,
       turnId: input.turnId ?? null,
       sequenceNo,
@@ -216,7 +218,11 @@ export async function acceptUserMessage(input: UserMessageInput) {
         const [waitingTurn] = await tx
           .select()
           .from(schema.turns)
-          .where(and(eq(schema.turns.status, 'waiting'), targetCondition))
+          .where(and(
+            eq(schema.turns.status, 'waiting'),
+            sql`${schema.turns.source} <> 'subagent'`,
+            targetCondition,
+          ))
           .limit(1)
         if (
           waitingTurn?.waitingStateJson &&

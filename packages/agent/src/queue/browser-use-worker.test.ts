@@ -45,7 +45,7 @@ test('a persisted stream follows browser delegation and its untrusted completion
     title: 'Open a page',
   })
   await db.completeTurn(context.parent.id, { status: 'succeeded' })
-  assert.ok(await db.claimQueuedTurn(worker.id))
+  assert.ok(await db.claimQueuedSubagentTurn(worker.id))
   const completion = await db.finalizeBrowserUseWorkerTurn({
     turnId: worker.id,
     status: 'succeeded',

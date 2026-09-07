@@ -6,6 +6,7 @@ import { SessionManager } from '@earendil-works/pi-coding-agent'
 import {
   browserUseWorkerSessionDirectory,
   computerUseWorkerSessionDirectory,
+  generalSubagentSessionDirectory,
   listConversationMessages,
   piSessionDirectory,
   type Agent,
@@ -16,6 +17,7 @@ import {
   type ConversationPromptContext,
   renderBrowserUseWorkerSystemPrompt,
   renderComputerUseWorkerSystemPrompt,
+  renderGeneralSubagentSystemPrompt,
   renderSystemPrompt,
 } from './system'
 
@@ -137,6 +139,21 @@ export type PrepareComputerUseWorkerTurnInput = {
 }
 
 export type PrepareBrowserUseWorkerTurnInput = PrepareComputerUseWorkerTurnInput
+
+export type PrepareGeneralSubagentTurnInput = PrepareComputerUseWorkerTurnInput
+
+/** A resumable temporary-worker history that never inherits the parent conversation. */
+export async function prepareGeneralSubagentTurn(input: PrepareGeneralSubagentTurnInput) {
+  return {
+    systemPrompt: renderGeneralSubagentSystemPrompt(),
+    sessionManager: SessionManager.continueRecent(
+      input.workspace,
+      await generalSubagentSessionDirectory(input.conversationId, input.turnId),
+    ),
+    promptText: input.resumedText ?? input.task,
+    senderAgentId: null,
+  }
+}
 
 /** A resumable browser-worker history that never inherits the parent conversation. */
 export async function prepareBrowserUseWorkerTurn(

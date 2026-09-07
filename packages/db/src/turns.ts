@@ -14,6 +14,10 @@ import {
   computerUseWorkerContextSchema,
   type EffectiveTools,
   effectiveToolsSchema,
+  type GeneralSubagentCompletionWake,
+  generalSubagentCompletionWakeSchema,
+  type GeneralSubagentContext,
+  generalSubagentContextSchema,
   type WaitingState,
   waitingStateSchema,
   type VersionedObject,
@@ -32,6 +36,10 @@ const unsettledPriority = sql`CASE ${schema.turns.status}
   WHEN 'waiting' THEN 0
   WHEN 'running' THEN 0
   ELSE 1 END`
+
+const unsettledSourcePriority = sql`CASE ${schema.turns.source}
+  WHEN 'subagent' THEN 1
+  ELSE 0 END`
 
 export async function getTurn(id: string) {
   const [turn] = await db
@@ -71,10 +79,12 @@ export async function findNextQueuedTurnForAgent(agentId: string) {
       and(
         eq(schema.turns.targetAgentId, agentId),
         eq(schema.turns.status, 'queued'),
+        sql`${schema.turns.source} <> 'subagent'`,
         sql`NOT EXISTS (
           SELECT 1 FROM turns AS active
           WHERE active.target_agent_id = ${agentId}
             AND active.status IN ('running', 'waiting')
+            AND active.source <> 'subagent'
         )`,
       ),
     )
@@ -133,6 +143,27 @@ export async function findUnsettledTurn(conversationId: string) {
         inArray(schema.turns.status, ['queued', 'running', 'waiting']),
       ),
     )
+    .orderBy(
+      asc(unsettledSourcePriority),
+      asc(unsettledPriority),
+      asc(lanePriority),
+      asc(schema.turns.createdAt),
+      asc(schema.turns.id),
+    )
+    .limit(1)
+  return turn
+}
+
+/** Active/queued foreground work, excluding independently running subagents. */
+export async function findUnsettledForegroundTurn(conversationId: string) {
+  const [turn] = await db
+    .select()
+    .from(schema.turns)
+    .where(and(
+      eq(schema.turns.conversationId, conversationId),
+      inArray(schema.turns.status, ['queued', 'running', 'waiting']),
+      sql`${schema.turns.source} <> 'subagent'`,
+    ))
     .orderBy(
       asc(unsettledPriority),
       asc(lanePriority),
@@ -237,6 +268,7 @@ export async function claimQueuedTurn(id: string) {
         sql`${schema.turns.id} = (
           SELECT candidate.id FROM turns AS candidate
           WHERE candidate.status = 'queued'
+            AND candidate.source <> 'subagent'
             AND (
               (${schema.turns.targetAgentId} IS NOT NULL
                 AND candidate.target_agent_id = ${schema.turns.targetAgentId})
@@ -255,6 +287,7 @@ export async function claimQueuedTurn(id: string) {
           SELECT 1 FROM turns AS active
           WHERE active.id <> ${id}
             AND active.status IN ('running', 'waiting')
+            AND active.source <> 'subagent'
             AND (
               (${schema.turns.targetAgentId} IS NOT NULL
                 AND active.target_agent_id = ${schema.turns.targetAgentId})
@@ -264,6 +297,42 @@ export async function claimQueuedTurn(id: string) {
         )`,
       ),
     )
+    .returning()
+  return claimed
+}
+
+/**
+ * Claims a queued temporary worker independently of the owning agent's normal
+ * serial turn lane. Worker-specific admission limits are enforced when the
+ * child is created; this claim only guards the individual durable record.
+ */
+export async function claimQueuedSubagentTurn(id: string) {
+  const now = Date.now()
+  const [claimed] = await db
+    .update(schema.turns)
+    .set({
+      status: 'running',
+      attemptCount: sql`${schema.turns.attemptCount} + 1`,
+      startedAt: now,
+      updatedAt: now,
+    })
+    .where(and(
+      eq(schema.turns.id, id),
+      eq(schema.turns.source, 'subagent'),
+      eq(schema.turns.status, 'queued'),
+      sql`NOT EXISTS (
+        WITH RECURSIVE ancestors(id, parent_turn_id, status) AS (
+          SELECT parent.id, parent.parent_turn_id, parent.status
+          FROM turns AS parent
+          WHERE parent.id = ${schema.turns.parentTurnId}
+          UNION ALL
+          SELECT parent.id, parent.parent_turn_id, parent.status
+          FROM turns AS parent
+          JOIN ancestors ON parent.id = ancestors.parent_turn_id
+        )
+        SELECT 1 FROM ancestors WHERE status IN ('failed', 'cancelled')
+      )`,
+    ))
     .returning()
   return claimed
 }
@@ -867,6 +936,157 @@ export type BrowserUseWorkerCompletionInput = {
   turnId: string
   status: 'succeeded' | 'failed'
   summary: string
+}
+
+export type GeneralSubagentTurnInput = {
+  parentTurnId: string
+  parentToolCallId: string
+  task: string
+  title: string
+}
+
+/** Idempotently queues a temporary general subagent under a running parent. */
+export function enqueueGeneralSubagentTurn(input: GeneralSubagentTurnInput) {
+  const workerContext = generalSubagentContextSchema.parse({
+    version: 1,
+    type: 'general-subagent',
+    task: input.task,
+    title: input.title,
+    parentToolCallId: input.parentToolCallId,
+  })
+  const idempotencyKey = `general-subagent:${input.parentTurnId}:${input.parentToolCallId}`
+
+  return db.transaction(async (tx) => {
+    const [existing] = await tx.select().from(schema.turns)
+      .where(eq(schema.turns.idempotencyKey, idempotencyKey)).limit(1)
+    if (existing) {
+      const context = generalSubagentContextSchema.parse(existing.runtimeContextJson)
+      if (context.task !== workerContext.task || context.title !== workerContext.title) {
+        throw new Error('A Task tool call cannot be retried with different input')
+      }
+      return existing
+    }
+
+    const [parent] = await tx.select().from(schema.turns)
+      .where(eq(schema.turns.id, input.parentTurnId)).limit(1)
+    if (!parent) throw new Error(`Turn ${input.parentTurnId} not found`)
+    if (!parent.targetAgentId || parent.status !== 'running') {
+      throw new Error('Task can only be launched by a running agent turn')
+    }
+
+    const activeWorkers = await tx.select({ id: schema.turns.id }).from(schema.turns)
+      .where(and(
+        eq(schema.turns.targetAgentId, parent.targetAgentId),
+        eq(schema.turns.mode, 'general-subagent'),
+        inArray(schema.turns.status, ['queued', 'running', 'waiting']),
+      ))
+    if (activeWorkers.length >= 4) {
+      throw new Error('This agent already has the maximum of four general subagents running')
+    }
+
+    const now = Date.now()
+    const [created] = await tx.insert(schema.turns).values({
+      id: createId('trn'),
+      conversationId: parent.conversationId,
+      targetAgentId: parent.targetAgentId,
+      parentTurnId: parent.id,
+      lane: 'agent',
+      source: 'subagent',
+      status: 'queued',
+      mode: 'general-subagent',
+      idempotencyKey,
+      runtimeContextJson: workerContext,
+      createdAt: now,
+      updatedAt: now,
+    }).returning()
+    if (!created) throw new Error('General subagent could not be queued')
+    return created
+  })
+}
+
+export type GeneralSubagentCompletionInput = {
+  turnId: string
+  status: 'succeeded' | 'failed'
+  summary: string
+}
+
+/** Atomically settles a general subagent and queues its parent revival. */
+export function finalizeGeneralSubagentTurn(input: GeneralSubagentCompletionInput) {
+  return db.transaction(async (tx) => {
+    const [current] = await tx.select().from(schema.turns)
+      .where(eq(schema.turns.id, input.turnId)).limit(1)
+    if (!current) throw new Error(`Turn ${input.turnId} not found`)
+    if (current.mode !== 'general-subagent' || current.source !== 'subagent') {
+      throw new Error(`Turn ${input.turnId} is not a general subagent`)
+    }
+    if (!current.parentTurnId) throw new Error(`General subagent ${input.turnId} has no parent turn`)
+    const context: GeneralSubagentContext = generalSubagentContextSchema.parse(current.runtimeContextJson)
+    const wake: GeneralSubagentCompletionWake = generalSubagentCompletionWakeSchema.parse({
+      version: 1,
+      type: 'general-subagent-completed',
+      childTurnId: current.id,
+      parentTurnId: current.parentTurnId,
+      title: context.title,
+      status: input.status,
+      summary: input.summary,
+    })
+    const wakeIdempotencyKey = `general-subagent-completion:${current.id}`
+    const [existingWake] = await tx.select().from(schema.turns)
+      .where(eq(schema.turns.idempotencyKey, wakeIdempotencyKey)).limit(1)
+    if (existingWake) return { turn: current, wakeTurn: existingWake, changed: false as const }
+    if (current.status !== 'running') {
+      return { turn: current, wakeTurn: undefined, changed: false as const }
+    }
+
+    const now = Date.now()
+    const [turn] = await tx.update(schema.turns).set({
+      status: input.status,
+      errorJson: input.status === 'failed' ? { version: 1, message: input.summary } : null,
+      completedAt: now,
+      updatedAt: now,
+    }).where(and(eq(schema.turns.id, current.id), eq(schema.turns.status, 'running'))).returning()
+    if (!turn) throw new Error(`General subagent ${input.turnId} could not be settled`)
+
+    const [wakeTurn] = await tx.insert(schema.turns).values({
+      id: createId('trn'),
+      conversationId: turn.conversationId,
+      targetAgentId: turn.targetAgentId,
+      parentTurnId: turn.id,
+      lane: 'background',
+      source: 'general-subagent-completion',
+      status: 'queued',
+      idempotencyKey: wakeIdempotencyKey,
+      runtimeContextJson: { version: 1, wake },
+      createdAt: now,
+      updatedAt: now,
+    }).returning()
+    if (!wakeTurn) throw new Error('General subagent completion wake could not be queued')
+    return { turn, wakeTurn, changed: true as const }
+  })
+}
+
+export function listSubagentTurns(
+  agentId: string,
+  unsettledOnly = false,
+  conversationId?: string,
+) {
+  return db.select().from(schema.turns).where(and(
+    eq(schema.turns.targetAgentId, agentId),
+    eq(schema.turns.source, 'subagent'),
+    ...(conversationId ? [eq(schema.turns.conversationId, conversationId)] : []),
+    ...(unsettledOnly ? [inArray(schema.turns.status, ['queued', 'running', 'waiting'])] : []),
+  )).orderBy(asc(schema.turns.createdAt), asc(schema.turns.id))
+}
+
+export function listConversationSubagentTurns(
+  conversationId: string,
+  unsettledOnly = false,
+) {
+  return db.select().from(schema.turns).where(and(
+    eq(schema.turns.conversationId, conversationId),
+    eq(schema.turns.source, 'subagent'),
+    ...(unsettledOnly ? [inArray(schema.turns.status, ['queued', 'running', 'waiting'])] : []),
+  )).orderBy(asc(schema.turns.createdAt), asc(schema.turns.id))
 }
 
 /** Atomically settles a browser worker and queues its hidden parent revival. */

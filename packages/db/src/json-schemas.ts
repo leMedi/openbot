@@ -59,6 +59,35 @@ export const browserUseCompletionWakeSchema = z.object({
   summary: z.string().trim().min(1).max(20_000),
 })
 
+export const generalSubagentContextSchema = z.object({
+  version: z.literal(1),
+  type: z.literal('general-subagent'),
+  task: z.string().trim().min(1).max(20_000),
+  title: z.string().trim().min(1).max(120),
+  parentToolCallId: z.string().min(1).max(500),
+})
+
+export const generalSubagentCompletionWakeSchema = z.object({
+  version: z.literal(1),
+  type: z.literal('general-subagent-completed'),
+  childTurnId: z.string().min(1),
+  parentTurnId: z.string().min(1),
+  title: z.string().trim().min(1).max(120),
+  status: z.enum(['succeeded', 'failed']),
+  summary: z.string().trim().min(1).max(20_000),
+})
+
+export const subagentControlPayloadSchema = z.object({
+  version: z.literal(1),
+  event: z.literal('subagent-control'),
+  controlId: z.string().min(1),
+  subagentTurnId: z.string().min(1),
+  action: z.literal('steer'),
+  stage: z.enum(['requested', 'applied']),
+  toolCallId: z.string().min(1).max(500),
+  message: z.string().trim().min(1).max(20_000),
+})
+
 export const groupMembersSchema = z.object({
   version: z.literal(1),
   members: z.array(
@@ -432,6 +461,9 @@ export type ComputerUseWorkerContext = z.infer<typeof computerUseWorkerContextSc
 export type ComputerUseCompletionWake = z.infer<typeof computerUseCompletionWakeSchema>
 export type BrowserUseWorkerContext = z.infer<typeof browserUseWorkerContextSchema>
 export type BrowserUseCompletionWake = z.infer<typeof browserUseCompletionWakeSchema>
+export type GeneralSubagentContext = z.infer<typeof generalSubagentContextSchema>
+export type GeneralSubagentCompletionWake = z.infer<typeof generalSubagentCompletionWakeSchema>
+export type SubagentControlPayload = z.infer<typeof subagentControlPayloadSchema>
 export type BrowserUsePayload = z.infer<typeof browserUsePayloadSchema>
 export type SendMessagePayload = z.infer<typeof sendMessagePayloadSchema>
 export type DirectAgentMessagePayload = z.infer<typeof directAgentMessagePayloadSchema>

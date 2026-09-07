@@ -61,6 +61,26 @@ import {
   runShellArgsSchema,
   runShellToolDefinition,
 } from './shell/run-shell'
+import {
+  executeTask,
+  TASK_TOOL_NAME,
+  taskArgsSchema,
+  taskToolDefinition,
+} from './task'
+import {
+  checkSubagentArgsSchema,
+  checkSubagentToolDefinition,
+  CHECK_SUBAGENT_TOOL_NAME,
+  executeCheckSubagent,
+  executeMessageSubagent,
+  executeStopSubagent,
+  messageSubagentArgsSchema,
+  messageSubagentToolDefinition,
+  MESSAGE_SUBAGENT_TOOL_NAME,
+  stopSubagentArgsSchema,
+  stopSubagentToolDefinition,
+  STOP_SUBAGENT_TOOL_NAME,
+} from './subagent-management'
 
 export { SEND_MESSAGE_TOOL_NAME }
 export type { ToolTurnContext }
@@ -76,6 +96,10 @@ export const agentToolDefinitions: ToolDefinition[] = [
   screenshotToolDefinition,
   computerUseWorkerToolDefinition,
   browserUseWorkerToolDefinition,
+  taskToolDefinition,
+  checkSubagentToolDefinition,
+  messageSubagentToolDefinition,
+  stopSubagentToolDefinition,
 ]
 
 /** Narrow capabilities available inside an isolated computer-use worker. */
@@ -96,6 +120,14 @@ export const browserUseWorkerToolDefinitions: ToolDefinition[] = [
   ...browserToolDefinitions,
 ]
 
+/** General subagents cannot deliver to the user, mutate memory, or nest workers. */
+export const generalSubagentToolDefinitions: ToolDefinition[] = [
+  runShellToolDefinition,
+  readToolDefinition,
+  awaitShellToolDefinition,
+  screenshotToolDefinition,
+]
+
 /** Degraded toolset for rounds after the tool budget runs out. */
 export const sendMessageOnlyToolDefinitions: ToolDefinition[] = [
   sendMessageToolDefinition,
@@ -105,7 +137,11 @@ export const sendMessageOnlyToolDefinitions: ToolDefinition[] = [
 export const backgroundToolDefinitions: ToolDefinition[] = agentToolDefinitions.filter(
   (tool) =>
     tool.function.name !== COMPUTER_USE_WORKER_TOOL_NAME &&
-    tool.function.name !== BROWSER_USE_WORKER_TOOL_NAME,
+    tool.function.name !== BROWSER_USE_WORKER_TOOL_NAME &&
+    tool.function.name !== TASK_TOOL_NAME &&
+    tool.function.name !== CHECK_SUBAGENT_TOOL_NAME &&
+    tool.function.name !== MESSAGE_SUBAGENT_TOOL_NAME &&
+    tool.function.name !== STOP_SUBAGENT_TOOL_NAME,
 )
 
 /**
@@ -162,6 +198,18 @@ export async function executeAgentToolCall(
     }
     if (call.function.name.startsWith('browser_')) {
       return respond(await executeBrowserTool(call, args, context))
+    }
+    if (call.function.name === TASK_TOOL_NAME) {
+      return respond(await executeTask(taskArgsSchema.parse(args), call, context))
+    }
+    if (call.function.name === CHECK_SUBAGENT_TOOL_NAME) {
+      return respond(await executeCheckSubagent(checkSubagentArgsSchema.parse(args), context))
+    }
+    if (call.function.name === MESSAGE_SUBAGENT_TOOL_NAME) {
+      return respond(await executeMessageSubagent(messageSubagentArgsSchema.parse(args), call, context))
+    }
+    if (call.function.name === STOP_SUBAGENT_TOOL_NAME) {
+      return respond(await executeStopSubagent(stopSubagentArgsSchema.parse(args), context))
     }
     if (call.function.name === SEND_AGENT_MESSAGE_TOOL_NAME) {
       return respond(

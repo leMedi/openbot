@@ -16,6 +16,7 @@ const {
   acceptUserMessage,
   appendConversationMessage,
   claimQueuedTurn,
+  claimQueuedSubagentTurn,
   completeTurn,
   computerUseCompletionWakeSchema,
   computerUseWorkerContextSchema,
@@ -79,7 +80,7 @@ test('claims the worker after its parent and atomically queues one completion wa
 
   assert.equal(await findNextQueuedTurnForAgent(context.agent.id), undefined)
   await completeTurn(context.parent.id, { status: 'succeeded' })
-  const claimedWorker = await claimQueuedTurn(worker.id)
+  const claimedWorker = await claimQueuedSubagentTurn(worker.id)
   assert.equal(claimedWorker?.id, worker.id)
 
   const completion = await finalizeComputerUseWorkerTurn({
@@ -139,7 +140,7 @@ test('worker failure is reported through a completion wake', async () => {
     title: 'Open Settings',
   })
   await completeTurn(context.parent.id, { status: 'succeeded' })
-  assert.ok(await claimQueuedTurn(worker.id))
+  assert.ok(await claimQueuedSubagentTurn(worker.id))
 
   const completion = await finalizeComputerUseWorkerTurn({
     turnId: worker.id,
@@ -165,7 +166,7 @@ test('a persisted stream follows the parent, worker, and completion wake', async
     title: 'Open Settings',
   })
   await completeTurn(context.parent.id, { status: 'succeeded' })
-  assert.ok(await claimQueuedTurn(worker.id))
+  assert.ok(await claimQueuedSubagentTurn(worker.id))
   const completion = await finalizeComputerUseWorkerTurn({
     turnId: worker.id,
     status: 'succeeded',

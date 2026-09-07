@@ -10,6 +10,7 @@ process.env.OPENBOT_DATA_DIR = testData
 const {
   renderComputerUseWorkerSystemPrompt,
   renderBrowserUseWorkerSystemPrompt,
+  renderGeneralSubagentSystemPrompt,
   renderDefaultSystemPrompt,
   renderUserProfilePrompt,
 } = await import('./system')
@@ -122,4 +123,12 @@ test('guides desktop parents to browserUse first and computerUse for fallback', 
   const prompt = renderDefaultSystemPrompt(true)
   assert.match(prompt, /Prefer browserUse for browser-only work/)
   assert.match(prompt, /Use computerUse for native desktop apps/)
+})
+
+test('gives general subagents an isolated concurrent-work contract', () => {
+  const prompt = renderGeneralSubagentSystemPrompt()
+  assert.match(prompt, /temporary background subagent/)
+  assert.match(prompt, /isolated model history/)
+  assert.match(prompt, /Other work may be running concurrently/)
+  assert.doesNotMatch(prompt, /SendMessage|Task|MessageSubagent/)
 })

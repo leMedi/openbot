@@ -49,6 +49,11 @@ import {
   setConversationUnread,
 } from '@/server/conversations'
 import { getDesktopMode } from '@/server/config'
+import {
+  getConversationSubagents,
+  steerAgentSubagent,
+  stopAgentSubagent,
+} from '@/server/subagents'
 
 function authorFromBot(bot: Bot, kind: 'agent' | 'member' = 'agent'): Author {
   return {
@@ -425,6 +430,26 @@ function OpenBot() {
           await setConversationUnread({ data: { id: active.id, unread: false } })
           await router.invalidate()
         }}
+        onListSubagents={() => getConversationSubagents({
+          data: {
+            conversationId: active.id,
+            includeSettled: false,
+          },
+        })}
+        onSteerSubagent={(subagentId, message) => steerAgentSubagent({
+          data: {
+            conversationId: active.id,
+            subagentId,
+            message,
+            requestId: crypto.randomUUID(),
+          },
+        })}
+        onStopSubagent={(subagentId) => stopAgentSubagent({
+          data: {
+            conversationId: active.id,
+            subagentId,
+          },
+        })}
         onEditAgent={
           activeAgent
             ? () => setBotDialog({ open: true, agent: activeAgent })

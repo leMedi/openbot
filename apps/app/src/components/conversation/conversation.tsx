@@ -11,6 +11,7 @@ import { YOU } from './data'
 import { FullConversationDialog } from './full-conversation'
 import { GroupAvatar, type MessageRowHandlers } from './rows'
 import { Transcript } from './transcript'
+import { SubagentPanel } from './subagent-panel'
 import { streamTurn } from './turn-stream'
 import type {
   ActivityTab,
@@ -20,6 +21,7 @@ import type {
   MessageEntry,
   WidgetResponse,
   WidgetView,
+  SubagentView,
 } from './types'
 
 let seq = 100
@@ -81,6 +83,9 @@ export type ConversationProps = {
   onRefreshEntries?: () => Promise<Entry[]>
   /** Called after a turn reaches a terminal state (refresh sidebar state etc.). */
   onTurnSettled?: () => void
+  onListSubagents?: () => Promise<SubagentView[]>
+  onSteerSubagent?: (subagentId: string, message: string) => Promise<unknown>
+  onStopSubagent?: (subagentId: string) => Promise<unknown>
   /** A queued/running turn to reattach to on mount (reload during a turn). */
   pendingTurnId?: string | null
   /**
@@ -108,6 +113,9 @@ export function Conversation({
   onToggleReaction,
   onRefreshEntries,
   onTurnSettled,
+  onListSubagents,
+  onSteerSubagent,
+  onStopSubagent,
   pendingTurnId,
   resolveAuthor,
 }: ConversationProps) {
@@ -673,6 +681,13 @@ export function Conversation({
           >
             <Square className="size-3" />
           </Button>
+        )}
+        {!inThreadView && onListSubagents && onSteerSubagent && onStopSubagent && (
+          <SubagentPanel
+            load={onListSubagents}
+            steer={onSteerSubagent}
+            stop={onStopSubagent}
+          />
         )}
         <span className="flex-1" />
         {onBack ? (

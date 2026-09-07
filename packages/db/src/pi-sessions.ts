@@ -33,6 +33,16 @@ export async function browserUseWorkerSessionDirectory(
   return directory
 }
 
+/** Keeps a general subagent's model history isolated from its parent conversation. */
+export async function generalSubagentSessionDirectory(
+  conversationId: string,
+  turnId: string,
+) {
+  const directory = path.join(sessionPath(conversationId), 'subagents', turnId)
+  await mkdir(directory, { recursive: true })
+  return directory
+}
+
 /** Removes model history after its owning conversation has been deleted. */
 export function deletePiSessionDirectory(conversationId: string) {
   return rm(sessionPath(conversationId), { recursive: true, force: true }).catch(() => {})

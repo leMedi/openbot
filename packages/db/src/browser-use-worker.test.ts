@@ -16,6 +16,7 @@ const {
   browserUseCompletionWakeSchema,
   browserUseWorkerContextSchema,
   claimQueuedTurn,
+  claimQueuedSubagentTurn,
   completeTurn,
   createAgent,
   enqueueBrowserUseWorkerTurn,
@@ -153,7 +154,7 @@ test('never claims a worker beneath a cancelled ancestor', async () => {
     message: 'Cancelled by user',
   })
 
-  assert.equal(await claimQueuedTurn(worker.id), undefined)
+  assert.equal(await claimQueuedSubagentTurn(worker.id), undefined)
 })
 
 test('atomically settles a browser worker and queues one completion wake', async () => {
@@ -165,7 +166,7 @@ test('atomically settles a browser worker and queues one completion wake', async
     title: 'Verify account plan',
   })
   await completeTurn(context.parent.id, { status: 'succeeded' })
-  assert.ok(await claimQueuedTurn(worker.id))
+  assert.ok(await claimQueuedSubagentTurn(worker.id))
 
   const completion = await finalizeBrowserUseWorkerTurn({
     turnId: worker.id,
@@ -211,7 +212,7 @@ test('reports browser worker failure through its completion wake', async () => {
     title: 'Verify account plan',
   })
   await completeTurn(context.parent.id, { status: 'succeeded' })
-  assert.ok(await claimQueuedTurn(worker.id))
+  assert.ok(await claimQueuedSubagentTurn(worker.id))
 
   const completion = await finalizeBrowserUseWorkerTurn({
     turnId: worker.id,

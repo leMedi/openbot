@@ -1,6 +1,6 @@
 import {
   acceptUserMessage,
-  findUnsettledTurn,
+  findUnsettledForegroundTurn,
   listConversationMessages,
   respondToWaitingTurn,
   toggleUserReaction,
@@ -48,7 +48,7 @@ export const getConversationMessages = createServerFn({ method: 'GET' })
     recoverQueuedTurns()
     const [rows, unsettled] = await Promise.all([
       listConversationMessages(data.conversationId),
-      findUnsettledTurn(data.conversationId),
+      findUnsettledForegroundTurn(data.conversationId),
     ])
     // The pending turn lets a reloading client reattach to in-flight output.
     return { rows, pendingTurnId: unsettled?.id ?? null }
@@ -59,7 +59,7 @@ export const sendConversationMessage = createServerFn({ method: 'POST' })
   .handler(async ({ data }) => {
     // A new user message supersedes the current turn. Cancel it before
     // accepting the replacement so the scheduler cannot start both turns.
-    const unsettled = await findUnsettledTurn(data.conversationId)
+    const unsettled = await findUnsettledForegroundTurn(data.conversationId)
     if (unsettled) await cancelTurnExecution(unsettled.id)
 
     const accepted = await acceptUserMessage({
