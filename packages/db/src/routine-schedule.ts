@@ -160,6 +160,54 @@ function minimumScheduledGap(parsed: ParsedCron) {
   return minimum
 }
 
+function timezoneOffsetMinutes(timestamp: number, timezone: string) {
+  const formatter = formatters.get(timezone)!
+  const parts = Object.fromEntries(
+    formatter.formatToParts(timestamp).map((part) => [part.type, part.value]),
+  )
+  const localAsUtc = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour),
+    Number(parts.minute),
+  )
+  return (localAsUtc - timestamp) / 60_000
+}
+
+function minimumTransitionGap(parsed: ParsedCron, timezone: string) {
+  // Wall-clock validation above covers ordinary days. Around offset changes,
+  // scan actual UTC minutes so a spring-forward compression cannot create a
+  // sub-limit real-time cadence. Ten projected years cover the full weekday
+  // and leap-year cycle used by recurring timezone rules.
+  localParts(Date.now(), timezone) // Prime the shared formatter.
+  const currentYear = new Date().getUTCFullYear()
+  const start = Date.UTC(currentYear - 1, 0, 1)
+  const end = Date.UTC(currentYear + 10, 0, 1)
+  const step = 12 * 60 * 60 * 1_000
+  let previousOffset = timezoneOffsetMinutes(start, timezone)
+  let minimum = Number.POSITIVE_INFINITY
+  for (let cursor = start + step; cursor <= end; cursor += step) {
+    const offset = timezoneOffsetMinutes(cursor, timezone)
+    if (offset !== previousOffset) {
+      let previousMatch: number | undefined
+      for (
+        let candidate = cursor - 48 * 60 * 60 * 1_000;
+        candidate <= cursor + 48 * 60 * 60 * 1_000;
+        candidate += 60_000
+      ) {
+        if (!matches(parsed, candidate, timezone)) continue
+        if (previousMatch !== undefined) {
+          minimum = Math.min(minimum, candidate - previousMatch)
+        }
+        previousMatch = candidate
+      }
+    }
+    previousOffset = offset
+  }
+  return minimum
+}
+
 const MAX_SEARCH_MINUTES = 366 * 24 * 60 * 5
 
 export function nextCronOccurrence(
@@ -182,7 +230,10 @@ export function validateRoutineSchedule(expression: string, timezone: string) {
   const parsed = parseCronExpression(expression)
   const anchor = Date.UTC(2023, 11, 31, 0, 0, 0)
   const first = nextCronOccurrence(expression, timezone, anchor)
-  if (minimumScheduledGap(parsed) * 60_000 < MIN_ROUTINE_CADENCE_MS) {
+  if (
+    minimumScheduledGap(parsed) * 60_000 < MIN_ROUTINE_CADENCE_MS ||
+    minimumTransitionGap(parsed, timezone) < MIN_ROUTINE_CADENCE_MS
+  ) {
     throw new Error('Routine schedules must be at least 15 minutes apart')
   }
   return { expression: expression.trim(), timezone, nextRunAt: first }

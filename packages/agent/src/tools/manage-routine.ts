@@ -83,7 +83,7 @@ function routineView(routine: Awaited<ReturnType<typeof getRoutine>>) {
 
 function approvalCopy(operation: RoutineOperation) {
   if (operation.action === 'create') {
-    return `create routine “${operation.name}” with schedule “${operation.cronExpression}” in ${operation.timezone} and instruction “${operation.instruction}”`
+    return `create ${operation.enabled ? 'an enabled' : 'a paused'} routine “${operation.name}” with schedule “${operation.cronExpression}” in ${operation.timezone} and instruction “${operation.instruction}”`
   }
   if (operation.action === 'update') {
     const changes = [
