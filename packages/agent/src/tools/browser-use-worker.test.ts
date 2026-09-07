@@ -46,8 +46,9 @@ function toolCall(args: unknown): ModelToolCall {
   }
 }
 
-test('exposes delegation only to ordinary turns and gives browser workers the exact narrow surface', () => {
-  assert.equal(agentToolDefinitions.some((tool) => tool.function.name === 'browserUse'), true)
+test('exposes browser delegation through Task and gives browser workers the exact narrow surface', () => {
+  assert.equal(agentToolDefinitions.some((tool) => tool.function.name === 'browserUse'), false)
+  assert.equal(agentToolDefinitions.some((tool) => tool.function.name === 'Task'), true)
   assert.equal(backgroundToolDefinitions.some((tool) => tool.function.name === 'browserUse'), false)
   assert.deepEqual(
     browserUseWorkerToolDefinitions.map((tool) => tool.function.name),

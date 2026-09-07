@@ -60,7 +60,8 @@ describe('direct MCP tools', () => {
     expect(discoveryClose).toHaveBeenCalledOnce()
     expect(registry.definitions).toHaveLength(1)
     expect(registry.definitions[0]?.function).toEqual(expect.objectContaining({
-      description: '[Linear / Account direct-lazy] Create an issue',
+      description:
+        '[Linear / Account direct-lazy] Connected MCP tool. Prefer this structured tool over browser automation for matching service work. Create an issue',
       parameters: { type: 'object', required: ['title'] },
     }))
 

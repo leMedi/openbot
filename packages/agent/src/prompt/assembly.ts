@@ -85,6 +85,7 @@ export type PrepareConversationTurnInput = {
   workspace: string
   resumedText?: string
   hiddenWakePrompt?: string
+  mcpToolCount?: number
 }
 
 /** Resolves every private/group execution difference at one boundary. */
@@ -95,6 +96,7 @@ export async function prepareConversationTurn(input: PrepareConversationTurnInpu
     availableAgents: input.availableAgents,
     memory: input.memory,
     conversation: input.conversation,
+    mcpToolCount: input.mcpToolCount,
   })
 
   if (input.conversation.kind === 'group') {
@@ -140,12 +142,18 @@ export type PrepareComputerUseWorkerTurnInput = {
 
 export type PrepareBrowserUseWorkerTurnInput = PrepareComputerUseWorkerTurnInput
 
-export type PrepareGeneralSubagentTurnInput = PrepareComputerUseWorkerTurnInput
+export type PrepareGeneralSubagentTurnInput = PrepareComputerUseWorkerTurnInput & {
+  desktopEnabled?: boolean
+  mcpToolCount?: number
+}
 
 /** A resumable temporary-worker history that never inherits the parent conversation. */
 export async function prepareGeneralSubagentTurn(input: PrepareGeneralSubagentTurnInput) {
   return {
-    systemPrompt: renderGeneralSubagentSystemPrompt(),
+    systemPrompt: renderGeneralSubagentSystemPrompt({
+      desktopEnabled: input.desktopEnabled ?? false,
+      mcpToolCount: input.mcpToolCount ?? 0,
+    }),
     sessionManager: SessionManager.continueRecent(
       input.workspace,
       await generalSubagentSessionDirectory(input.conversationId, input.turnId),

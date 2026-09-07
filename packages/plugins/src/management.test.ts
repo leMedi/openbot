@@ -22,6 +22,14 @@ function call(name: string, args: Record<string, unknown>): ModelToolCall {
 }
 
 describe('MCP management tools', () => {
+  it('continues rather than repeats InstallPlugin after approval', () => {
+    const tools = createMcpManagementTools('unused-agent', { suspend: vi.fn() })
+    const install = tools.definitions.find(
+      (definition) => definition.function.name === 'InstallPlugin',
+    )
+    expect(install?.function.description).toContain('do not repeat this call')
+  })
+
   it('searches aliases across the full catalog and reports agent access separately', async () => {
     const tools = createMcpManagementTools('unused-agent', { suspend: vi.fn() })
     const result = await tools.execute(call('SearchPlugins', { query: 'issue tracker' }))

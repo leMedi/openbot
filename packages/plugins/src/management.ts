@@ -37,7 +37,9 @@ const definitions: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'SearchPlugins',
-      description: 'Search the catalog of plugins that can be installed for this agent.',
+      description:
+        'Search the catalog of plugins that can be installed for this agent. For work involving ' +
+        'an external service with no matching connected MCP tool, use this before browser automation.',
       parameters: {
         type: 'object',
         properties: {
@@ -67,7 +69,7 @@ const definitions: ToolDefinition[] = [
     function: {
       name: 'InstallPlugin',
       description:
-        'Request user approval, then install a catalog plugin for this agent. Repeat the exact call after approval.',
+        'Request user approval, then install or grant a catalog plugin for this agent. After approval, continue the original task; do not repeat this call.',
       parameters: {
         type: 'object',
         properties: {

@@ -12,6 +12,7 @@ const {
   renderBrowserUseWorkerSystemPrompt,
   renderGeneralSubagentSystemPrompt,
   renderDefaultSystemPrompt,
+  renderRuntimeCapabilitiesPrompt,
   renderUserProfilePrompt,
 } = await import('./system')
 
@@ -121,14 +122,44 @@ test('gives the browser-use worker the Grok page-level operating contract', () =
 
 test('guides desktop parents to browserUse first and computerUse for fallback', () => {
   const prompt = renderDefaultSystemPrompt(true)
-  assert.match(prompt, /Prefer browserUse for browser-only work/)
-  assert.match(prompt, /Use computerUse for native desktop apps/)
+  assert.match(prompt, /prefer a granted MCP tool/)
+  assert.match(prompt, /SearchPlugins before opening the service in a browser/)
+  assert.match(prompt, /Task with subagent_type "browserUse"/)
+  assert.match(prompt, /computerUse.*fallback/)
 })
 
-test('gives general subagents an isolated concurrent-work contract', () => {
-  const prompt = renderGeneralSubagentSystemPrompt()
+test('describes only capabilities OpenBot actually exposes', () => {
+  const prompt = renderDefaultSystemPrompt(true)
+  assert.match(prompt, /Read and runShell/)
+  assert.doesNotMatch(prompt, /\bWebSearch\b|\bWebFetch\b|\bGenerateImage\b/)
+  assert.doesNotMatch(prompt, /Grok Bot/)
+  assert.doesNotMatch(prompt, /request_smart_mode_approval|smart_mode_block_reason/)
+  assert.doesNotMatch(prompt, /scheduled routine|\[routine\]|a routine, or a web page/)
+})
+
+test('renders live MCP and desktop capability state separately from policy', () => {
+  assert.match(
+    renderRuntimeCapabilitiesPrompt({ desktopEnabled: true, mcpToolCount: 4 }),
+    /4 connected MCP tools are available.*Prefer them/s,
+  )
+  const unavailable = renderRuntimeCapabilitiesPrompt({
+    desktopEnabled: false,
+    mcpToolCount: 0,
+  })
+  assert.match(unavailable, /No connected MCP tools are available/)
+  assert.match(unavailable, /No graphical desktop is available/)
+})
+
+test('gives general subagents their actual dynamic capabilities', () => {
+  const prompt = renderGeneralSubagentSystemPrompt({
+    desktopEnabled: true,
+    mcpToolCount: 2,
+  })
   assert.match(prompt, /temporary background subagent/)
   assert.match(prompt, /isolated model history/)
   assert.match(prompt, /Other work may be running concurrently/)
-  assert.doesNotMatch(prompt, /SendMessage|Task|MessageSubagent/)
+  assert.match(prompt, /Read, runShell, and AwaitShell/)
+  assert.match(prompt, /2 connected MCP tools/)
+  assert.match(prompt, /Screenshot is read-only/)
+  assert.doesNotMatch(prompt, /SendMessage|SearchPlugins|browserUse|computerUse/)
 })

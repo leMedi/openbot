@@ -21,9 +21,11 @@ function createTaskToolDefinition(
       name: TASK_TOOL_NAME,
       description:
         'Start a temporary background subagent for a self-contained task. The subagent has isolated ' +
-        'model history and reports back automatically. Use executor for parallel research or analysis' +
+        'model history and reports back automatically. Use executor for parallel research, analysis, ' +
+        'file processing, or work with an already connected MCP service' +
         (hasDesktopWorkers
-          ? ', browserUse for page-level web work, and computerUse for desktop GUI work. '
+          ? '. Use browserUse only for page-level web work after ruling out a suitable MCP tool or catalog plugin, ' +
+            'and computerUse only for desktop GUI work or fallback after browserUse cannot complete the task. '
           : '. ') +
         'Do not poll for completion; use CheckSubagent only to diagnose a worker that may be stuck.',
       parameters: {

@@ -86,6 +86,7 @@ export { SEND_MESSAGE_TOOL_NAME }
 export type { ToolTurnContext }
 
 export const agentToolDefinitions: ToolDefinition[] = [
+  taskToolDefinition,
   sendMessageToolDefinition,
   reactToMessageToolDefinition,
   sendAgentMessageToolDefinition,
@@ -94,9 +95,6 @@ export const agentToolDefinitions: ToolDefinition[] = [
   readToolDefinition,
   awaitShellToolDefinition,
   screenshotToolDefinition,
-  computerUseWorkerToolDefinition,
-  browserUseWorkerToolDefinition,
-  taskToolDefinition,
   checkSubagentToolDefinition,
   messageSubagentToolDefinition,
   stopSubagentToolDefinition,

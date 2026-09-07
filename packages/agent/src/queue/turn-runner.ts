@@ -591,6 +591,8 @@ async function executeTurn(turnId: string) {
           workspace,
           task: generalWorkerContext.task,
           resumedText,
+          desktopEnabled,
+          mcpToolCount: currentMcpRegistry.definitions.length,
         })
       : browserWorkerContext
         ? await prepareBrowserUseWorkerTurn({
@@ -619,6 +621,7 @@ async function executeTurn(turnId: string) {
               workspace,
               resumedText,
               hiddenWakePrompt,
+              mcpToolCount: currentMcpRegistry.definitions.length,
             })
     const toolContext: ToolTurnContext = {
       turnId,

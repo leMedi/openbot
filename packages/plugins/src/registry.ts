@@ -351,7 +351,7 @@ export async function createMcpToolRegistry(
         type: 'function',
         function: {
           name: tool.reference,
-          description: `[${runtime.account.serverName} / ${runtime.account.accountLabel}] ${tool.description || 'MCP tool'}`,
+          description: `[${runtime.account.serverName} / ${runtime.account.accountLabel}] Connected MCP tool. Prefer this structured tool over browser automation for matching service work. ${tool.description || 'MCP tool'}`,
           parameters: tool.inputSchema,
         },
       })

@@ -342,12 +342,13 @@ command can later scan for and remove unreferenced files.
 `per-agent` mode, Browser, Screenshot, and Computer Use execute on the same
 Remote Desktop machine as the OpenBot server and Shell. Each newly created
 agent is assigned one dedicated graphical session on that machine. Ordinary
-agent turns have read-only Screenshot access and delegate page-level automation
-through `browserUse`, falling back to `computerUse` for visual or native UI
-work. Each delegation queues one narrowly scoped durable child turn and starts
-it in an independent execution slot; only the browser worker receives Browser
-tools and only the computer worker receives the mutating Computer tool. Workers
-can be inspected, durably steered, or stopped while foreground work continues.
+agent turns have read-only Screenshot access and delegate automation through
+`Task`: `browserUse` handles page-level browser work, while `computerUse` is
+reserved for visual or native UI work and browser fallback. Each delegation
+queues one narrowly scoped durable child turn and starts it in an independent
+execution slot; only the browser worker receives Browser tools and only the
+computer worker receives the mutating Computer tool. Workers can be inspected,
+durably steered, or stopped while foreground work continues.
 In `disabled` mode, agents run on the host without
 graphical sessions, VNC, browser automation, screenshots, or Computer Use. The
 web/mobile client only renders durable results and approval prompts; it never
@@ -380,6 +381,12 @@ but is not a security boundary between agents running as the same Unix user.
 MCP server definitions and accounts are global to the single user. Agents gain
 explicit access through `agent_mcp_accounts`. Effective MCP tools are still
 discovered for every turn and are never inferred from old turn snapshots.
+
+The plugin catalog describes installable MCP server integrations. In product
+copy, a *plugin* is a catalog entry, an *MCP server* is its installed service
+definition, an *MCP account* is a connected identity, and an *MCP tool* is a
+granted operation exposed to an agent. These are related lifecycle stages, not
+interchangeable names for the same object.
 
 An MCP server stores its key, name, transport, versioned configuration,
 enabled state, and timestamps. A server may have multiple labeled accounts.
@@ -460,20 +467,22 @@ the persisted waiting-turn interaction and resumes from stored mid-turn
 history. Visible output reaches clients over a per-turn SSE route; execution
 never depends on a connected client.
 
-Computer-use delegation is implemented as the built-in `computerUse` tool. It
-queues one idempotent agent-lane child turn, runs that child with an isolated
-system prompt and only Read, shell, Screenshot, and Computer capabilities, then
-atomically settles the worker and queues a hidden background completion wake.
-The stream follows the parent, worker, and completion-wake lineage. Cancelling
-the parent also cancels its unsettled descendants.
+Computer-use delegation is selected through the built-in `Task` tool with
+`subagent_type: "computerUse"`. It queues one idempotent agent-lane child turn,
+runs that child with an isolated system prompt and only Read, runShell,
+AwaitShell, Screenshot, and Computer capabilities, then atomically settles the
+worker and queues a hidden background completion wake. The stream follows the
+parent, worker, and completion-wake lineage. Cancelling the parent also cancels
+its unsettled descendants.
 
-Browser-use delegation is implemented as the built-in `browserUse` tool. It
-queues an idempotent isolated child turn with the fifteen page-level Browser
-operations, Read, shell, and Screenshot. Browser mutations use durable
-transcript audits, state-bound one-shot approvals, and unknown-outcome replay
-protection. The browser driver uses each agent's visible Chrome instance and
-persists screenshots as managed files. Browser worker completion uses the same
-durable hidden-wake and lineage-streaming model as Computer use.
+Browser-use delegation is selected through `Task` with
+`subagent_type: "browserUse"`. It queues an idempotent isolated child turn with
+the fifteen page-level Browser operations, Read, runShell, AwaitShell, and
+Screenshot. Browser mutations use durable transcript audits, state-bound
+one-shot approvals, and unknown-outcome replay protection. The browser driver
+uses each agent's visible Chrome instance and persists screenshots as managed
+files. Browser worker completion uses the same durable hidden-wake and
+lineage-streaming model as Computer use.
 
 Direct agent messaging is implemented through `SendAgentMessage`. Acceptance
 atomically appends linked outbound and inbound transcript copies and queues an
