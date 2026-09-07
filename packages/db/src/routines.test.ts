@@ -99,12 +99,37 @@ test('preserves unique group and direct-inbox identity while clearing', async ()
   assert.equal(freshDirect.origin, 'agent-direct')
   assert.equal((await store.getRoutine(directRoutine.id))?.conversationId, freshDirect.id)
 
+  const visibleConversationIds = new Set((await store.listConversations()).map((row) => row.id))
+  assert.equal(visibleConversationIds.has(direct.outbound.conversationId), false)
+  assert.equal(visibleConversationIds.has(direct.inbound.conversationId), false)
+
   const group = await store.createGroup({
     name: 'Clearable room',
     members: [{ type: 'agent', agentId: sender.agent.id }],
   })
   const freshGroup = await store.clearConversation(group.conversation.id)
   assert.equal(freshGroup.ownerGroupId, group.group.id)
+})
+
+test('resumes the originating conversation when an agent replies', async () => {
+  const sender = await store.createAgent({ name: 'Origin sender' })
+  const recipient = await store.createAgent({ name: 'Origin recipient' })
+  const first = await store.acceptDirectAgentMessage({
+    senderAgentId: sender.agent.id,
+    recipientAgentId: recipient.agent.id,
+    content: 'Please check this.',
+    sourceConversationId: sender.conversation.id,
+  })
+  assert.notEqual(first.turn.conversationId, sender.conversation.id)
+
+  const reply = await store.acceptDirectAgentMessage({
+    senderAgentId: recipient.agent.id,
+    recipientAgentId: sender.agent.id,
+    content: 'It checks out.',
+    sourceConversationId: sender.conversation.id,
+    replyConversationId: sender.conversation.id,
+  })
+  assert.equal(reply.turn.conversationId, sender.conversation.id)
 })
 
 test('rebinds a routine before deleting its delivery conversation', async () => {

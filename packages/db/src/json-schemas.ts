@@ -410,6 +410,7 @@ export const directAgentMessageContextSchema = z.object({
   senderAgentName: z.string().min(1),
   recipientAgentId: z.string().min(1),
   content: z.string().min(1).max(20_000),
+  sourceConversationId: z.string().min(1).nullable().default(null),
 })
 
 export const routineWakeSchema = z.object({

@@ -818,6 +818,11 @@ async function executeTurn(turnId: string) {
         const delivery = await acceptDirectAgentMessage({
           senderAgentId: agent.id,
           ...input,
+          sourceConversationId: directMessage?.sourceConversationId ?? conversation.id,
+          replyConversationId:
+            conversation.origin === 'agent-direct'
+              ? directMessage?.sourceConversationId
+              : undefined,
         })
         ensureDrainAfterCurrent(delivery.turn)
         return delivery

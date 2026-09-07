@@ -11,10 +11,6 @@ export const MORE_EMOJI = [
 ]
 
 export const MENTION_ITEMS = [
-  { id: 'willow-po', label: 'Willow — PO', kind: 'member' },
-  { id: 'ops-watch', label: 'Ops Watch', kind: 'member' },
-  { id: 'web-search', label: 'web-search', kind: 'member' },
-  { id: 'growth', label: 'Growth', kind: 'member' },
   { id: 'daily-sweep', label: 'Daily sweep', kind: 'workflow' },
   { id: 'sprint-close', label: 'Sprint close check', kind: 'workflow' },
   { id: 'clickup', label: 'ClickUp', kind: 'mcp' },
@@ -40,4 +36,3 @@ export const PR_ITEMS = [
   { id: '1502', label: 'refactor: split transcript rows' },
   { id: '1495', label: 'fix(ui): sidebar resize flicker' },
 ]
-

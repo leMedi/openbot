@@ -11,6 +11,7 @@ import {
 import { computePosition, flip, offset, shift } from '@floating-ui/dom'
 import { ReactRenderer } from '@tiptap/react'
 import type { SuggestionOptions, SuggestionProps } from '@tiptap/suggestion'
+import type { Agent } from '@openbot/db'
 import { AtSign, Hash, Plug, SmilePlus, Workflow, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { MENTION_ITEMS, PR_ITEMS, WORKFLOW_ITEMS } from './data'
@@ -165,8 +166,19 @@ function match(query: string, label: string) {
   return label.toLowerCase().includes(query.toLowerCase())
 }
 
-export function mentionItems({ query }: { query: string }): SuggestionItem[] {
-  return MENTION_ITEMS.filter((i) => match(query, i.label)).slice(0, 8)
+export function mentionItems({
+  query,
+  agents = [],
+}: {
+  query: string
+  agents?: readonly Pick<Agent, 'id' | 'name'>[]
+}): SuggestionItem[] {
+  const agentItems: SuggestionItem[] = agents.map((agent) => ({
+    id: agent.id,
+    label: agent.name,
+    kind: 'member',
+  }))
+  return [...agentItems, ...MENTION_ITEMS].filter((i) => match(query, i.label)).slice(0, 8)
 }
 
 export function workflowItems({ query }: { query: string }): SuggestionItem[] {

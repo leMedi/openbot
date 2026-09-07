@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ConversationMessage, Turn, WaitingState } from '@openbot/db'
+import type { Agent, ConversationMessage, Turn, WaitingState } from '@openbot/db'
 import { ChevronLeft, PanelRightOpen, Pencil, Square } from 'lucide-react'
 import { BotAvatar } from '@/components/openbot/bot-avatar'
 import { Badge } from '@/components/ui/badge'
@@ -46,6 +46,8 @@ export type ConversationProps = {
   /** Stable id — scopes composer drafts. Remount (key) when it changes. */
   id: string
   agent: Author
+  /** Live agent roster used by the composer for @ mentions. */
+  mentionAgents?: readonly Pick<Agent, 'id' | 'name'>[]
   /** Header title; falls back to the agent name. */
   title?: string
   /** Group members; when present the composed group avatar is shown. */
@@ -99,6 +101,7 @@ export type ConversationProps = {
 export function Conversation({
   id,
   agent,
+  mentionAgents,
   title,
   members,
   initialEntries,
@@ -743,6 +746,7 @@ export function Conversation({
         ) : (
           <Composer
             agentName={agent.name}
+            mentionAgents={mentionAgents}
             replyTo={inThreadView ? threadReplyTo : replyTo}
             onCancelReply={() =>
               inThreadView ? setThreadReplyTo(undefined) : setReplyTo(undefined)

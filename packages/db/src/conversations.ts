@@ -1,4 +1,4 @@
-import { and, desc, eq, ne, sql } from 'drizzle-orm'
+import { and, desc, eq, isNull, ne, or, sql } from 'drizzle-orm'
 import { db } from './client'
 import { createId } from './ids'
 import { deletePiSessionDirectory } from './pi-sessions'
@@ -10,6 +10,9 @@ export type ConversationCreateInput = {
   origin?: string | null
   purpose?: string | null
 }
+
+/** Private inboxes used only for asynchronous agent-to-agent delivery. */
+export const DIRECT_AGENT_CONVERSATION_ORIGIN = 'agent-direct'
 
 // Only navigation-facing fields are patchable; sequence and read-state
 // columns move exclusively through their dedicated operations below.
@@ -24,6 +27,10 @@ export function listConversations() {
   return db
     .select()
     .from(schema.conversations)
+    .where(or(
+      isNull(schema.conversations.origin),
+      ne(schema.conversations.origin, DIRECT_AGENT_CONVERSATION_ORIGIN),
+    ))
     .orderBy(desc(schema.conversations.updatedAt))
 }
 

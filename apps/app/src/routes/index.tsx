@@ -385,6 +385,7 @@ function OpenBot() {
         key={active.id}
         id={active.id}
         agent={authorFromBot(bot)}
+        mentionAgents={agents}
         title={active.title}
         members={memberAuthors}
         resolveAuthor={(message) =>

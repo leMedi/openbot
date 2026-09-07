@@ -8,6 +8,7 @@ import { EditorContent, useEditor, type Editor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Suggestion from '@tiptap/suggestion'
 import { ArrowUp, FileText, Loader2, Square, X } from 'lucide-react'
+import type { Agent } from '@openbot/db'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import {
@@ -53,6 +54,7 @@ function replyPlaceholder(target: Entry | undefined) {
 
 export function Composer({
   agentName,
+  mentionAgents,
   replyTo,
   onCancelReply,
   onJumpToReply,
@@ -62,6 +64,7 @@ export function Composer({
   draftScope = 'main',
 }: {
   agentName: string
+  mentionAgents?: readonly Pick<Agent, 'id' | 'name'>[]
   replyTo?: string
   onCancelReply: () => void
   onJumpToReply?: (id: string) => void
@@ -159,7 +162,7 @@ export function Composer({
         suggestion: {
           char: '@',
           pluginKey: new PluginKey('memberMention'),
-          items: mentionItems,
+          items: ({ query }) => mentionItems({ query, agents: mentionAgents }),
           render: suggestionRender,
         },
       }),
@@ -184,7 +187,7 @@ export function Composer({
       keys,
       emoji,
     ]
-  }, [])
+  }, [mentionAgents])
 
   const editor = useEditor({
     extensions,

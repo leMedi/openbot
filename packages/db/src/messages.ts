@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { and, asc, eq, or, sql } from 'drizzle-orm'
 import { db } from './client'
-import { allocateConversationSequence, type DbExecutor } from './conversations'
+import {
+  allocateConversationSequence,
+  DIRECT_AGENT_CONVERSATION_ORIGIN,
+  type DbExecutor,
+} from './conversations'
 import { createId } from './ids'
 import {
   type Attachments,
@@ -317,8 +321,6 @@ export async function acceptUserMessage(input: UserMessageInput) {
   throw lastError
 }
 
-const DIRECT_AGENT_ORIGIN = 'agent-direct'
-
 async function directAgentConversation(
   agent: { id: string; name: string },
   executor: DbExecutor,
@@ -329,7 +331,7 @@ async function directAgentConversation(
     .where(
       and(
         eq(schema.conversations.ownerAgentId, agent.id),
-        eq(schema.conversations.origin, DIRECT_AGENT_ORIGIN),
+        eq(schema.conversations.origin, DIRECT_AGENT_CONVERSATION_ORIGIN),
       ),
     )
     .orderBy(asc(schema.conversations.createdAt), asc(schema.conversations.id))
@@ -343,7 +345,7 @@ async function directAgentConversation(
       id: createId('cnv'),
       ownerAgentId: agent.id,
       title: 'Agent messages',
-      origin: DIRECT_AGENT_ORIGIN,
+      origin: DIRECT_AGENT_CONVERSATION_ORIGIN,
       purpose: 'Direct messages with other local agents',
       createdAt: now,
       updatedAt: now,
@@ -357,6 +359,10 @@ export type DirectAgentMessageInput = {
   recipientAgentId: string
   content: string
   idempotencyKey?: string
+  /** Conversation whose task initiated this exchange. */
+  sourceConversationId?: string | null
+  /** Conversation where a reply should resume the recipient's work. */
+  replyConversationId?: string | null
 }
 
 async function findAcceptedDirectMessage(
@@ -390,13 +396,19 @@ function validateAcceptedDirectMessage(
   accepted: NonNullable<Awaited<ReturnType<typeof findAcceptedDirectMessage>>>,
   input: DirectAgentMessageInput,
 ) {
+  const acceptedContext = directAgentMessageContextSchema.parse(
+    accepted.turn.runtimeContextJson.directMessage,
+  )
+  const expectedConversationId = input.replyConversationId ?? accepted.inbound.conversationId
   if (
     accepted.outbound.senderAgentId !== input.senderAgentId ||
     accepted.outbound.recipientAgentId !== input.recipientAgentId ||
     accepted.outbound.bodyText !== input.content ||
     accepted.inbound.senderAgentId !== input.senderAgentId ||
     accepted.inbound.recipientAgentId !== input.recipientAgentId ||
-    accepted.inbound.bodyText !== input.content
+    accepted.inbound.bodyText !== input.content ||
+    acceptedContext.sourceConversationId !== (input.sourceConversationId ?? null) ||
+    accepted.turn.conversationId !== expectedConversationId
   ) {
     throw new Error('A direct-message idempotency key cannot be reused with different input')
   }
@@ -439,6 +451,15 @@ export async function acceptDirectAgentMessage(input: DirectAgentMessageInput) {
 
         const senderConversation = await directAgentConversation(sender, tx)
         const recipientConversation = await directAgentConversation(recipient, tx)
+        const turnConversationId = input.replyConversationId ?? recipientConversation.id
+        const [turnConversation] = await tx
+          .select({ id: schema.conversations.id })
+          .from(schema.conversations)
+          .where(eq(schema.conversations.id, turnConversationId))
+          .limit(1)
+        if (!turnConversation) {
+          throw new Error(`Reply conversation ${turnConversationId} not found`)
+        }
         const deliveryId = createId('dlv')
         const payload = directAgentMessagePayloadSchema.parse({
           version: 1,
@@ -483,7 +504,7 @@ export async function acceptDirectAgentMessage(input: DirectAgentMessageInput) {
           .insert(schema.turns)
           .values({
             id: createId('trn'),
-            conversationId: recipientConversation.id,
+            conversationId: turnConversationId,
             targetAgentId: recipient.id,
             lane: 'agent',
             source: 'direct-agent-message',
@@ -499,6 +520,7 @@ export async function acceptDirectAgentMessage(input: DirectAgentMessageInput) {
                 senderAgentName: sender.name,
                 recipientAgentId: recipient.id,
                 content,
+                sourceConversationId: input.sourceConversationId ?? null,
               }),
             },
             createdAt: now,
