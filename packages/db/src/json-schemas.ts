@@ -421,6 +421,8 @@ export const routineWakeSchema = z.object({
   instruction: z.string().trim().min(1).max(20_000),
   cronExpression: z.string().trim().min(1).max(100),
   timezone: z.string().trim().min(1).max(100),
+  enabled: z.boolean(),
+  nextRunAt: z.number().int().nonnegative().nullable(),
   scheduledFor: z.number().int().nonnegative(),
 })
 
@@ -447,6 +449,7 @@ const routineUpdateOperationSchema = z.object({
 const routineIdOperationSchema = z.object({
   action: z.enum(['pause', 'resume', 'delete']),
   routineId: z.string().min(1),
+  expectedRevision: z.number().int().positive(),
 })
 
 export const routineOperationSchema = z.discriminatedUnion('action', [

@@ -96,6 +96,15 @@ export function RoutinesDialog({
     }
   }
 
+  async function refreshRunState(routineId: string) {
+    const [rows, runs] = await Promise.all([
+      getRoutines({ data: { agentId } }),
+      getRoutineHistory({ data: { id: routineId } }),
+    ])
+    setRoutines(rows)
+    setHistory(runs)
+  }
+
   useEffect(() => {
     if (!open) return
     let cancelled = false
@@ -125,7 +134,7 @@ export function RoutinesDialog({
     source.onmessage = (message) => {
       try {
         const event = JSON.parse(message.data) as { routineId?: string }
-        if (event.routineId === selectedId) void refresh(selectedId)
+        if (event.routineId === selectedId) void refreshRunState(selectedId)
       } catch { /* Ignore malformed live updates. */ }
     }
     return () => source.close()
@@ -183,7 +192,7 @@ export function RoutinesDialog({
     if (!selected || !window.confirm(`Delete “${selected.name}”? Run history remains in its conversation.`)) return
     setSaving(true)
     try {
-      await removeRoutine({ data: { id: selected.id } })
+      await removeRoutine({ data: { id: selected.id, confirmed: true } })
       await refresh(null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not delete routine')
@@ -198,7 +207,7 @@ export function RoutinesDialog({
     setError('')
     try {
       await runRoutine({ data: { id: selected.id } })
-      await refresh(selected.id)
+      await refreshRunState(selected.id)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not run routine')
     } finally {

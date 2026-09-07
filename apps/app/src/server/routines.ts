@@ -1,4 +1,4 @@
-import { ensureDrainForTurn, publishRoutineEvent } from '@openbot/agent'
+import { activateRoutineTurn } from '@openbot/agent'
 import {
   createRoutine,
   deleteRoutine,
@@ -25,6 +25,7 @@ const updateInput = routineDefinitionInputSchema.partial().extend({
   id: z.string().min(1),
 })
 const enabledInput = idInput.extend({ enabled: z.boolean() })
+const deleteInput = idInput.extend({ confirmed: z.literal(true) })
 
 export const getRoutines = createServerFn({ method: 'GET' })
   .validator((input: unknown) => listInput.parse(input ?? {}))
@@ -58,7 +59,7 @@ export const changeRoutineEnabled = createServerFn({ method: 'POST' })
   .handler(({ data }) => setRoutineEnabled(data.id, data.enabled))
 
 export const removeRoutine = createServerFn({ method: 'POST' })
-  .validator((input: unknown) => idInput.parse(input))
+  .validator((input: unknown) => deleteInput.parse(input))
   .handler(async ({ data }) => {
     if (!(await deleteRoutine(data.id))) throw new Error(`Routine ${data.id} not found`)
     return { id: data.id }
@@ -68,15 +69,6 @@ export const runRoutine = createServerFn({ method: 'POST' })
   .validator((input: unknown) => idInput.parse(input))
   .handler(async ({ data }) => {
     const turn = await enqueueRoutineNow(data.id)
-    if (turn.routineId) {
-      publishRoutineEvent({
-        type: 'routine',
-        phase: 'queued',
-        routineId: turn.routineId,
-        turnId: turn.id,
-        conversationId: turn.conversationId,
-      })
-    }
-    ensureDrainForTurn(turn)
+    activateRoutineTurn(turn)
     return turn
   })

@@ -120,6 +120,46 @@ function matches(parsed: ParsedCron, timestamp: number, timezone: string) {
     && parsed[3].values.has(local.month)
 }
 
+function calendarDayMatches(parsed: ParsedCron, date: Date) {
+  const dayOfMonthMatches = parsed[2].values.has(date.getUTCDate())
+  const dayOfWeekMatches = parsed[4].values.has(date.getUTCDay())
+  return parsed[3].values.has(date.getUTCMonth() + 1) && (
+    parsed[2].wildcard
+      ? dayOfWeekMatches
+      : parsed[4].wildcard
+        ? dayOfMonthMatches
+        : dayOfMonthMatches || dayOfWeekMatches
+  )
+}
+
+function minimumScheduledGap(parsed: ParsedCron) {
+  const times = [...parsed[1].values]
+    .flatMap((hour) => [...parsed[0].values].map((minute) => hour * 60 + minute))
+    .sort((a, b) => a - b)
+  let minimum = Number.POSITIVE_INFINITY
+  for (let index = 1; index < times.length; index += 1) {
+    minimum = Math.min(minimum, times[index]! - times[index - 1]!)
+  }
+
+  // The Gregorian date/weekday pattern repeats every 400 years. Check that
+  // complete cycle to determine whether the overnight gap can ever occur on
+  // two consecutive matching dates.
+  let previousMatched = false
+  for (
+    let timestamp = Date.UTC(2000, 0, 1);
+    timestamp < Date.UTC(2400, 0, 1);
+    timestamp += 24 * 60 * 60 * 1_000
+  ) {
+    const matched = calendarDayMatches(parsed, new Date(timestamp))
+    if (matched && previousMatched) {
+      minimum = Math.min(minimum, 24 * 60 - times.at(-1)! + times[0]!)
+      break
+    }
+    previousMatched = matched
+  }
+  return minimum
+}
+
 const MAX_SEARCH_MINUTES = 366 * 24 * 60 * 5
 
 export function nextCronOccurrence(
@@ -139,13 +179,10 @@ export function nextCronOccurrence(
 
 export function validateRoutineSchedule(expression: string, timezone: string) {
   if (!isIanaTimezone(timezone)) throw new Error(`Unknown timezone: ${timezone}`)
-  parseCronExpression(expression)
-  // A leap-year anchor catches sparse schedules such as February 29 while the
-  // second occurrence reveals schedules that burst faster than the limit.
+  const parsed = parseCronExpression(expression)
   const anchor = Date.UTC(2023, 11, 31, 0, 0, 0)
   const first = nextCronOccurrence(expression, timezone, anchor)
-  const second = nextCronOccurrence(expression, timezone, first)
-  if (second - first < MIN_ROUTINE_CADENCE_MS) {
+  if (minimumScheduledGap(parsed) * 60_000 < MIN_ROUTINE_CADENCE_MS) {
     throw new Error('Routine schedules must be at least 15 minutes apart')
   }
   return { expression: expression.trim(), timezone, nextRunAt: first }

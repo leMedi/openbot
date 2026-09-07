@@ -23,6 +23,10 @@ test('rejects malformed, unknown-timezone, and too-frequent schedules', () => {
     () => validateRoutineSchedule('*/5 * * * *', 'UTC'),
     /at least 15 minutes/,
   )
+  assert.throws(
+    () => validateRoutineSchedule('0,10 * * * *', 'UTC'),
+    /at least 15 minutes/,
+  )
   assert.doesNotThrow(() => validateRoutineSchedule('*/15 * * * *', 'UTC'))
 })
 

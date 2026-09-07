@@ -145,9 +145,17 @@ export async function updateRoutine(id: string, input: RoutineUpdateInput) {
   return updated
 }
 
-export async function setRoutineEnabled(id: string, enabled: boolean) {
+export async function setRoutineEnabled(
+  id: string,
+  enabled: boolean,
+  expectedRevision?: number,
+) {
   const current = await getRoutine(id)
   if (!current) throw new Error(`Routine ${id} not found`)
+  if (expectedRevision !== undefined && current.revision !== expectedRevision) {
+    if (current.enabled === enabled) return current
+    throw new Error('The routine changed after approval; review it again')
+  }
   if (current.enabled === enabled) return current
   const now = Date.now()
   const [updated] = await db
@@ -169,11 +177,19 @@ export async function setRoutineEnabled(id: string, enabled: boolean) {
   return updated
 }
 
-export async function deleteRoutine(id: string) {
+export async function deleteRoutine(id: string, expectedRevision?: number) {
   const deleted = await db
     .delete(schema.routines)
-    .where(eq(schema.routines.id, id))
+    .where(expectedRevision === undefined
+      ? eq(schema.routines.id, id)
+      : and(
+          eq(schema.routines.id, id),
+          eq(schema.routines.revision, expectedRevision),
+        ))
     .returning({ id: schema.routines.id })
+  if (deleted.length === 0 && expectedRevision !== undefined && await getRoutine(id)) {
+    throw new Error('The routine changed after approval; review it again')
+  }
   return deleted.length > 0
 }
 
@@ -201,6 +217,8 @@ async function insertRoutineTurn(
     instruction: routine.instruction,
     cronExpression: routine.cronExpression,
     timezone: routine.timezone,
+    enabled: routine.enabled,
+    nextRunAt: routine.nextRunAt,
     scheduledFor,
   })
   const now = Date.now()
@@ -324,12 +342,16 @@ export async function applyRoutineOperation(
   if (routine && routine.agentId !== agentId) throw new Error('Routine belongs to another agent')
   if (operation.action === 'delete') {
     if (!routine) return { id: operation.routineId, deleted: true }
-    await deleteRoutine(operation.routineId)
+    await deleteRoutine(operation.routineId, operation.expectedRevision)
     return { id: operation.routineId, deleted: true }
   }
   if (!routine) throw new Error(`Routine ${operation.routineId} not found`)
-  if (operation.action === 'pause') return setRoutineEnabled(routine.id, false)
-  if (operation.action === 'resume') return setRoutineEnabled(routine.id, true)
+  if (operation.action === 'pause') {
+    return setRoutineEnabled(routine.id, false, operation.expectedRevision)
+  }
+  if (operation.action === 'resume') {
+    return setRoutineEnabled(routine.id, true, operation.expectedRevision)
+  }
   if (operation.action === 'update') return updateRoutine(routine.id, operation)
   throw new Error(`Unsupported routine operation: ${operation.action}`)
 }

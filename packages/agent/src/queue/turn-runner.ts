@@ -461,6 +461,13 @@ async function executeTurn(turnId: string) {
         ? routineApprovalResumeSchema.safeParse(waitingState.resumeData)
         : undefined
     let routineApprovalResult: unknown
+    if (
+      waitingState?.originatingToolCall.name === 'ManageRoutine' &&
+      waitingState.response &&
+      !routineApproval?.success
+    ) {
+      throw new Error('Routine approval state is invalid')
+    }
     if (routineApproval?.success && waitingState?.response?.optionId === 'approve') {
       routineApprovalResult = await applyRoutineOperation(
         agent.id,

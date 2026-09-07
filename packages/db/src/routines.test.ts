@@ -30,6 +30,8 @@ test('queues a due routine once with a durable definition snapshot', async () =>
   assert.equal(turn.source, 'routine')
   const wake = store.routineWakeSchema.parse(turn.runtimeContextJson.wake)
   assert.equal(wake.instruction, 'Summarize today.')
+  assert.equal(wake.enabled, true)
+  assert.equal(wake.nextRunAt, dueAt)
   assert.equal(wake.scheduledFor, dueAt)
   assert.deepEqual(await store.enqueueDueRoutineRuns(dueAt), [])
 })
@@ -121,4 +123,26 @@ test('rebinds a routine before deleting its delivery conversation', async () => 
   })
   assert.equal(await store.deleteConversation(doomed.id), true)
   assert.equal((await store.getRoutine(routine.id))?.conversationId, fallback.id)
+})
+
+test('rejects an approved resume after a concurrent definition edit', async () => {
+  const { agent, conversation } = await store.createAgent({ name: 'Approval race' })
+  const routine = await store.createRoutine({
+    agentId: agent.id,
+    conversationId: conversation.id,
+    name: 'Paused work',
+    instruction: 'Do the work.',
+    cronExpression: '0 8 * * *',
+    timezone: 'UTC',
+    enabled: false,
+  })
+  await store.updateRoutine(routine.id, { name: 'Changed while waiting' })
+  await assert.rejects(
+    store.applyRoutineOperation(agent.id, conversation.id, {
+      action: 'resume',
+      routineId: routine.id,
+      expectedRevision: routine.revision,
+    }),
+    /changed after approval/,
+  )
 })

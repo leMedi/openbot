@@ -6,21 +6,31 @@ const POLL_INTERVAL_MS = 30_000
 let started = false
 let ticking = false
 
+export function activateRoutineTurn(turn: {
+  id: string
+  routineId: string | null
+  conversationId: string
+  targetAgentId: string | null
+  targetGroupId: string | null
+}) {
+  if (turn.routineId) {
+    publishRoutineEvent({
+      type: 'routine',
+      phase: 'queued',
+      routineId: turn.routineId,
+      turnId: turn.id,
+      conversationId: turn.conversationId,
+    })
+  }
+  ensureDrainForTurn(turn)
+}
+
 async function tick() {
   if (ticking) return
   ticking = true
   try {
     for (const turn of await enqueueDueRoutineRuns()) {
-      if (turn.routineId) {
-        publishRoutineEvent({
-          type: 'routine',
-          phase: 'queued',
-          routineId: turn.routineId,
-          turnId: turn.id,
-          conversationId: turn.conversationId,
-        })
-      }
-      ensureDrainForTurn(turn)
+      activateRoutineTurn(turn)
     }
   } catch (error) {
     console.error('Routine scheduler tick failed', error)

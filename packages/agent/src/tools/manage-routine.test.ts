@@ -44,6 +44,8 @@ test('requires durable approval before applying a model-created routine', async 
   const result = await executeManageRoutine(agent.id, args, call, context)
   assert.deepEqual(result.status, 'waiting_for_approval')
   assert.deepEqual(await store.listRoutines(agent.id), [])
+  assert.match(waiting?.prompt ?? '', /schedule “0 9 \* \* \*”/)
+  assert.match(waiting?.prompt ?? '', /instruction “Send a daily brief\.”/)
   const approval = store.routineApprovalResumeSchema.parse(waiting?.resumeData)
   const created = await store.applyRoutineOperation(
     agent.id,

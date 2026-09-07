@@ -82,8 +82,18 @@ function routineView(routine: Awaited<ReturnType<typeof getRoutine>>) {
 }
 
 function approvalCopy(operation: RoutineOperation) {
-  if (operation.action === 'create') return `create routine “${operation.name}” (${operation.cronExpression} ${operation.timezone})`
-  if (operation.action === 'update') return `update routine ${operation.routineId}`
+  if (operation.action === 'create') {
+    return `create routine “${operation.name}” with schedule “${operation.cronExpression}” in ${operation.timezone} and instruction “${operation.instruction}”`
+  }
+  if (operation.action === 'update') {
+    const changes = [
+      operation.name !== undefined && `name to “${operation.name}”`,
+      operation.instruction !== undefined && `instruction to “${operation.instruction}”`,
+      operation.cronExpression !== undefined && `schedule to “${operation.cronExpression}”`,
+      operation.timezone !== undefined && `timezone to ${operation.timezone}`,
+    ].filter(Boolean)
+    return `update routine ${operation.routineId}: ${changes.join(', ')}`
+  }
   return `${operation.action} routine ${operation.routineId}`
 }
 
@@ -143,7 +153,11 @@ export async function executeManageRoutine(
         ...(args.timezone !== undefined && { timezone: definition.timezone }),
       }
     } else {
-      operation = { action: args.action, routineId: routine.id }
+      operation = {
+        action: args.action,
+        routineId: routine.id,
+        expectedRevision: routine.revision,
+      }
     }
   }
 
