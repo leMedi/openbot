@@ -694,6 +694,21 @@ async function executeTurn(turnId: string) {
               resumedText,
               hiddenWakePrompt,
               mcpToolCount: currentMcpRegistry.definitions.length,
+              toolCapabilities: {
+                taskEnabled: builtInToolDefinitions.some(
+                  (tool) => tool.function.name === TASK_TOOL_NAME,
+                ),
+                shellEnabled: builtInToolDefinitions.some(
+                  (tool) => tool.function.name === 'runShell',
+                ),
+                screenshotEnabled: builtInToolDefinitions.some(
+                  (tool) => tool.function.name === SCREENSHOT_TOOL_NAME,
+                ),
+                pluginManagementEnabled: hasMcpAccess,
+                routineManagementEnabled: builtInToolDefinitions.some(
+                  (tool) => tool.function.name === 'ManageRoutine',
+                ),
+              },
             })
     const toolContext: ToolTurnContext = {
       turnId,

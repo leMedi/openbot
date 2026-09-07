@@ -15,6 +15,7 @@ import {
 } from '@openbot/db'
 import {
   type ConversationPromptContext,
+  type PromptToolCapabilities,
   renderBrowserUseWorkerSystemPrompt,
   renderComputerUseWorkerSystemPrompt,
   renderGeneralSubagentSystemPrompt,
@@ -86,6 +87,7 @@ export type PrepareConversationTurnInput = {
   resumedText?: string
   hiddenWakePrompt?: string
   mcpToolCount?: number
+  toolCapabilities?: PromptToolCapabilities
 }
 
 /** Resolves every private/group execution difference at one boundary. */
@@ -97,6 +99,7 @@ export async function prepareConversationTurn(input: PrepareConversationTurnInpu
     memory: input.memory,
     conversation: input.conversation,
     mcpToolCount: input.mcpToolCount,
+    toolCapabilities: input.toolCapabilities,
   })
 
   if (input.conversation.kind === 'group') {

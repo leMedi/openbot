@@ -30,6 +30,22 @@ describe('MCP management tools', () => {
     expect(install?.function.description).toContain('do not repeat this call')
   })
 
+  it('uses the Grok plugin discovery contract with OpenBot approval semantics', () => {
+    const tools = createMcpManagementTools('unused-agent', { suspend: vi.fn() })
+    const descriptions = Object.fromEntries(
+      tools.definitions.map((definition) => [
+        definition.function.name,
+        definition.function.description,
+      ]),
+    )
+    expect(descriptions.SearchPlugins).toContain(
+      'Search the plugins the user could install (or already has)',
+    )
+    expect(descriptions.SearchPlugins).toContain('read-only')
+    expect(descriptions.GetPlugin).toContain('STABLE plugin id (from SearchPlugins)')
+    expect(descriptions.InstallPlugin).toContain('raises its own user approval card')
+  })
+
   it('searches aliases across the full catalog and reports agent access separately', async () => {
     const tools = createMcpManagementTools('unused-agent', { suspend: vi.fn() })
     const result = await tools.execute(call('SearchPlugins', { query: 'issue tracker' }))

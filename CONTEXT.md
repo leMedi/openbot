@@ -25,6 +25,9 @@ An agent has two distinct forms of state:
 - Runtime state: live runners, abort controllers, open connections, discovered
   tools, active streams, and in-memory scheduler state.
 
+User-facing agent language calls an MCP server a connector; persisted domain
+state continues to use MCP server and MCP account.
+
 Runtime-only objects are not serialized. Durable queue records and append-only
 Pi session files provide the boundary needed to resume work after a restart.
 

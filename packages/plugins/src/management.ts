@@ -38,8 +38,7 @@ const definitions: ToolDefinition[] = [
     function: {
       name: 'SearchPlugins',
       description:
-        'Search the catalog of plugins that can be installed for this agent. For work involving ' +
-        'an external service with no matching connected MCP tool, use this before browser automation.',
+        "Search the plugins the user could install (or already has): catalog plugins bundling connectors and skills. Results come back with each plugin's STABLE id, install state, and what it includes. Use this to discover a capability (Linear, Notion, issue tracking, …) or to check whether a plugin is installed. Inspect one result with GetPlugin. This is read-only and never needs the user's permission.",
       parameters: {
         type: 'object',
         properties: {
@@ -53,7 +52,7 @@ const definitions: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'GetPlugin',
-      description: 'Show capabilities, setup fields, and installation details for a plugin.',
+      description: 'Full detail for one plugin by its STABLE plugin id (from SearchPlugins): what it includes (connectors, skills), its install state, and the installed MCP server backing it. Read this before installing a plugin. Read-only.',
       parameters: {
         type: 'object',
         properties: {
@@ -69,7 +68,7 @@ const definitions: ToolDefinition[] = [
     function: {
       name: 'InstallPlugin',
       description:
-        'Request user approval, then install or grant a catalog plugin for this agent. After approval, continue the original task; do not repeat this call.',
+        "Install or grant a plugin by its STABLE plugin id (from SearchPlugins). The tool raises its own user approval card because installing changes the user's configuration. If the plugin has no connected account, the user must connect one in Plugins. New tools become available when the approved turn resumes. After approval, continue the original task; do not repeat this call.",
       parameters: {
         type: 'object',
         properties: {

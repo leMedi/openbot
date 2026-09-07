@@ -4,6 +4,7 @@ import type { ModelToolCall } from '@openbot/db'
 import {
   executeTask,
   executorTaskToolDefinition,
+  taskToolDefinition,
   taskArgsSchema,
 } from './task'
 
@@ -82,4 +83,20 @@ test('desktop-free Task definitions expose only executor', () => {
     subagent_type: { enum: string[] }
   }
   assert.deepEqual(properties.subagent_type.enum, ['executor'])
+})
+
+test('Task uses the Grok delegation and subagent descriptions', () => {
+  const description = taskToolDefinition.function.description
+  assert.match(description, /Launch a new agent to handle complex, multi-step tasks autonomously/)
+  assert.match(description, /specialized subagents that autonomously handle complex tasks/)
+  assert.match(description, /When NOT to use the Task tool/)
+  assert.match(description, /Available subagent_types and a quick description/)
+  assert.match(description, /browserUse: Delegate a self-contained web task/)
+  assert.match(description, /computerUse: Delegate a self-contained desktop task/)
+  assert.match(description, /Launch multiple executor agents concurrently whenever possible/)
+  assert.match(description, /Only one browserUse subagent can run at a time/)
+  assert.match(
+    executorTaskToolDefinition.function.description,
+    /Launch multiple executor agents concurrently whenever possible/,
+  )
 })
