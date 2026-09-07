@@ -365,7 +365,6 @@ function OpenBot() {
         id={active.id}
         agent={authorFromBot(bot)}
         title={active.title}
-        model={bot.model}
         members={memberAuthors}
         resolveAuthor={(message) =>
           authorForMessage(message, authorFromBot(bot), transcriptAuthorsById)
@@ -457,6 +456,10 @@ function OpenBot() {
               ? () => setGroupDialog({ open: true, group: activeGroup })
               : undefined
         }
+        onRenameTitle={async (title) => {
+          await renameConversation({ data: { id: active.id, title } })
+          await router.invalidate()
+        }}
         onBack={isMobile ? () => setMobileDetail(false) : undefined}
         headerActions={
           isMobile ? undefined : (

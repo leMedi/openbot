@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ConversationMessage, Turn, WaitingState } from '@openbot/db'
-import { ArrowLeft, ChevronLeft, PanelRightOpen, Pencil, Square } from 'lucide-react'
+import { ChevronLeft, PanelRightOpen, Pencil, Square } from 'lucide-react'
 import { BotAvatar } from '@/components/openbot/bot-avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -9,7 +9,7 @@ import { entryFromMessage } from './adapter'
 import { Composer } from './composer'
 import { YOU } from './data'
 import { FullConversationDialog } from './full-conversation'
-import { GroupAvatar, type MessageRowHandlers } from './rows'
+import type { MessageRowHandlers } from './rows'
 import { Transcript } from './transcript'
 import { SubagentPanel } from './subagent-panel'
 import { streamTurn } from './turn-stream'
@@ -48,12 +48,13 @@ export type ConversationProps = {
   agent: Author
   /** Header title; falls back to the agent name. */
   title?: string
-  model?: string
   /** Group members; when present the composed group avatar is shown. */
   members?: Author[]
   initialEntries: Entry[]
   activityTabs: ActivityTab[]
   onEditAgent?: () => void
+  /** Inline title rename (double-click the header title). Absent = read-only title. */
+  onRenameTitle?: (title: string) => Promise<void> | void
   /**
    * Phone navigation: shows a back chevron and collapses the header to the
    * essentials (the title itself opens the agent editor).
@@ -99,11 +100,11 @@ export function Conversation({
   id,
   agent,
   title,
-  model,
   members,
   initialEntries,
   activityTabs,
   onEditAgent,
+  onRenameTitle,
   onBack,
   headerActions,
   readOnly,
@@ -600,26 +601,18 @@ export function Conversation({
             <ChevronLeft className="size-6" />
           </Button>
         )}
-        {inThreadView && (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Back to conversation"
-            onClick={closeThread}
-          >
-            <ArrowLeft className="size-4" />
-          </Button>
+        {(inThreadView || onBack) && (
+          <span className={cn('relative', working && 'animate-pulse')}>
+            <BotAvatar
+              name={agent.name}
+              color={agent.color}
+              shape={agent.shape}
+              src={agent.avatarUrl}
+              className="size-5.5 rounded-[7px] text-[10px]"
+            />
+            {working && <span className="absolute -inset-0.5 rounded-lg border border-primary/60" />}
+          </span>
         )}
-        <span className={cn('relative', working && 'animate-pulse')}>
-          <BotAvatar
-            name={agent.name}
-            color={agent.color}
-            shape={agent.shape}
-            src={agent.avatarUrl}
-            className="size-6 text-[10px]"
-          />
-          {working && <span className="absolute -inset-0.5 rounded-lg border border-primary/60" />}
-        </span>
         {inThreadView ? (
           <>
             <button
@@ -627,7 +620,7 @@ export function Conversation({
               onClick={closeThread}
               className="max-w-56 truncate text-sm font-semibold text-info hover:opacity-80"
             >
-              {title ?? agent.name}
+              {agent.name}
             </button>
             <span className="text-xs text-muted-foreground/70">›</span>
             <span className="max-w-md truncate text-sm font-semibold">{threadExcerpt}</span>
@@ -635,36 +628,17 @@ export function Conversation({
               THREAD
             </Badge>
           </>
+        ) : onBack ? (
+          <button
+            type="button"
+            onClick={onEditAgent}
+            disabled={!onEditAgent}
+            className="min-w-0 truncate text-sm font-semibold"
+          >
+            {title ?? agent.name}
+          </button>
         ) : (
-          <>
-            {onBack ? (
-              <button
-                type="button"
-                onClick={onEditAgent}
-                disabled={!onEditAgent}
-                className="min-w-0 truncate text-sm font-semibold"
-              >
-                {title ?? agent.name}
-              </button>
-            ) : (
-              <span className="max-w-sm truncate text-sm font-semibold">{title ?? agent.name}</span>
-            )}
-            {onEditAgent && !onBack && (
-              <button
-                type="button"
-                onClick={onEditAgent}
-                title="Edit Bot"
-                className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-              >
-                {agent.name}
-                <Pencil className="size-2.5" />
-              </button>
-            )}
-            {model && !onBack && (
-              <span className="text-[11px] text-muted-foreground/70">{model}</span>
-            )}
-            {members && members.length > 0 && <GroupAvatar members={members} />}
-          </>
+          <HeaderTitle title={title ?? agent.name} onRename={onRenameTitle} />
         )}
         {working && (
           <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -690,7 +664,24 @@ export function Conversation({
           />
         )}
         <span className="flex-1" />
-        {onBack ? (
+        {!inThreadView && !onBack && (
+          <>
+            <HeaderAgents agents={members && members.length > 0 ? members : [agent]} />
+            {onEditAgent && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Edit Bot"
+                title="Edit Bot"
+                className="text-muted-foreground"
+                onClick={onEditAgent}
+              >
+                <Pencil className="size-3.5" />
+              </Button>
+            )}
+          </>
+        )}
+        {onBack && (
           <Button
             variant="ghost"
             size="icon-sm"
@@ -699,15 +690,6 @@ export function Conversation({
             onClick={() => setFullOpen(true)}
           >
             <PanelRightOpen className="size-4" />
-          </Button>
-        ) : (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-muted-foreground"
-            onClick={() => setFullOpen(true)}
-          >
-            <PanelRightOpen data-icon="inline-start" /> Full conversation
           </Button>
         )}
         {headerActions}
@@ -779,6 +761,77 @@ export function Conversation({
           tabs={activityTabs}
           onClose={() => setFullOpen(false)}
         />
+      )}
+    </div>
+  )
+}
+
+/** Header title; double-click to rename inline when `onRename` is provided. */
+function HeaderTitle({
+  title,
+  onRename,
+}: {
+  title: string
+  onRename?: (title: string) => Promise<void> | void
+}) {
+  const [draft, setDraft] = useState<string | null>(null)
+
+  async function commit() {
+    const next = draft?.trim()
+    setDraft(null)
+    if (!next || next === title || !onRename) return
+    await onRename(next)
+  }
+
+  if (draft !== null) {
+    return (
+      <input
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => void commit()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') void commit()
+          if (e.key === 'Escape') setDraft(null)
+        }}
+        aria-label="Conversation title"
+        className="h-7 w-64 rounded-md border border-ring bg-background px-2 text-sm font-semibold outline-none ring-3 ring-ring/30"
+      />
+    )
+  }
+  if (!onRename) return <span className="max-w-sm truncate text-sm font-semibold">{title}</span>
+  return (
+    <span
+      title="Double-click to rename"
+      onDoubleClick={() => setDraft(title)}
+      className="-ml-1.5 max-w-sm cursor-text truncate rounded-md px-1.5 py-0.5 text-sm font-semibold select-none hover:bg-muted"
+    >
+      {title}
+    </span>
+  )
+}
+
+/** Overlapping avatars of the agents in this conversation (right side of the header). */
+function HeaderAgents({ agents }: { agents: Author[] }) {
+  const shown = agents.slice(0, 4)
+  const extra = agents.length - shown.length
+  return (
+    <div className="flex items-center pl-1">
+      {shown.map((member, index) => (
+        <span key={member.id} title={member.name} className={cn(index > 0 && '-ml-1.5')}>
+          <BotAvatar
+            name={member.name}
+            color={member.color}
+            shape={member.shape}
+            src={member.avatarUrl}
+            className={cn('size-5.5 rounded-[7px] text-[10px]', index > 0 && 'border-[1.5px] border-panel')}
+          />
+        </span>
+      ))}
+      {extra > 0 && (
+        <span className="-ml-1.5 flex size-5.5 items-center justify-center rounded-[7px] border-[1.5px] border-panel bg-muted text-[9px] font-semibold text-muted-foreground">
+          +{extra}
+        </span>
       )}
     </div>
   )
