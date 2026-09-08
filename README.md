@@ -23,6 +23,8 @@ For installation and updates on an x86-64 Debian server, see
 - `pnpm dev` starts the TanStack Start app.
 - `pnpm build` builds all workspaces.
 - `pnpm typecheck` checks all workspaces.
+- `pnpm eval:agents` runs local Promptfoo behavioral evaluations against isolated OpenBot agents.
+- `pnpm eval:agents:view` opens Promptfoo's local results viewer.
 - `pnpm db:generate` generates Drizzle migrations.
 - `pnpm db:migrate` applies Drizzle migrations.
 - `pnpm db:studio` opens Drizzle Studio.

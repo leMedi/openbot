@@ -7,6 +7,8 @@
     "dev": "turbo dev",
     "build": "turbo build",
     "build:server-runtime": "esbuild scripts/run-server.mjs --bundle --platform=node --format=esm --target=node24 --alias:@openbot/db=./packages/db/src/index.ts --external:../dist/server/server.js --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
+    "eval:agents": "pnpm --filter @openbot/agent-evals eval",
+    "eval:agents:view": "pnpm --filter @openbot/agent-evals eval:view",
     "typecheck": "turbo typecheck",
     "clean": "pnpm --filter @openbot/tools clean",
     "db:generate": "turbo db:generate --filter=@openbot/db",
