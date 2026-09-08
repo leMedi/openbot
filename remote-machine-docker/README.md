@@ -5,7 +5,14 @@ session contains Xvfb, Openbox, LXPanel, loopback-only TigerVNC, Google Chrome,
 LXTerminal, and the PCManFM file manager. OpenBot proxies VNC through its own
 web interface, so only the HTTP port is published.
 
-The image supports `linux/amd64` only. On every container start it downloads
+The image supports `linux/amd64` only and runs as the `openbot` user (UID 1000).
+The user has passwordless `sudo` for installing additional system packages. This
+is intentional for a personal remote machine, but means agent shell commands
+can obtain root privileges inside the container.
+
+The image includes pinned development tools: Bun 1.4.2, uv 0.12.10, fnm
+1.39.0, Node.js 24.20.0 LTS, Python 3.13, and FFmpeg 7.1.5. On every
+container start it downloads
 the latest `main-<commit>` OpenBot Debian prerelease from `leMedi/openbot`,
 verifies the published SHA-256 checksum, and activates it without invoking the
 systemd-oriented Debian installer. Starting an update from the server settings
