@@ -114,6 +114,10 @@ function nextAccountLabel(existing: SafeMcpAccount[]) {
   return `account ${n}`
 }
 
+function nextOauthAccountLabel(existing: SafeMcpAccount[]) {
+  return existing.length === 0 ? 'default' : nextAccountLabel(existing)
+}
+
 function hostOf(url: string) {
   try {
     return new URL(url).host
@@ -308,7 +312,7 @@ function PluginsTab({
       authorization.searchParams.set('serverId', server.id)
       authorization.searchParams.set(
         'label',
-        nextAccountLabel(accounts.filter((account) => account.serverId === server.id)),
+        nextOauthAccountLabel(accounts.filter((account) => account.serverId === server.id)),
       )
       window.location.assign(authorization)
     } catch (cause) {

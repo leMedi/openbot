@@ -63,7 +63,7 @@ export const Route = createFileRoute('/api/mcp/oauth/start')({
           const redirectUrl = new URL('/api/mcp/oauth/callback', mcpOauthPublicUrl(request.url))
           const authorization = await beginMcpOauthAuthorization({
             serverId: resolvedServerId,
-            label: label || 'account 1',
+            label: label || 'default',
             redirectUrl: redirectUrl.toString(),
             continuation,
           })
