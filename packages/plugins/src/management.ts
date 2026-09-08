@@ -104,6 +104,15 @@ function searchableText(entry: McpCatalogEntry) {
     .toLowerCase()
 }
 
+function searchTokens(query: string) {
+  return query.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []
+}
+
+function matchesSearch(entry: McpCatalogEntry, tokens: string[]) {
+  const text = searchableText(entry)
+  return tokens.every((token) => text.includes(token))
+}
+
 async function installedServer(entry: McpCatalogEntry) {
   return (await listMcpServers()).find((server) => matchesMcpCatalogEntry(entry, server))
 }
@@ -228,9 +237,9 @@ export function createMcpManagementTools(
           return 'SearchPlugins query must be a string.'
         }
         const query = typeof input.query === 'string' ? input.query.trim() : ''
-        const normalized = query.toLowerCase()
+        const tokens = searchTokens(query)
         const matches = MCP_CATALOG.filter((entry) =>
-          !normalized || searchableText(entry).includes(normalized),
+          !query || (tokens.length > 0 && matchesSearch(entry, tokens)),
         )
         if (matches.length === 0) return `No plugins match "${query}".`
         const installed = await listMcpServers()
@@ -247,6 +256,11 @@ export function createMcpManagementTools(
             granted: accounts.filter((account) => grantedIds.has(account.id)).length,
           }
         }))
+        statuses.sort((left, right) =>
+          Number(right.granted > 0) - Number(left.granted > 0) ||
+          Number(right.connected > 0) - Number(left.connected > 0) ||
+          Number(Boolean(right.server)) - Number(Boolean(left.server)),
+        )
         return [
           `${matches.length} plugin(s)${query ? ` matching "${query}"` : ''}:`,
           ...statuses.flatMap(({ entry, server, connected, granted }) => [

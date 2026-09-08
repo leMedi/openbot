@@ -7,7 +7,12 @@ import type { PluginApproval } from './management'
 
 process.env.OPENBOT_DATA_DIR ??= mkdtempSync(path.join(tmpdir(), 'openbot-management-tests-'))
 
-const { createAgent, createMcpApiKeyAccount, listAgentMcpAccounts } = await import('@openbot/db')
+const {
+  createAgent,
+  createMcpApiKeyAccount,
+  grantAgentMcpAccount,
+  listAgentMcpAccounts,
+} = await import('@openbot/db')
 const { applyApprovedPlugin, createMcpManagementTools } = await import('./management')
 const { installCatalogServer } = await import('./handlers')
 
@@ -59,6 +64,33 @@ describe('MCP management tools', () => {
     expect(result).toContain('clickup: ClickUp')
     expect(result).toContain('server installed=')
     expect(result).toContain('granted to this agent=0')
+  })
+
+  it('matches separate query terms and ranks plugins by granted and connected accounts', async () => {
+    const { agent } = await createAgent({ name: 'Plugin search ranking test' })
+    const atlassian = await installCatalogServer({ key: 'atlassian' })
+    const grantedAccount = await createMcpApiKeyAccount({
+      serverId: atlassian.id,
+      label: 'Connected Atlassian',
+      apiKey: 'connected-atlassian-key',
+    })
+    await grantAgentMcpAccount(agent.id, grantedAccount.id)
+    const asana = await installCatalogServer({ key: 'asana' })
+    await createMcpApiKeyAccount({
+      serverId: asana.id,
+      label: 'Connected Asana',
+      apiKey: 'connected-asana-key',
+    })
+    const tools = createMcpManagementTools(agent.id, { suspend: vi.fn() })
+
+    const result = await tools.execute(call('SearchPlugins', {
+      query: 'ticket issue tracker',
+    }))
+
+    expect(result).toContain('clickup: ClickUp')
+    expect(result).toContain('linear: Linear')
+    expect(result.indexOf('atlassian: Atlassian')).toBeLessThan(result.indexOf('asana: Asana'))
+    expect(result.indexOf('asana: Asana')).toBeLessThan(result.indexOf('linear: Linear'))
   })
 
   it('requires durable approval and rejects invalid account selections', async () => {
