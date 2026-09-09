@@ -25,8 +25,9 @@ await writeFile(invocationLog, '')
 process.env.OPENBOT_STOP_WINDOW = binaryPath
 process.env.OPENBOT_TEST_STOP_WINDOW_LOG = invocationLog
 
-const [{ deleteAgent, StopWindowError }, db] = await Promise.all([
+const [{ deleteAgent, StopWindowError }, { cleanManagedData }, db] = await Promise.all([
   import('./delete-agent'),
+  import('./clean-data'),
   import('@openbot/db'),
 ])
 
@@ -126,4 +127,23 @@ test('tears down assigned displays even in disabled mode and skips agents withou
     .filter(Boolean).length
   assert.equal(finalInvocationCount, invocationCount + 1)
   assert.equal(await deleteAgent(withoutDisplay.agent.id), false)
+})
+
+test('clearing agents uses managed deletion to stop every assigned display', async () => {
+  const first = await createAgentWithDisplay('First clear target', 56_314)
+  const second = await createAgentWithDisplay('Second clear target', 56_315)
+
+  const result = await cleanManagedData(new Set(['bots']))
+
+  assert.equal(result.bots, 2)
+  assert.equal(await db.getAgent(first.agent.id), undefined)
+  assert.equal(await db.getAgent(second.agent.id), undefined)
+  const invocations = (await readFile(invocationLog, 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+  assert.deepEqual(invocations.slice(-2), [
+    ['56314', first.agent.id],
+    ['56315', second.agent.id],
+  ])
 })

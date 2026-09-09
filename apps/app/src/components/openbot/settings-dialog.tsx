@@ -20,6 +20,7 @@ import {
   Bot,
   Brain,
   Plus,
+  Plug,
   RefreshCw,
   Server,
   SlidersHorizontal,
@@ -182,6 +183,12 @@ const DATA_OPTIONS: {
     label: 'Memory',
     description: 'Delete all shared and agent-specific memory.',
     icon: Brain,
+  },
+  {
+    id: 'plugins',
+    label: 'Plugins',
+    description: 'Delete all plugin connections, connected accounts, and stored credentials.',
+    icon: Plug,
   },
 ]
 
