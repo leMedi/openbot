@@ -14,7 +14,7 @@ durable domain data. Clients never access the database or managed files
 directly.
 
 The installation has one user and no tenant or ACL model. The user can create
-multiple long-lived agents. Each agent has its own identity, conversations,
+multiple long-lived agents. Each agent has its own identity, main conversation,
 memory, turn queue, model history, and runtime. Agents can send direct messages
 to one another and participate in groups.
 
@@ -116,7 +116,7 @@ An `agents` row contains:
 
 In the default `per-agent` desktop mode, interactive agent creation allocates
 one more than the greatest assigned X display number, creates the agent, its
-first conversation, and MCP grants, then provisions the display through the
+main conversation, and MCP grants, then provisions the display through the
 configured `start-window` executable before committing. A display startup
 failure rolls back all database changes. A database commit failure after
 successful display provisioning can leave an orphan display; startup
@@ -139,7 +139,10 @@ subagent definitions remain deferred.
 ## Groups
 
 Groups are separate from agents. A group has a name, description, optional
-avatar, timestamps, and versioned `members_json`.
+avatar, timestamps, and versioned `members_json`. User-created groups start
+with at least one agent and cannot be edited to remove their final member. A
+group may become empty when its final agent is deleted; its transcript is
+retained rather than being destroyed as a side effect of agent deletion.
 
 The current membership shape is:
 
@@ -180,9 +183,14 @@ configuration.
 
 ## Conversations
 
-Agents may own multiple conversations. A conversation is owned by exactly one
-agent or one group, enforced by nullable owner foreign keys and an XOR check.
-There is no participants table in the MVP.
+Each agent owns one user-facing main conversation, created atomically with the
+agent and identified by the `agent-main` origin. This is the control surface for
+editing the agent, managing routines, and viewing its inspector. Additional
+user-created chats are groups, which may contain one or more agents. Private
+`agent-direct` inboxes remain hidden implementation details for agent-to-agent
+delivery. A conversation is owned by exactly one agent or one group, enforced
+by nullable owner foreign keys and an XOR check. There is no participants table
+in the MVP.
 
 A conversation stores:
 

@@ -1,7 +1,7 @@
 import { eq, inArray, max } from 'drizzle-orm'
 import { assertValidAvatarUpload, type AvatarUpload } from './avatars'
 import { db } from './client'
-import type { DbExecutor } from './conversations'
+import { MAIN_AGENT_CONVERSATION_ORIGIN, type DbExecutor } from './conversations'
 import {
   createManagedFile,
   deleteManagedFileIfUnreferenced,
@@ -95,6 +95,7 @@ export async function createAgentInTransaction(
       id: createId('cnv'),
       ownerAgentId: agent.id,
       title: agent.name,
+      origin: MAIN_AGENT_CONVERSATION_ORIGIN,
       createdAt: now,
       updatedAt: now,
     })

@@ -20,6 +20,7 @@ export function conversationFromRow(row: ConversationRow): Conversation {
     // The owning identity (XOR): the agent, or the group whose shared room
     // this is. Both resolve through the same Bot view-model list.
     botId: row.ownerAgentId ?? row.ownerGroupId ?? '',
+    isMainAgentConversation: row.origin === 'agent-main',
     title: row.title ?? 'Untitled',
     time: timeLabel(row.updatedAt),
     unread: isUnread(row),

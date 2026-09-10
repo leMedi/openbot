@@ -25,7 +25,7 @@ const groupProfileFields = z.object({
 
 const groupCreateInput = groupProfileFields.partial().extend({
   name: groupProfileFields.shape.name,
-  members: z.array(groupMemberInput).default([]),
+  members: z.array(groupMemberInput).min(1, 'Add at least one bot'),
 })
 
 const groupUpdateInput = z.object({
@@ -35,7 +35,7 @@ const groupUpdateInput = z.object({
 
 const groupMembersInput = z.object({
   id: z.string().min(1),
-  members: z.array(groupMemberInput),
+  members: z.array(groupMemberInput).min(1, 'Keep at least one bot'),
 })
 
 export const getGroups = createServerFn({ method: 'GET' }).handler(() =>

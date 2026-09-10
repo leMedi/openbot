@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createFileRoute, useRouter } from '@tanstack/react-router'
 import type { Agent, ConversationMessage, Group } from '@openbot/db'
-import { BotIcon, CalendarClock, MessageCircle, PanelRight } from 'lucide-react'
+import { BotIcon, CalendarClock, MessageCircle, PanelRight, Users } from 'lucide-react'
 import {
   activityFromMessages,
   authorForMessage,
@@ -19,8 +19,6 @@ import { Inspector } from '@/components/openbot/inspector'
 import { MobileStack } from '@/components/openbot/mobile-stack'
 import {
   ClearConversationDialog,
-  DeleteConversationDialog,
-  NewConversationDialog,
   RenameConversationDialog,
 } from '@/components/openbot/modals'
 import { PluginsDialog } from '@/components/openbot/plugins-dialog'
@@ -42,10 +40,8 @@ import {
   toggleConversationReaction,
 } from '@/server/messages'
 import {
-  addConversation,
   clearConversation,
   getConversations,
-  removeConversation,
   renameConversation,
   setConversationUnread,
 } from '@/server/conversations'
@@ -114,7 +110,6 @@ function OpenBot() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [routinesOpen, setRoutinesOpen] = useState(false)
   const [updateAvailable, setUpdateAvailable] = useState(false)
-  const [newConvoOpen, setNewConvoOpen] = useState(false)
   const [botDialog, setBotDialog] = useState<{ open: boolean; agent: Agent | null }>({
     open: false,
     agent: null,
@@ -124,7 +119,6 @@ function OpenBot() {
     group: null,
   })
   const [deleteGroupTarget, setDeleteGroupTarget] = useState<Group | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<BotConversation | null>(null)
   const [renameTarget, setRenameTarget] = useState<BotConversation | null>(null)
   const [clearTarget, setClearTarget] = useState<BotConversation | null>(null)
 
@@ -199,6 +193,7 @@ function OpenBot() {
   const activeAgent = active
     ? agents.find((a) => a.id === active.botId)
     : undefined
+  const mainAgent = active?.isMainAgentConversation ? activeAgent : undefined
   const activeGroup = active
     ? groups.find((g) => g.id === active.botId)
     : undefined
@@ -256,20 +251,6 @@ function OpenBot() {
     }
   }, [active, bot, transcript, transcriptReady, transcriptAuthorsById])
 
-  async function startConversation(botId: string) {
-    const picked = botIn(bots, botId)
-    const created = await addConversation({
-      data: {
-        agentId: picked.id,
-        title: `New conversation with ${picked.name}`,
-        origin: 'user',
-      },
-    })
-    setNewConvoOpen(false)
-    await router.invalidate()
-    openConversation(created.id)
-  }
-
   async function selectConversation(id: string) {
     openConversation(id)
     const picked = findConversation(id)
@@ -300,18 +281,6 @@ function OpenBot() {
     setClearTarget(null)
     await router.invalidate()
     if (wasActive) setActiveId(fresh.id)
-  }
-
-  async function deleteConversation() {
-    if (!deleteTarget) return
-    await removeConversation({ data: { id: deleteTarget.id } })
-    setDeleteTarget(null)
-    await router.invalidate()
-    if (deleteTarget.id === activeId) {
-      const next = conversations.find((c) => c.id !== deleteTarget.id)
-      setActiveId(next?.id ?? '')
-      setMobileDetail(false)
-    }
   }
 
   function openEditGroup(groupId: string) {
@@ -356,9 +325,7 @@ function OpenBot() {
       activeId={active?.id ?? ''}
       onSelect={selectConversation}
       onNewBot={() => setBotDialog({ open: true, agent: null })}
-      onNewConversation={() => setNewConvoOpen(true)}
       onNewGroup={() => setGroupDialog({ open: true, group: null })}
-      onNewConversationWith={startConversation}
       onEditGroup={openEditGroup}
       onDeleteGroup={(groupId) =>
         setDeleteGroupTarget(groups.find((g) => g.id === groupId) ?? null)
@@ -369,7 +336,6 @@ function OpenBot() {
       onRenameConversation={(id) => setRenameTarget(findConversation(id))}
       onToggleUnread={toggleUnread}
       onClearConversation={(id) => setClearTarget(findConversation(id))}
-      onDeleteConversation={(id) => setDeleteTarget(findConversation(id))}
     />
   )
 
@@ -472,11 +438,9 @@ function OpenBot() {
           },
         })}
         onEditAgent={
-          activeAgent
-            ? () => setBotDialog({ open: true, agent: activeAgent })
-            : activeGroup
-              ? () => setGroupDialog({ open: true, group: activeGroup })
-              : undefined
+          mainAgent
+            ? () => setBotDialog({ open: true, agent: mainAgent })
+            : undefined
         }
         onRenameTitle={async (title) => {
           await renameConversation({ data: { id: active.id, title } })
@@ -485,7 +449,7 @@ function OpenBot() {
         onBack={isMobile ? () => setMobileDetail(false) : undefined}
         headerActions={
           isMobile ? (
-            activeAgent ? (
+            mainAgent ? (
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -495,7 +459,7 @@ function OpenBot() {
                 <CalendarClock className="size-4" />
               </Button>
             ) : undefined
-          ) : (
+          ) : mainAgent ? (
             <Button
               variant="ghost"
               size="icon-sm"
@@ -504,7 +468,7 @@ function OpenBot() {
             >
               <PanelRight className="size-4" />
             </Button>
-          )
+          ) : undefined
         }
       />
     ) : (
@@ -516,7 +480,7 @@ function OpenBot() {
             <p className="mt-1 text-xs text-muted-foreground">
               {agents.length === 0
                 ? 'Create a bot to get started.'
-                : 'Start a conversation with one of your bots.'}
+                : 'Create a group chat and add one or more bots.'}
             </p>
           </div>
           {agents.length === 0 ? (
@@ -524,8 +488,8 @@ function OpenBot() {
               <BotIcon className="size-3.5" /> New Bot
             </Button>
           ) : (
-            <Button size="sm" onClick={() => setNewConvoOpen(true)}>
-              <MessageCircle className="size-3.5" /> New Conversation
+            <Button size="sm" onClick={() => setGroupDialog({ open: true, group: null })}>
+              <Users className="size-3.5" /> Create Group Chat
             </Button>
           )}
         </div>
@@ -545,12 +509,12 @@ function OpenBot() {
         <>
           {sidebar}
           {pane}
-          {inspectorOpen && active && bot && (
+          {inspectorOpen && active && bot && mainAgent && (
             <Inspector
               conversation={active}
               bot={bot}
-              activeAgentId={activeAgent?.id}
-              desktopEnabled={desktopMode === 'per-agent' && activeAgent?.xDisplayNumber != null}
+              activeAgentId={mainAgent.id}
+              desktopEnabled={desktopMode === 'per-agent' && mainAgent.xDisplayNumber != null}
               onOpenPlugins={() => setPluginsOpen(true)}
               onOpenRoutines={() => setRoutinesOpen(true)}
               mcpServers={mcp.servers}
@@ -568,11 +532,11 @@ function OpenBot() {
         accounts={mcp.accounts}
         onChanged={() => router.invalidate()}
       />
-      {activeAgent && active && (
+      {mainAgent && active && (
         <RoutinesDialog
           open={routinesOpen}
           onOpenChange={setRoutinesOpen}
-          agentId={activeAgent.id}
+          agentId={mainAgent.id}
           conversationId={active.id}
           defaultTimezone={profile.timezone}
         />
@@ -592,12 +556,6 @@ function OpenBot() {
           setMobileDetail(false)
           await router.invalidate()
         }}
-      />
-      <NewConversationDialog
-        open={newConvoOpen}
-        onOpenChange={setNewConvoOpen}
-        onPick={startConversation}
-        bots={agentBots}
       />
       {groupDialog.open && (
         <GroupDialog
@@ -651,14 +609,6 @@ function OpenBot() {
           if (!open) setClearTarget(null)
         }}
         onConfirm={confirmClearConversation}
-        bots={bots}
-      />
-      <DeleteConversationDialog
-        conversation={deleteTarget}
-        onOpenChange={(open) => {
-          if (!open) setDeleteTarget(null)
-        }}
-        onConfirm={deleteConversation}
         bots={bots}
       />
     </div>

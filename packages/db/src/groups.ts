@@ -81,6 +81,9 @@ export async function getGroupConversation(groupId: string) {
  * the room pointer is never duplicated on the group row.
  */
 export async function createGroup(input: GroupProfileInput) {
+  if (!input.members?.length) {
+    throw new Error('A group chat requires at least one agent')
+  }
   const now = Date.now()
   return db.transaction(async (tx) => {
     const membersJson = await validateMembers(tx, input.members ?? [])
@@ -127,6 +130,9 @@ export async function updateGroupProfile(
  * orchestration order.
  */
 export async function setGroupMembers(id: string, members: GroupMemberInput[]) {
+  if (members.length === 0) {
+    throw new Error('A group chat requires at least one agent')
+  }
   return db.transaction(async (tx) => {
     const membersJson = await validateMembers(tx, members)
     const [updated] = await tx

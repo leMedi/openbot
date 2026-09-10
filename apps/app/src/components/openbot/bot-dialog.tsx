@@ -49,7 +49,7 @@ export function BotDialog({
   mcpAccounts: SafeMcpAccount[]
   grantedAccountIds: string[]
   onOpenPlugins: () => void
-  /** On create, `firstConversation` is the persisted conversation named after the agent. */
+  /** On create, `firstConversation` is the agent's persisted main conversation. */
   onSaved: (saved: Agent, firstConversation: Conversation | null) => void
   onDeleted: (agentId: string) => void | Promise<void>
 }) {
@@ -439,7 +439,7 @@ export function BotDialog({
             ) : editing ? (
               'Changes apply to every conversation.'
             ) : (
-              'Starts a first conversation.'
+              'Creates the bot and its main conversation.'
             )}
           </span>
           <Button size="sm" disabled={!name.trim() || saving || deleting} onClick={save}>

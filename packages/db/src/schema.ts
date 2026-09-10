@@ -141,6 +141,9 @@ export const conversations = sqliteTable('conversations', {
   uniqueIndex('conversations_agent_direct_unique')
     .on(table.ownerAgentId)
     .where(sql`${table.ownerAgentId} IS NOT NULL AND ${table.origin} = 'agent-direct'`),
+  uniqueIndex('conversations_agent_main_unique')
+    .on(table.ownerAgentId)
+    .where(sql`${table.ownerAgentId} IS NOT NULL AND ${table.origin} = 'agent-main'`),
   index('conversations_agent_owner_idx').on(table.ownerAgentId, table.updatedAt),
 ])
 

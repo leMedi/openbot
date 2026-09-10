@@ -1,6 +1,5 @@
 import {
   clearConversation as clearConversationRecord,
-  createConversation,
   deleteConversation,
   listConversations,
   markConversationRead,
@@ -9,13 +8,6 @@ import {
 } from '@openbot/db'
 import { createServerFn } from '@tanstack/react-start'
 import * as z from 'zod'
-
-const conversationCreateInput = z.object({
-  agentId: z.string().min(1),
-  title: z.string().trim().min(1).max(200).nullable().default(null),
-  origin: z.string().trim().min(1).max(80).nullable().default(null),
-  purpose: z.string().trim().min(1).max(500).nullable().default(null),
-})
 
 const conversationIdInput = z.object({ id: z.string().min(1) })
 
@@ -32,17 +24,6 @@ const conversationUnreadInput = z.object({
 export const getConversations = createServerFn({ method: 'GET' }).handler(() =>
   listConversations(),
 )
-
-export const addConversation = createServerFn({ method: 'POST' })
-  .validator((input: unknown) => conversationCreateInput.parse(input))
-  .handler(({ data }) =>
-    createConversation({
-      ownerAgentId: data.agentId,
-      title: data.title,
-      origin: data.origin,
-      purpose: data.purpose,
-    }),
-  )
 
 export const renameConversation = createServerFn({ method: 'POST' })
   .validator((input: unknown) => conversationRenameInput.parse(input))

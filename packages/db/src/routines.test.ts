@@ -76,6 +76,7 @@ test('rebinds routines when their delivery conversation is cleared', async () =>
     timezone: 'UTC',
   })
   const fresh = await store.clearConversation(conversation.id)
+  assert.equal(fresh.origin, store.MAIN_AGENT_CONVERSATION_ORIGIN)
   assert.equal((await store.getRoutine(routine.id))?.conversationId, fresh.id)
 })
 

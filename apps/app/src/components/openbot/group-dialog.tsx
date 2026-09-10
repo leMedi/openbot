@@ -143,7 +143,7 @@ export function GroupDialog({
       <DialogContent className="flex max-h-[85vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
         <DialogHeader className="shrink-0 border-b bg-card/50 px-4 py-3">
           <DialogTitle className="text-center text-sm">
-            {editing ? `Edit ${group.name}` : 'New Group'}
+            {editing ? `Edit ${group.name}` : 'Create Group Chat'}
           </DialogTitle>
         </DialogHeader>
 
@@ -299,13 +299,17 @@ export function GroupDialog({
             {error ? (
               <span className="text-destructive">{error}</span>
             ) : editing ? (
-              'Changes apply to the shared room.'
+              'Changes apply to the group chat.'
             ) : (
-              'Creates the shared room.'
+              'Creates a group chat with the selected bots.'
             )}
           </span>
-          <Button size="sm" disabled={!name.trim() || saving} onClick={save}>
-            {saving ? 'Saving…' : editing ? 'Save Changes' : 'Create Group'}
+          <Button
+            size="sm"
+            disabled={!name.trim() || memberIds.length === 0 || saving}
+            onClick={save}
+          >
+            {saving ? 'Saving…' : editing ? 'Save Changes' : 'Create Group Chat'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -346,7 +350,7 @@ export function DeleteGroupDialog({
           <DialogTitle>Delete “{group?.name}”?</DialogTitle>
         </DialogHeader>
         <p className="text-xs leading-normal text-muted-foreground">
-          This deletes the group and its shared conversation history. Member bots and
+          This deletes the group chat and its conversation history. Member bots and
           their private conversations are not affected.
         </p>
         {error && <p className="text-xs text-destructive">{error}</p>}

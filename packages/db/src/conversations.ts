@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, ne, or, sql } from 'drizzle-orm'
+import { and, desc, eq, isNotNull, ne, or, sql } from 'drizzle-orm'
 import { db } from './client'
 import { createId } from './ids'
 import { deletePiSessionDirectory } from './pi-sessions'
@@ -13,13 +13,14 @@ export type ConversationCreateInput = {
 
 /** Private inboxes used only for asynchronous agent-to-agent delivery. */
 export const DIRECT_AGENT_CONVERSATION_ORIGIN = 'agent-direct'
+/** The single user-facing conversation used to manage an agent. */
+export const MAIN_AGENT_CONVERSATION_ORIGIN = 'agent-main'
 
 // Only navigation-facing fields are patchable; sequence and read-state
 // columns move exclusively through their dedicated operations below.
 export type ConversationUpdate = Partial<{
   title: string | null
   currentPlanUri: string | null
-  origin: string | null
   purpose: string | null
 }>
 
@@ -28,8 +29,8 @@ export function listConversations() {
     .select()
     .from(schema.conversations)
     .where(or(
-      isNull(schema.conversations.origin),
-      ne(schema.conversations.origin, DIRECT_AGENT_CONVERSATION_ORIGIN),
+      isNotNull(schema.conversations.ownerGroupId),
+      eq(schema.conversations.origin, MAIN_AGENT_CONVERSATION_ORIGIN),
     ))
     .orderBy(desc(schema.conversations.updatedAt))
 }
@@ -68,7 +69,6 @@ export async function updateConversation(id: string, patch: ConversationUpdate) 
       ...(patch.currentPlanUri !== undefined && {
         currentPlanUri: patch.currentPlanUri,
       }),
-      ...(patch.origin !== undefined && { origin: patch.origin }),
       ...(patch.purpose !== undefined && { purpose: patch.purpose }),
       updatedAt: Date.now(),
     })
@@ -143,13 +143,16 @@ export async function clearConversation(id: string) {
       .limit(1)
     if (!existing) throw new Error(`Conversation ${id} not found`)
 
-    // Group ownership and the dedicated agent inbox are unique. Group rooms
-    // cannot own routines, so they retain the original delete-then-insert
-    // order. An agent inbox uses a temporary origin until the old row is gone.
+    // Group ownership and dedicated agent conversations are unique. Group
+    // rooms cannot own routines, so they retain the original
+    // delete-then-insert order. Main conversations and private inboxes use a
+    // temporary origin until the old row is gone.
     if (existing.ownerGroupId) {
       await tx.delete(schema.conversations).where(eq(schema.conversations.id, id))
     }
-    const temporaryOrigin = existing.origin === 'agent-direct'
+    const temporaryOrigin =
+      existing.origin === DIRECT_AGENT_CONVERSATION_ORIGIN ||
+      existing.origin === MAIN_AGENT_CONVERSATION_ORIGIN
       ? 'conversation-clear-replacement'
       : existing.origin
     let [fresh] = await tx
@@ -193,6 +196,9 @@ export async function deleteConversation(id: string) {
       .where(eq(schema.conversations.id, id))
       .limit(1)
     if (!existing) return false
+    if (existing.origin === MAIN_AGENT_CONVERSATION_ORIGIN) {
+      throw new Error('An agent main conversation cannot be deleted')
+    }
     const [boundRoutine] = await tx
       .select({ id: schema.routines.id })
       .from(schema.routines)

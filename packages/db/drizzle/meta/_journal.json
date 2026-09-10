@@ -71,6 +71,13 @@
       "when": 1788764110137,
       "tag": "0009_empty_mephistopheles",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1789073462694,
+      "tag": "0010_silky_warlock",
+      "breakpoints": true
     }
   ]
 }

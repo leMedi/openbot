@@ -6,7 +6,6 @@ import {
   Copy,
   Eraser,
   FolderPlus,
-  MessageCircle,
   Pencil,
   Pin,
   Plug,
@@ -49,9 +48,7 @@ type SidebarProps = {
   activeId: string
   onSelect: (id: string) => void
   onNewBot: () => void
-  onNewConversation: () => void
   onNewGroup: () => void
-  onNewConversationWith: (botId: string) => void
   onEditGroup: (groupId: string) => void
   onDeleteGroup: (groupId: string) => void
   onOpenPlugins: () => void
@@ -60,7 +57,6 @@ type SidebarProps = {
   onRenameConversation: (id: string) => void
   onToggleUnread: (id: string) => void
   onClearConversation: (id: string) => void
-  onDeleteConversation: (id: string) => void
   /** Phone layout: full-page list with a top bar instead of a resizable rail. */
   mobile?: boolean
 }
@@ -71,9 +67,7 @@ export function Sidebar({
   activeId,
   onSelect,
   onNewBot,
-  onNewConversation,
   onNewGroup,
-  onNewConversationWith,
   onEditGroup,
   onDeleteGroup,
   onOpenPlugins,
@@ -82,7 +76,6 @@ export function Sidebar({
   onRenameConversation,
   onToggleUnread,
   onClearConversation,
-  onDeleteConversation,
   mobile = false,
 }: SidebarProps) {
   const [search, setSearch] = useState('')
@@ -129,11 +122,8 @@ export function Sidebar({
         <DropdownMenuItem onClick={onNewBot}>
           <BotIcon /> New Bot
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={onNewConversation}>
-          <MessageCircle /> New Conversation
-        </DropdownMenuItem>
         <DropdownMenuItem onClick={onNewGroup}>
-          <Users /> New Group
+          <Users /> Create Group Chat
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -146,13 +136,11 @@ export function Sidebar({
       bot={botIn(bots, c.botId)}
       active={!mobile && c.id === activeId}
       onSelect={() => onSelect(c.id)}
-      onNewConversationWith={onNewConversationWith}
       onEditGroup={onEditGroup}
       onDeleteGroup={onDeleteGroup}
       onRename={() => onRenameConversation(c.id)}
       onToggleUnread={() => onToggleUnread(c.id)}
       onClear={() => onClearConversation(c.id)}
-      onDelete={() => onDeleteConversation(c.id)}
     />
   ))
 
@@ -339,25 +327,21 @@ function ConversationRow({
   bot,
   active,
   onSelect,
-  onNewConversationWith,
   onEditGroup,
   onDeleteGroup,
   onRename,
   onToggleUnread,
   onClear,
-  onDelete,
 }: {
   conversation: Conversation
   bot: Bot
   active: boolean
   onSelect: () => void
-  onNewConversationWith: (botId: string) => void
   onEditGroup: (groupId: string) => void
   onDeleteGroup: (groupId: string) => void
   onRename: () => void
   onToggleUnread: () => void
   onClear: () => void
-  onDelete: () => void
 }) {
   const isGroup = bot.kind === 'group'
   const last = conversation.messages[conversation.messages.length - 1]
@@ -425,16 +409,9 @@ function ConversationRow({
           <CheckCircle2 className="size-3" /> Mark as {conversation.unread ? 'read' : 'unread'}
         </ContextMenuItem>
         <ContextMenuSeparator />
-        {isGroup ? (
+        {isGroup && (
           <ContextMenuItem className={menuItemCls} onClick={() => onEditGroup(bot.id)}>
-            <Users className="size-3" /> Edit group
-          </ContextMenuItem>
-        ) : (
-          <ContextMenuItem
-            className={menuItemCls}
-            onClick={() => onNewConversationWith(bot.id)}
-          >
-            <MessageCircle className="size-3" /> New conversation with {bot.name}
+            <Users className="size-3" /> Edit group chat
           </ContextMenuItem>
         )}
         <ContextMenuItem className={menuItemCls}>
@@ -451,14 +428,15 @@ function ConversationRow({
         <ContextMenuItem className={menuItemCls} onClick={onClear}>
           <Eraser className="size-3" /> Clear history
         </ContextMenuItem>
-        {/* A group's room is its only conversation; deleting it deletes the group. */}
-        <ContextMenuItem
-          className={menuItemCls}
-          variant="destructive"
-          onClick={isGroup ? () => onDeleteGroup(bot.id) : onDelete}
-        >
-          <Trash2 className="size-3" /> {isGroup ? 'Delete group' : 'Delete'}
-        </ContextMenuItem>
+        {isGroup && (
+          <ContextMenuItem
+            className={menuItemCls}
+            variant="destructive"
+            onClick={() => onDeleteGroup(bot.id)}
+          >
+            <Trash2 className="size-3" /> Delete group chat
+          </ContextMenuItem>
+        )}
       </ContextMenuContent>
     </ContextMenu>
   )

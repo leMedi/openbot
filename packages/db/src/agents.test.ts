@@ -9,6 +9,41 @@ process.env.OPENBOT_DATA_DIR = testData
 
 const db = await import('./index')
 
+test('creates one explicit main conversation for an agent', async () => {
+  const created = await db.createAgent({ name: 'Main room owner' })
+
+  assert.equal(created.conversation.ownerAgentId, created.agent.id)
+  assert.equal(created.conversation.origin, db.MAIN_AGENT_CONVERSATION_ORIGIN)
+  await assert.rejects(
+    db.createConversation({
+      ownerAgentId: created.agent.id,
+      title: 'Second main conversation',
+      origin: db.MAIN_AGENT_CONVERSATION_ORIGIN,
+    }),
+  )
+  await assert.rejects(
+    db.deleteConversation(created.conversation.id),
+    /main conversation cannot be deleted/,
+  )
+})
+
+test('requires a bot when creating a group chat', async () => {
+  await assert.rejects(
+    db.createGroup({ name: 'Empty group chat' }),
+    /requires at least one agent/,
+  )
+
+  const { agent } = await db.createAgent({ name: 'Group member' })
+  const { group } = await db.createGroup({
+    name: 'Non-empty group chat',
+    members: [{ type: 'agent', agentId: agent.id }],
+  })
+  await assert.rejects(
+    db.setGroupMembers(group.id, []),
+    /requires at least one agent/,
+  )
+})
+
 test('deletes an agent, cascades owned data, and cleans external records', async () => {
   const target = await db.createAgent({ name: 'Delete me' })
   const survivor = await db.createAgent({ name: 'Keep me' })

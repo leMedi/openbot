@@ -70,6 +70,8 @@ export type Bot = {
 export type Conversation = {
   id: string
   botId: string
+  /** True only for the agent's user-facing main conversation. */
+  isMainAgentConversation: boolean
   title: string
   time: string
   unread?: boolean
