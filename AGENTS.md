@@ -1,9 +1,2 @@
-## Agent skills
-
-### Issue tracker
-
-Issues and specs are tracked in GitHub Issues for `leMedi/openbot`. See `docs/agents/issue-tracker.md`.
-
-### Domain docs
-
-This repository uses a single root context with system-wide ADRs. See `docs/agents/domain.md`.
+Do not update system prompt until you ask for permission
+Do not change tools input/output schema untill you ask for permission
