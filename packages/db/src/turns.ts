@@ -26,6 +26,10 @@ import {
 } from './json-schemas'
 import { appendConversationMessage } from './messages'
 import * as schema from './schema'
+import {
+  AGENT_ONBOARDING_TOOL_NAME,
+  agentOnboardingFollowUp,
+} from './agent-onboarding'
 
 // The documented lane priority: user > agent > background.
 const lanePriority = sql`CASE ${schema.turns.lane}
@@ -620,12 +624,14 @@ export async function respondToWaitingTurn(input: WaitingTurnResponseInput) {
       },
     })
     const now = Date.now()
+    const onboarding = waiting.originatingToolCall.name === AGENT_ONBOARDING_TOOL_NAME
     const [turn] = await tx
       .update(schema.turns)
       .set({
-        status: 'queued',
+        status: onboarding ? 'succeeded' : 'queued',
         waitingStateJson: nextState,
         startedAt: null,
+        ...(onboarding && { completedAt: now }),
         updatedAt: now,
       })
       .where(and(eq(schema.turns.id, input.turnId), eq(schema.turns.status, 'waiting')))
@@ -652,6 +658,33 @@ export async function respondToWaitingTurn(input: WaitingTurnResponseInput) {
       },
       tx,
     )
+    if (onboarding) {
+      const purpose = optionId
+        ? waiting.options.find((option) => option.id === optionId)?.label ?? text
+        : text
+      await tx
+        .update(schema.conversations)
+        .set({
+          purpose,
+          introductionPending: false,
+          updatedAt: now,
+        })
+        .where(eq(schema.conversations.id, turn.conversationId))
+      await appendConversationMessage({
+        conversationId: turn.conversationId,
+        kind: 'message',
+        role: 'assistant',
+        direction: 'outbound',
+        bodyText: agentOnboardingFollowUp(optionId),
+        payload: {
+          version: 1,
+          deliveryKind: 'send-message',
+          type: 'text',
+          toolCallId: `${input.toolCallId}-follow-up`,
+        },
+        turnId: turn.id,
+      }, tx)
+    }
     return { message, turn }
   })
 }

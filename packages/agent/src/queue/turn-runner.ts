@@ -693,6 +693,7 @@ async function executeTurn(turnId: string) {
               workspace,
               resumedText,
               hiddenWakePrompt,
+              onboardingPurpose: conversation.purpose,
               mcpToolCount: currentMcpRegistry.definitions.length,
               toolCapabilities: {
                 taskEnabled: builtInToolDefinitions.some(

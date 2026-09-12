@@ -81,6 +81,7 @@ export async function createAgent(
     if (!desktopEnabled) {
       return createAgentInTransaction(transaction, input, mcpAccountIds, {
         id: agentId,
+        seedOnboarding: true,
       })
     }
     const xDisplayNumber = Math.max(
@@ -90,6 +91,7 @@ export async function createAgent(
     const created = await createAgentInTransaction(transaction, input, mcpAccountIds, {
       id: agentId,
       xDisplayNumber,
+      seedOnboarding: true,
     })
     await startAgentWindow(xDisplayNumber, agentId)
     return created

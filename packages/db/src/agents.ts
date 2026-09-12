@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto'
 import { eq, inArray, max } from 'drizzle-orm'
 import { assertValidAvatarUpload, type AvatarUpload } from './avatars'
 import { db } from './client'
@@ -10,6 +11,12 @@ import {
 import { createId } from './ids'
 import { deletePiSessionDirectories } from './pi-sessions'
 import * as schema from './schema'
+import {
+  AGENT_ONBOARDING_COPY,
+  agentOnboardingToolCallId,
+  agentOnboardingWaitingState,
+} from './agent-onboarding'
+import { appendConversationMessage } from './messages'
 
 export type AgentProfileInput = {
   name: string
@@ -20,12 +27,41 @@ export type AgentProfileInput = {
   defaultModel?: string | null
   approvalMode?: string
   notifyOnUpdates?: boolean
-  hiddenFromSidebar?: boolean
 }
 
 export type AgentCreationOptions = {
   id?: string
   xDisplayNumber?: number
+  seedOnboarding?: boolean
+}
+
+const DEFAULT_AVATAR_COLORS = [
+  '#f2f2f2', '#b0783a', '#b3536e', '#c46b4a', '#5f9e63',
+  '#3f8f8a', '#5865c4', '#8a5fc4', '#9a9aa0',
+] as const
+const DEFAULT_AVATAR_SHAPES = [
+  'circle', 'squircle', 'pill', 'triangle', 'hexagon', 'cloud', 'drop',
+] as const
+
+async function allocateAvatar(
+  executor: DbExecutor,
+  requestedShape?: string,
+  requestedColor?: string,
+) {
+  const used = new Set(
+    (await executor
+      .select({ shape: schema.agents.avatarShape, color: schema.agents.avatarColor })
+      .from(schema.agents))
+      .map(({ shape, color }) => `${shape}:${color}`),
+  )
+  const shapes = requestedShape ? [requestedShape] : DEFAULT_AVATAR_SHAPES
+  const colors = requestedColor ? [requestedColor] : DEFAULT_AVATAR_COLORS
+  const all = shapes.flatMap((shape) =>
+    colors.map((color) => ({ shape, color })),
+  )
+  const available = all.filter(({ shape, color }) => !used.has(`${shape}:${color}`))
+  const choices = available.length > 0 ? available : all
+  return choices[randomInt(choices.length)]!
 }
 
 async function validateMcpAccountIds(executor: DbExecutor, accountIds: string[]) {
@@ -71,6 +107,9 @@ export async function createAgentInTransaction(
 ) {
   const now = Date.now()
   await validateMcpAccountIds(executor, mcpAccountIds)
+  const allocatedAvatar = input.avatarShape && input.avatarColor
+    ? undefined
+    : await allocateAvatar(executor, input.avatarShape, input.avatarColor)
   const [agent] = await executor
     .insert(schema.agents)
     .values({
@@ -78,13 +117,12 @@ export async function createAgentInTransaction(
       xDisplayNumber: options.xDisplayNumber,
       name: input.name,
       description: input.description ?? '',
-      avatarShape: input.avatarShape ?? 'squircle',
-      avatarColor: input.avatarColor ?? '#5865c4',
+      avatarShape: input.avatarShape ?? allocatedAvatar!.shape,
+      avatarColor: input.avatarColor ?? allocatedAvatar!.color,
       defaultMode: input.defaultMode ?? 'default',
       defaultModel: input.defaultModel ?? null,
       approvalMode: input.approvalMode ?? 'allowlist',
       notifyOnUpdates: input.notifyOnUpdates ?? true,
-      hiddenFromSidebar: input.hiddenFromSidebar ?? false,
       createdAt: now,
       updatedAt: now,
     })
@@ -96,10 +134,64 @@ export async function createAgentInTransaction(
       ownerAgentId: agent.id,
       title: agent.name,
       origin: MAIN_AGENT_CONVERSATION_ORIGIN,
+      introductionPending: options.seedOnboarding ?? false,
       createdAt: now,
       updatedAt: now,
     })
     .returning()
+  if (options.seedOnboarding) {
+    const waitingState = agentOnboardingWaitingState(agent.id)
+    const [onboardingTurn] = await executor
+      .insert(schema.turns)
+      .values({
+        id: createId('trn'),
+        conversationId: conversation.id,
+        targetAgentId: agent.id,
+        lane: 'user',
+        source: 'agent-onboarding',
+        status: 'waiting',
+        waitingStateJson: waitingState,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning()
+    await appendConversationMessage({
+      conversationId: conversation.id,
+      kind: 'message',
+      role: 'assistant',
+      direction: 'outbound',
+      bodyText: AGENT_ONBOARDING_COPY.greeting(agent.name),
+      payload: {
+        version: 1,
+        deliveryKind: 'send-message',
+        type: 'text',
+        toolCallId: `${agentOnboardingToolCallId(agent.id)}-greeting`,
+      },
+      turnId: onboardingTurn!.id,
+    }, executor)
+    await appendConversationMessage({
+      conversationId: conversation.id,
+      kind: 'message',
+      role: 'assistant',
+      direction: 'outbound',
+      bodyText: waitingState.prompt,
+      payload: {
+        version: 1,
+        deliveryKind: 'send-message',
+        type: 'widget',
+        toolCallId: waitingState.originatingToolCall.id,
+        widget: {
+          prompt: waitingState.prompt,
+          ...(waitingState.helpText && { helpText: waitingState.helpText }),
+          interactionKind: waitingState.interactionKind,
+          options: waitingState.options,
+          allowCustom: waitingState.allowCustom,
+          dismissOnMoveOn: waitingState.dismissOnMoveOn,
+        },
+      },
+      turnId: onboardingTurn!.id,
+    }, executor)
+  }
   if (mcpAccountIds.length > 0) {
     await executor.insert(schema.agentMcpAccounts).values(
       mcpAccountIds.map((accountId) => ({

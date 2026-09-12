@@ -1,0 +1,1 @@
+ALTER TABLE `profile` ADD `onboarding_completed` integer DEFAULT false NOT NULL;

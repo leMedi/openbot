@@ -58,9 +58,6 @@ export function BotDialog({
   const [description, setDescription] = useState(agent?.description ?? '')
   const [defaultModel, setDefaultModel] = useState(agent?.defaultModel ?? '')
   const [notifyOnUpdates, setNotifyOnUpdates] = useState(agent?.notifyOnUpdates ?? true)
-  const [hiddenFromSidebar, setHiddenFromSidebar] = useState(
-    agent?.hiddenFromSidebar ?? false,
-  )
   const [shape, setShape] = useState(
     () => AVATAR_SHAPES.find((s) => s.id === agent?.avatarShape) ?? AVATAR_SHAPES[1],
   )
@@ -121,7 +118,6 @@ export function BotDialog({
         avatarColor: color,
         defaultModel: defaultModel || null,
         notifyOnUpdates,
-        hiddenFromSidebar,
       }
       let saved: Agent
       let firstConversation: Conversation | null = null
@@ -358,15 +354,6 @@ export function BotDialog({
                 </span>
               </span>
               <Switch checked={notifyOnUpdates} onCheckedChange={setNotifyOnUpdates} />
-            </label>
-            <label className="flex cursor-pointer items-center gap-3">
-              <span className="min-w-0 flex-1">
-                <span className="block text-xs font-semibold">Hide from sidebar</span>
-                <span className="mt-0.5 block text-[11px] text-muted-foreground">
-                  Keep the bot running without showing it in navigation.
-                </span>
-              </span>
-              <Switch checked={hiddenFromSidebar} onCheckedChange={setHiddenFromSidebar} />
             </label>
           </div>
 

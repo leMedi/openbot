@@ -483,12 +483,14 @@ const METHOD_DESCRIPTIONS: Record<AuthType, string> = {
   oauth: 'Sign in with your browser to use your existing plan',
 }
 
-function ProvidersTab({
+export function ProvidersTab({
   initialConfiguration,
   onChanged,
+  showModelDefaults = true,
 }: {
   initialConfiguration: ProviderView
   onChanged: () => void
+  showModelDefaults?: boolean
 }) {
   const [configuration, setConfiguration] = useState(initialConfiguration)
   const [query, setQuery] = useState('')
@@ -668,7 +670,7 @@ function ProvidersTab({
 
   return (
     <div className="flex max-w-2xl flex-col gap-3.5">
-      <div className="flex items-center">
+      {showModelDefaults && <><div className="flex items-center">
         <h3 className="flex-1 text-sm font-semibold text-foreground/85">Model defaults</h3>
         <Button
           size="xs"
@@ -718,7 +720,8 @@ function ProvidersTab({
         </div>
       </div>
 
-      <h3 className="mt-3 text-sm font-semibold text-foreground/85">Connected providers</h3>
+      </>}
+      <h3 className={showModelDefaults ? "mt-3 text-sm font-semibold text-foreground/85" : "text-sm font-semibold text-foreground/85"}>Connected providers</h3>
       {connected.length > 0 ? (
         <div className="rounded-xl bg-card px-5">
           {connected.map((provider) => (

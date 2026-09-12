@@ -1,7 +1,6 @@
 import { useRef, useState } from 'react'
 import {
   ArrowUp,
-  BotIcon,
   CheckCircle2,
   Copy,
   Eraser,
@@ -47,8 +46,7 @@ type SidebarProps = {
   bots: Bot[]
   activeId: string
   onSelect: (id: string) => void
-  onNewBot: () => void
-  onNewGroup: () => void
+  onNewConversation: () => void
   onEditGroup: (groupId: string) => void
   onDeleteGroup: (groupId: string) => void
   onOpenPlugins: () => void
@@ -66,8 +64,7 @@ export function Sidebar({
   bots,
   activeId,
   onSelect,
-  onNewBot,
-  onNewGroup,
+  onNewConversation,
   onEditGroup,
   onDeleteGroup,
   onOpenPlugins,
@@ -109,24 +106,15 @@ export function Sidebar({
   const rest = filtered.filter((c) => !c.pinned)
   const ordered = [...pinned, ...rest]
 
-  const plusMenu = (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button variant="ghost" size={mobile ? 'icon' : 'icon-sm'} aria-label="New…">
-            <Plus className={mobile ? 'size-5' : 'size-3.5'} />
-          </Button>
-        }
-      />
-      <DropdownMenuContent align={collapsed && !mobile ? 'start' : 'end'} className="w-44">
-        <DropdownMenuItem onClick={onNewBot}>
-          <BotIcon /> New Bot
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={onNewGroup}>
-          <Users /> Create Group Chat
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+  const plusButton = (
+    <Button
+      variant="ghost"
+      size={mobile ? 'icon' : 'icon-sm'}
+      aria-label="New conversation"
+      onClick={onNewConversation}
+    >
+      <Plus className={mobile ? 'size-5' : 'size-3.5'} />
+    </Button>
   )
 
   const rows = ordered.map((c) => (
@@ -170,7 +158,7 @@ export function Sidebar({
             </DropdownMenuContent>
           </DropdownMenu>
           <span className="flex-1 text-center text-base font-semibold">Messages</span>
-          {plusMenu}
+          {plusButton}
         </div>
         <div className="px-3 pb-2">
           <div className="relative">
@@ -215,7 +203,7 @@ export function Sidebar({
 
       {collapsed ? (
         <>
-          <div className="flex justify-center pt-2.5 pb-1">{plusMenu}</div>
+          <div className="flex justify-center pt-2.5 pb-1">{plusButton}</div>
           <div className="flex flex-1 flex-col items-center gap-1 overflow-y-auto py-1">
             {ordered.map((c) => {
               const bot = botIn(bots, c.botId)
@@ -271,7 +259,7 @@ export function Sidebar({
                 className="h-7.5 bg-background/60 pl-7 text-sm dark:bg-background/60"
               />
             </div>
-            {plusMenu}
+            {plusButton}
           </div>
 
           <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-2">

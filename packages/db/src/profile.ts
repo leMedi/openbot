@@ -30,3 +30,14 @@ export async function updateProfile(input: ProfileUpdate): Promise<Profile> {
   if (!updated) throw new Error('User profile is missing')
   return updated
 }
+
+/** Permanently completes the first-run gate for this installation. */
+export async function completeProfileOnboarding(): Promise<Profile> {
+  const [updated] = await db
+    .update(profile)
+    .set({ onboardingCompleted: true, updatedAt: Date.now() })
+    .where(eq(profile.id, PROFILE_ID))
+    .returning()
+  if (!updated) throw new Error('User profile is missing')
+  return updated
+}

@@ -28,7 +28,6 @@ const agentProfileFields = z.object({
   defaultModel: z.string().trim().min(1).max(512).nullable(),
   approvalMode: z.string().trim().min(1).max(40),
   notifyOnUpdates: z.boolean(),
-  hiddenFromSidebar: z.boolean(),
 })
 
 const agentCreateInput = agentProfileFields.partial().extend({

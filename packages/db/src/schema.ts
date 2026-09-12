@@ -42,6 +42,9 @@ export const profile = sqliteTable(
     lastName: text('last_name').notNull().default(''),
     about: text('about').notNull().default(''),
     timezone: text('timezone').notNull().default(''),
+    onboardingCompleted: integer('onboarding_completed', { mode: 'boolean' })
+      .notNull()
+      .default(false),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
   },
@@ -75,9 +78,6 @@ export const agents = sqliteTable('agents', {
   notifyOnUpdates: integer('notify_on_updates', { mode: 'boolean' })
     .notNull()
     .default(true),
-  hiddenFromSidebar: integer('hidden_from_sidebar', { mode: 'boolean' })
-    .notNull()
-    .default(false),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
 }, (table) => [

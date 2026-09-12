@@ -27,6 +27,46 @@ test('creates one explicit main conversation for an agent', async () => {
   )
 })
 
+test('seeds and resolves the scripted agent onboarding conversation', async () => {
+  const created = await db.db.transaction((tx) =>
+    db.createAgentInTransaction(tx, { name: 'Onboarding agent' }, [], {
+      seedOnboarding: true,
+    }),
+  )
+  assert.equal(created.conversation.introductionPending, true)
+
+  const messages = await db.listConversationMessages(created.conversation.id)
+  assert.equal(messages.length, 2)
+  assert.equal(messages[0]?.bodyText, 'Hi — I’m Onboarding agent. Let’s set up how I can help you.')
+  const turn = await db.findUnsettledForegroundTurn(created.conversation.id)
+  assert.equal(turn?.status, 'waiting')
+  assert.equal(turn?.waitingStateJson?.originatingToolCall.name, db.AGENT_ONBOARDING_TOOL_NAME)
+
+  const resolved = await db.respondToWaitingTurn({
+    turnId: turn!.id,
+    text: 'Building & coding',
+    optionId: 'building-coding',
+    toolCallId: turn!.waitingStateJson!.originatingToolCall.id,
+  })
+  assert.equal(resolved.turn.status, 'succeeded')
+  const conversation = await db.getConversation(created.conversation.id)
+  assert.equal(conversation?.introductionPending, false)
+  assert.equal(conversation?.purpose, 'Building & coding')
+  assert.match(
+    (await db.listConversationMessages(created.conversation.id)).at(-1)?.bodyText ?? '',
+    /What are you building/,
+  )
+})
+
+test('allocates unused avatar combinations when creation omits them', async () => {
+  const first = await db.createAgent({ name: 'Random avatar one' })
+  const second = await db.createAgent({ name: 'Random avatar two' })
+  assert.notEqual(
+    `${first.agent.avatarShape}:${first.agent.avatarColor}`,
+    `${second.agent.avatarShape}:${second.agent.avatarColor}`,
+  )
+})
+
 test('requires a bot when creating a group chat', async () => {
   await assert.rejects(
     db.createGroup({ name: 'Empty group chat' }),

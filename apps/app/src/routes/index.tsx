@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createFileRoute, useRouter } from '@tanstack/react-router'
 import type { Agent, ConversationMessage, Group } from '@openbot/db'
-import { BotIcon, CalendarClock, MessageCircle, PanelRight, Users } from 'lucide-react'
+import { CalendarClock, MessageCircle, PanelRight } from 'lucide-react'
 import {
   activityFromMessages,
   authorForMessage,
@@ -17,6 +17,8 @@ import { DeleteGroupDialog, GroupDialog } from '@/components/openbot/group-dialo
 import { botFromGroup, groupMemberIds } from '@/components/openbot/groups'
 import { Inspector } from '@/components/openbot/inspector'
 import { MobileStack } from '@/components/openbot/mobile-stack'
+import { NewConversation } from '@/components/openbot/new-conversation'
+import { AppOnboarding } from '@/components/openbot/app-onboarding'
 import {
   ClearConversationDialog,
   RenameConversationDialog,
@@ -27,9 +29,9 @@ import { SettingsDialog } from '@/components/openbot/settings-dialog'
 import { Sidebar } from '@/components/openbot/sidebar'
 import { Button } from '@/components/ui/button'
 import { useIsMobile } from '@/hooks/use-is-mobile'
-import { getAgents } from '@/server/agents'
+import { addAgent, getAgents } from '@/server/agents'
 import { getAiProviders } from '@/server/providers'
-import { getGroups } from '@/server/groups'
+import { addGroup, getGroups } from '@/server/groups'
 import { getMcpConfiguration } from '@/server/mcp'
 import { getUserProfile } from '@/server/profile'
 import {
@@ -100,9 +102,16 @@ function OpenBot() {
   // is pushed on top and popped with the back chevron or an edge swipe.
   const [mobileDetail, setMobileDetail] = useState(false)
   const [inspectorOpen, setInspectorOpen] = useState(true)
+  const [newConversationOpen, setNewConversationOpen] = useState(false)
 
   function openConversation(id: string) {
+    setNewConversationOpen(false)
     setActiveId(id)
+    setMobileDetail(true)
+  }
+
+  function openNewConversation() {
+    setNewConversationOpen(true)
     setMobileDetail(true)
   }
 
@@ -317,15 +326,31 @@ function OpenBot() {
     if (!next) localStorage.removeItem(LAST_CONVERSATION_KEY)
   }
 
+  async function createAgentFromConversation(name: string) {
+    const created = await addAgent({ data: { name } })
+    await router.invalidate()
+    openConversation(created.conversation.id)
+  }
+
+  async function createGroupFromConversation(agentIds: string[], name: string) {
+    const created = await addGroup({
+      data: {
+        name,
+        members: agentIds.map((agentId) => ({ type: 'agent' as const, agentId })),
+      },
+    })
+    await router.invalidate()
+    openConversation(created.conversation.id)
+  }
+
   const sidebar = (
     <Sidebar
       mobile={isMobile}
       conversations={conversations}
       bots={bots}
-      activeId={active?.id ?? ''}
+      activeId={newConversationOpen ? '' : active?.id ?? ''}
       onSelect={selectConversation}
-      onNewBot={() => setBotDialog({ open: true, agent: null })}
-      onNewGroup={() => setGroupDialog({ open: true, group: null })}
+      onNewConversation={openNewConversation}
       onEditGroup={openEditGroup}
       onDeleteGroup={(groupId) =>
         setDeleteGroupTarget(groups.find((g) => g.id === groupId) ?? null)
@@ -339,8 +364,19 @@ function OpenBot() {
     />
   )
 
-  const pane =
-    active && bot && !transcriptReady ? (
+  const pane = newConversationOpen ? (
+    <NewConversation
+      agents={agentBots}
+      firstName={profile.firstName}
+      mobile={isMobile}
+      onBack={() => {
+        setNewConversationOpen(false)
+        setMobileDetail(false)
+      }}
+      onCreateAgent={createAgentFromConversation}
+      onCreateGroup={createGroupFromConversation}
+    />
+  ) : active && bot && !transcriptReady ? (
       // The Conversation component seeds its entry state from
       // initialEntries at mount, so wait for the persisted transcript.
       <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">
@@ -483,15 +519,7 @@ function OpenBot() {
                 : 'Create a group chat and add one or more bots.'}
             </p>
           </div>
-          {agents.length === 0 ? (
-            <Button size="sm" onClick={() => setBotDialog({ open: true, agent: null })}>
-              <BotIcon className="size-3.5" /> New Bot
-            </Button>
-          ) : (
-            <Button size="sm" onClick={() => setGroupDialog({ open: true, group: null })}>
-              <Users className="size-3.5" /> Create Group Chat
-            </Button>
-          )}
+          <Button size="sm" onClick={openNewConversation}>New conversation</Button>
         </div>
       </div>
     )
@@ -500,8 +528,11 @@ function OpenBot() {
     <div className="flex h-svh overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
       {isMobile ? (
         <MobileStack
-          showDetail={mobileDetail && !!active}
-          onBack={() => setMobileDetail(false)}
+          showDetail={mobileDetail && (!!active || newConversationOpen)}
+          onBack={() => {
+            setNewConversationOpen(false)
+            setMobileDetail(false)
+          }}
           list={sidebar}
           detail={pane}
         />
@@ -509,7 +540,7 @@ function OpenBot() {
         <>
           {sidebar}
           {pane}
-          {inspectorOpen && active && bot && mainAgent && (
+          {!newConversationOpen && inspectorOpen && active && bot && mainAgent && (
             <Inspector
               conversation={active}
               bot={bot}
@@ -532,6 +563,13 @@ function OpenBot() {
         accounts={mcp.accounts}
         onChanged={() => router.invalidate()}
       />
+      {!profile.onboardingCompleted && (
+        <AppOnboarding
+          profile={profile}
+          providerConfiguration={providers}
+          onComplete={() => router.invalidate()}
+        />
+      )}
       {mainAgent && active && (
         <RoutinesDialog
           open={routinesOpen}

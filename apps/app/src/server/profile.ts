@@ -1,4 +1,5 @@
-import { getProfile, updateProfile } from '@openbot/db'
+import { completeProfileOnboarding, getProfile, updateProfile } from '@openbot/db'
+import { getProviderConfiguration } from '@openbot/agent'
 import { createServerFn } from '@tanstack/react-start'
 import * as z from 'zod'
 
@@ -25,3 +26,15 @@ export const getUserProfile = createServerFn({ method: 'GET' }).handler(() =>
 export const saveUserProfile = createServerFn({ method: 'POST' })
   .validator((input: unknown) => profileInput.parse(input))
   .handler(({ data }) => updateProfile(data))
+
+export const completeAppOnboarding = createServerFn({ method: 'POST' }).handler(async () => {
+  const [profile, providers] = await Promise.all([
+    getProfile(),
+    getProviderConfiguration(),
+  ])
+  if (!profile.firstName.trim()) throw new Error('Enter your first name to continue')
+  if (!providers.providers.some((provider) => provider.connected)) {
+    throw new Error('Connect an LLM provider to continue')
+  }
+  return completeProfileOnboarding()
+})
