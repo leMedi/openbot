@@ -819,7 +819,10 @@ function HeaderAgents({ agents }: { agents: Author[] }) {
             color={member.color}
             shape={member.shape}
             src={member.avatarUrl}
-            className="size-5.5 rounded-[7px] text-[10px]"
+            className={cn(
+              'rounded-[7px] text-[10px]',
+              member.shape && !member.avatarUrl ? 'size-6.5' : 'size-5.5',
+            )}
           />
         </span>
       ))}
