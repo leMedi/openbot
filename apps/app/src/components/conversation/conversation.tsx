@@ -481,23 +481,13 @@ export function Conversation({
 
   function send(draft: Draft, toThread?: string) {
     // Threads are not persisted yet; thread sends stay client-local.
-    if (!toThread && waiting && onRespondToTurn) {
+    if (!toThread && waiting && onSendMessage) {
       const widgetEntryId = widgetEntryIdFor(waiting.state.originatingToolCall.id)
-      if (waiting.state.allowCustom) {
-        if (widgetEntryId) {
-          void respondToWidget(widgetEntryId, {
-            optionId: null,
-            text: draft.prompt,
-            dismissed: false,
-          })
-        }
-      } else if (waiting.state.dismissOnMoveOn) {
-        if (widgetEntryId) {
-          patchWidget(widgetEntryId, { status: 'dismissed', dismissReason: 'moveOn' })
-        }
-        setWaiting(null)
-        void sendToServer(draft)
+      if (widgetEntryId && waiting.state.dismissOnMoveOn) {
+        patchWidget(widgetEntryId, { status: 'dismissed', dismissReason: 'moveOn' })
       }
+      setWaiting(null)
+      void sendToServer(draft)
       return
     }
     if (!toThread && onSendMessage) {
@@ -720,19 +710,6 @@ export function Conversation({
         {readOnly ? (
           <div className="mx-4 mb-4 flex items-center justify-center rounded-xl border border-dashed px-3 py-3 text-xs text-muted-foreground/70">
             This conversation is read-only.
-          </div>
-        ) : waiting && !waiting.state.allowCustom && !waiting.state.dismissOnMoveOn ? (
-          <div className="mx-4 mb-4 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-            Select an option above to continue.
-            {onCancelTurn && (
-              <button
-                type="button"
-                onClick={() => void cancelTurn(waiting.turnId)}
-                className="font-medium text-info hover:opacity-80"
-              >
-                Cancel the turn
-              </button>
-            )}
           </div>
         ) : (
           <Composer
