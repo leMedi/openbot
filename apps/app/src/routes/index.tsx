@@ -158,6 +158,18 @@ function OpenBot() {
     () => conversationRows.map(conversationFromRow),
     [conversationRows],
   )
+  const sidebarGroupAvatars = useMemo(
+    () => Object.fromEntries(groups.map((group) => [
+      group.id,
+      [
+        { ...YOU, name: profile.firstName || YOU.name, shape: '' },
+        ...groupMemberIds(group)
+          .map((id) => agentBots.find((agent) => agent.id === id))
+          .filter((agent): agent is Bot => !!agent),
+      ],
+    ])),
+    [agentBots, groups, profile.firstName],
+  )
 
   // Restore the last selected conversation after mount; localStorage is
   // unavailable during server rendering.
@@ -374,6 +386,7 @@ function OpenBot() {
       mobile={isMobile}
       conversations={conversations}
       bots={bots}
+      groupAvatars={sidebarGroupAvatars}
       activeId={newConversationOpen ? '' : active?.id ?? ''}
       onSelect={selectConversation}
       onNewConversation={openNewConversation}

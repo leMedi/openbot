@@ -33,6 +33,8 @@ import { cn } from '@/lib/utils'
 import { BotAvatar } from './bot-avatar'
 import { botIn, type Bot, type Conversation } from './data'
 
+type SidebarAvatar = Pick<Bot, 'id' | 'name' | 'color' | 'shape' | 'avatarUrl'>
+
 // Drag the right border to resize; below SNAP_AT it snaps to the
 // avatar-only rail (COLLAPSED_W), otherwise clamps to [MIN_W, MAX_W].
 const COLLAPSED_W = 64
@@ -44,6 +46,7 @@ const DEFAULT_W = 256
 type SidebarProps = {
   conversations: Conversation[]
   bots: Bot[]
+  groupAvatars: Record<string, SidebarAvatar[]>
   activeId: string
   onSelect: (id: string) => void
   onNewConversation: () => void
@@ -62,6 +65,7 @@ type SidebarProps = {
 export function Sidebar({
   conversations,
   bots,
+  groupAvatars,
   activeId,
   onSelect,
   onNewConversation,
@@ -122,6 +126,7 @@ export function Sidebar({
       key={c.id}
       conversation={c}
       bot={botIn(bots, c.botId)}
+      groupAvatars={groupAvatars[c.botId]}
       active={!mobile && c.id === activeId}
       onSelect={() => onSelect(c.id)}
       onEditGroup={onEditGroup}
@@ -218,7 +223,7 @@ export function Sidebar({
                     c.id === activeId ? 'bg-primary/25' : 'hover:bg-muted',
                   )}
                 >
-                  <BotAvatar name={bot.name} color={bot.color} shape={bot.shape} src={bot.avatarUrl} />
+                  <SidebarConversationAvatar bot={bot} groupAvatars={groupAvatars[bot.id]} />
                   {c.unread && (
                     <span className="absolute top-1 right-1 size-1.5 rounded-full bg-info" />
                   )}
@@ -313,6 +318,7 @@ const menuItemCls = 'gap-2 px-2 py-1.5 text-[12.5px]'
 function ConversationRow({
   conversation,
   bot,
+  groupAvatars,
   active,
   onSelect,
   onEditGroup,
@@ -323,6 +329,7 @@ function ConversationRow({
 }: {
   conversation: Conversation
   bot: Bot
+  groupAvatars?: SidebarAvatar[]
   active: boolean
   onSelect: () => void
   onEditGroup: (groupId: string) => void
@@ -346,7 +353,7 @@ function ConversationRow({
               active ? 'bg-primary text-white' : 'hover:bg-muted',
             )}
           >
-            <BotAvatar name={bot.name} color={bot.color} shape={bot.shape} src={bot.avatarUrl} />
+            <SidebarConversationAvatar bot={bot} groupAvatars={groupAvatars} />
             <span className="min-w-0 flex-1">
               <span className="flex items-baseline gap-2">
                 <span className="flex-1 truncate text-sm font-medium">
@@ -427,5 +434,41 @@ function ConversationRow({
         )}
       </ContextMenuContent>
     </ContextMenu>
+  )
+}
+
+function SidebarConversationAvatar({
+  bot,
+  groupAvatars,
+}: {
+  bot: Bot
+  groupAvatars?: SidebarAvatar[]
+}) {
+  if (bot.kind !== 'group' || !groupAvatars?.length) {
+    return <BotAvatar name={bot.name} color={bot.color} shape={bot.shape} src={bot.avatarUrl} />
+  }
+
+  const shown = groupAvatars.slice(0, 3)
+  const extra = groupAvatars.length - shown.length
+  return (
+    <div className="flex shrink-0 items-center" aria-label={groupAvatars.map((avatar) => avatar.name).join(', ')}>
+      {shown.map((avatar, index) => (
+        <span key={avatar.id} title={avatar.name} className={cn(index > 0 && '-ml-2')}>
+          <BotAvatar
+            name={avatar.name}
+            color={avatar.color}
+            shape={avatar.shape}
+            src={avatar.avatarUrl}
+            className={cn(
+              'text-[9px]',
+              avatar.shape && !avatar.avatarUrl ? 'size-6' : 'size-5',
+            )}
+          />
+        </span>
+      ))}
+      {extra > 0 && (
+        <span className="-ml-1 text-[9px] font-semibold text-muted-foreground">+{extra}</span>
+      )}
+    </div>
   )
 }
