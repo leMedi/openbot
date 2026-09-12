@@ -52,6 +52,8 @@ export type ConversationProps = {
   title?: string
   /** Group members; when present the composed group avatar is shown. */
   members?: Author[]
+  /** Avatars rendered immediately before the conversation title. */
+  headerAvatars?: Author[]
   initialEntries: Entry[]
   activityTabs: ActivityTab[]
   onEditAgent?: () => void
@@ -104,6 +106,7 @@ export function Conversation({
   mentionAgents,
   title,
   members,
+  headerAvatars,
   initialEntries,
   activityTabs,
   onEditAgent,
@@ -604,18 +607,7 @@ export function Conversation({
             <ChevronLeft className="size-6" />
           </Button>
         )}
-        {(inThreadView || onBack) && (
-          <span className={cn('relative', working && 'animate-pulse')}>
-            <BotAvatar
-              name={agent.name}
-              color={agent.color}
-              shape={agent.shape}
-              src={agent.avatarUrl}
-              className="size-5.5 rounded-[7px] text-[10px]"
-            />
-            {working && <span className="absolute -inset-0.5 rounded-lg border border-primary/60" />}
-          </span>
-        )}
+        <HeaderAgents agents={headerAvatars ?? [agent]} />
         {inThreadView ? (
           <>
             <button
@@ -669,7 +661,6 @@ export function Conversation({
         <span className="flex-1" />
         {!inThreadView && !onBack && (
           <>
-            <HeaderAgents agents={members && members.length > 0 ? members : [agent]} />
             {onEditAgent && (
               <Button
                 variant="ghost"
@@ -815,7 +806,7 @@ function HeaderTitle({
   )
 }
 
-/** Overlapping avatars of the agents in this conversation (right side of the header). */
+/** Slack-style overlapping conversation avatars. */
 function HeaderAgents({ agents }: { agents: Author[] }) {
   const shown = agents.slice(0, 4)
   const extra = agents.length - shown.length

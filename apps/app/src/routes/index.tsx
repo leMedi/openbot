@@ -19,6 +19,8 @@ import { Inspector } from '@/components/openbot/inspector'
 import { MobileStack } from '@/components/openbot/mobile-stack'
 import { NewConversation } from '@/components/openbot/new-conversation'
 import { AppOnboarding } from '@/components/openbot/app-onboarding'
+import { GroupInspector, MobileGroupMembers } from '@/components/openbot/group-inspector'
+import { YOU } from '@/components/conversation/data'
 import {
   ClearConversationDialog,
   RenameConversationDialog,
@@ -103,9 +105,11 @@ function OpenBot() {
   const [mobileDetail, setMobileDetail] = useState(false)
   const [inspectorOpen, setInspectorOpen] = useState(true)
   const [newConversationOpen, setNewConversationOpen] = useState(false)
+  const [mobileGroupMembersOpen, setMobileGroupMembersOpen] = useState(false)
 
   function openConversation(id: string) {
     setNewConversationOpen(false)
+    setMobileGroupMembersOpen(false)
     setActiveId(id)
     setMobileDetail(true)
   }
@@ -215,6 +219,28 @@ function OpenBot() {
       .filter((b): b is Bot => !!b)
       .map((b) => authorFromBot(b, 'member'))
   }, [activeGroup, agentBots])
+  const groupHeaderAvatars = useMemo(() => {
+    if (!activeGroup) return undefined
+    return [
+      { ...YOU, name: profile.firstName || YOU.name },
+      ...(memberAuthors ?? []),
+    ]
+  }, [activeGroup, memberAuthors, profile.firstName])
+  const activeGroupMembers = useMemo(
+    () => activeGroup
+      ? groupMemberIds(activeGroup)
+          .map((id) => agentBots.find((agent) => agent.id === id))
+          .filter((agent): agent is Bot => !!agent)
+      : [],
+    [activeGroup, agentBots],
+  )
+
+  function openAgentMainConversation(agentId: string) {
+    const conversation = conversationRows.find(
+      (row) => row.ownerAgentId === agentId && row.origin === 'agent-main',
+    )
+    if (conversation) void selectConversation(conversation.id)
+  }
   const transcriptAuthorsById = useMemo(() => {
     const authors = new Map(
       agentBots.map((agentBot) => [agentBot.id, authorFromBot(agentBot)]),
@@ -364,7 +390,20 @@ function OpenBot() {
     />
   )
 
-  const pane = newConversationOpen ? (
+  const groupMembersProps = activeGroup ? {
+    group: activeGroup,
+    members: activeGroupMembers,
+    agents: agentBots,
+    onOpenMember: openAgentMainConversation,
+    onChanged: () => router.invalidate(),
+  } : null
+
+  const pane = mobileGroupMembersOpen && groupMembersProps ? (
+    <MobileGroupMembers
+      {...groupMembersProps}
+      onBack={() => setMobileGroupMembersOpen(false)}
+    />
+  ) : newConversationOpen ? (
     <NewConversation
       agents={agentBots}
       firstName={profile.firstName}
@@ -390,6 +429,7 @@ function OpenBot() {
         mentionAgents={agents}
         title={active.title}
         members={memberAuthors}
+        headerAvatars={groupHeaderAvatars}
         resolveAuthor={(message) =>
           authorForMessage(message, authorFromBot(bot), transcriptAuthorsById)
         }
@@ -494,12 +534,21 @@ function OpenBot() {
               >
                 <CalendarClock className="size-4" />
               </Button>
+            ) : activeGroup ? (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Manage group members"
+                onClick={() => setMobileGroupMembersOpen(true)}
+              >
+                <PanelRight className="size-4" />
+              </Button>
             ) : undefined
-          ) : mainAgent ? (
+          ) : mainAgent || activeGroup ? (
             <Button
               variant="ghost"
               size="icon-sm"
-              aria-label="Toggle inspector"
+              aria-label={activeGroup ? 'Toggle group members' : 'Toggle inspector'}
               onClick={() => setInspectorOpen((v) => !v)}
             >
               <PanelRight className="size-4" />
@@ -552,6 +601,9 @@ function OpenBot() {
               mcpAccounts={mcp.accounts}
               mcpGrants={mcp.grants}
             />
+          )}
+          {!newConversationOpen && inspectorOpen && activeGroup && groupMembersProps && (
+            <GroupInspector {...groupMembersProps} />
           )}
         </>
       )}
