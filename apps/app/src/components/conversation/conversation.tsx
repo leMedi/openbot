@@ -819,12 +819,12 @@ function HeaderAgents({ agents }: { agents: Author[] }) {
             color={member.color}
             shape={member.shape}
             src={member.avatarUrl}
-            className={cn('size-5.5 rounded-[7px] text-[10px]', index > 0 && 'border-[1.5px] border-panel')}
+            className="size-5.5 rounded-[7px] text-[10px]"
           />
         </span>
       ))}
       {extra > 0 && (
-        <span className="-ml-1.5 flex size-5.5 items-center justify-center rounded-[7px] border-[1.5px] border-panel bg-muted text-[9px] font-semibold text-muted-foreground">
+        <span className="-ml-1.5 flex size-5.5 items-center justify-center text-[9px] font-semibold text-muted-foreground">
           +{extra}
         </span>
       )}
