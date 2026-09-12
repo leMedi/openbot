@@ -38,6 +38,10 @@ function ChoiceCard({
   const active = pending && !!interactive && !!onRespond
   const dismissed = widget.status === 'dismissed'
   const selectedId = widget.response?.optionId ?? null
+  const selectedOption = widget.options.find((option) => option.id === selectedId)
+  const visibleOptions = widget.status === 'resolved'
+    ? selectedOption ? [selectedOption] : []
+    : widget.options
 
   const pick = (option: WidgetOption) =>
     onRespond?.({ optionId: option.id, text: option.label, dismissed: false })
@@ -50,12 +54,12 @@ function ChoiceCard({
 
   return (
     <div className="flex w-full min-w-56 flex-col gap-1.5">
-      {widget.helpText && (
+      {pending && widget.helpText && (
         <p className={cn('text-[11px] text-muted-foreground', !pending && 'opacity-55')}>
           {widget.helpText}
         </p>
       )}
-      {widget.options.map((option) => {
+      {visibleOptions.map((option) => {
         const selected = selectedId === option.id
         const style = pending ? option.style : undefined
         return (
@@ -96,6 +100,16 @@ function ChoiceCard({
           </button>
         )
       })}
+      {widget.status === 'resolved' && widget.response && !selectedOption && (
+        <div className="flex w-full items-center gap-2.5 rounded-lg border border-primary/65 bg-primary/15 px-3 py-2 text-left">
+          <span className="flex size-[15px] shrink-0 items-center justify-center rounded-full border-[1.5px] border-primary bg-primary">
+            <Check className="size-2.5 text-white" strokeWidth={3.5} />
+          </span>
+          <span className="min-w-0 flex-1 text-[12.5px] font-medium whitespace-pre-wrap">
+            {widget.response.text}
+          </span>
+        </div>
+      )}
       {active && widget.allowCustom && (
         <div className="flex gap-1.5">
           <input
@@ -135,24 +149,13 @@ function ChoiceCard({
           )}
         </div>
       )}
-      <Resolution widget={widget} />
+      <Dismissal widget={widget} />
     </div>
   )
 }
 
-/** Green-dot answer line for resolved widgets, muted line for dismissed. */
-function Resolution({ widget }: { widget: WidgetView }) {
-  if (widget.status === 'resolved' && widget.response) {
-    const picked = widget.options.find((option) => option.id === widget.response?.optionId)
-    return (
-      <div className="mt-0.5 flex items-center gap-1.5">
-        <span className="size-1.5 rounded-full bg-success" />
-        <span className="text-[11px] font-medium text-success">
-          {picked ? `You picked: ${picked.label}` : `You answered: ${widget.response.text}`}
-        </span>
-      </div>
-    )
-  }
+/** Muted resolution line for dismissed widgets. */
+function Dismissal({ widget }: { widget: WidgetView }) {
   if (widget.status === 'dismissed') {
     return (
       <div className="mt-0.5 text-[11px] font-medium text-muted-foreground">

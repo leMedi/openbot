@@ -211,11 +211,15 @@ export function MessageRow({
         {streamingEmpty ? (
           <TypingDots />
         ) : (
-          (entry.text || entry.markdown) && (
+          (entry.text || entry.markdown || entry.widget) && (
             <div
               className={cn(
                 'w-fit max-w-full rounded-xl px-3.5 py-2.5',
-                isUser ? 'bg-primary text-white' : 'bg-card',
+                isUser
+                  ? 'bg-primary text-white'
+                  : entry.widget
+                    ? 'border bg-card'
+                    : 'bg-card',
               )}
             >
               {entry.text && (
@@ -227,6 +231,15 @@ export function MessageRow({
                   images={entry.images}
                   channel={entry.channel}
                 />
+              )}
+              {entry.widget && (
+                <div className={cn((entry.text || entry.markdown) && 'mt-2.5')}>
+                  <ActionCard
+                    widget={entry.widget}
+                    interactive={!readOnly && (handlers.isWidgetActive?.(entry) ?? false)}
+                    onRespond={(response) => handlers.onWidgetRespond?.(entry.id, response)}
+                  />
+                </div>
               )}
             </div>
           )
@@ -260,14 +273,6 @@ export function MessageRow({
               )
             })}
           </div>
-        )}
-
-        {entry.widget && (
-          <ActionCard
-            widget={entry.widget}
-            interactive={!readOnly && (handlers.isWidgetActive?.(entry) ?? false)}
-            onRespond={(response) => handlers.onWidgetRespond?.(entry.id, response)}
-          />
         )}
 
         {entry.cards && entry.cards.length > 0 && (
