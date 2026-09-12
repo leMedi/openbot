@@ -88,6 +88,7 @@ import {
 } from '../prompt/assembly'
 import type { ConversationPromptContext } from '../prompt/system'
 import { parseOrchestratorAgentIds } from '../orchestration'
+import { openCodeSessionHeaders } from '../provider-session'
 import {
   agentToolDefinitions,
   backgroundToolDefinitions,
@@ -1253,7 +1254,11 @@ async function executeGroupTurn(turnId: string) {
           timestamp: Date.now(),
         }],
       },
-      { maxTokens: 512, signal: active.controller.signal },
+      {
+        maxTokens: 512,
+        signal: active.controller.signal,
+        headers: openCodeSessionHeaders(model, claimed.conversationId),
+      },
     )
     if (response.stopReason === 'error' || response.stopReason === 'aborted') {
       throw new Error(response.errorMessage ?? 'The group orchestrator model failed')
