@@ -648,10 +648,12 @@ async function executeTurn(turnId: string) {
           : computerApproval
           ? '[The user approved the exact pending Computer action. Call Computer again with unchanged arguments. The approval applies only while the Remote Desktop state is unchanged.]'
           : '[The user denied the pending Computer action. Do not retry it unless they explicitly ask for a new action.]'
-        : pluginApproval?.approved
-          ? approvedPluginHasAccount
-            ? `[The user approved ${pluginApproval.pluginId}. Access is enabled and its MCP tools are available now. Continue the user's original request using them.]`
-            : `[The user approved installing ${pluginApproval.pluginId}, but it has no connected account yet. Explain that they must connect an account in Plugins before you can continue the original request.]`
+        : pluginApproval
+          ? pluginApproval.approved
+            ? approvedPluginHasAccount
+              ? `[The user approved ${pluginApproval.pluginId}. Access is enabled and its MCP tools are available now. Continue the user's original request using them.]`
+              : `[The user approved installing ${pluginApproval.pluginId}, but it has no connected account yet. Explain that they must connect an account in Plugins before you can continue the original request.]`
+            : '[User skipped.]'
           : waitingState.response.dismissed
             ? `[The user moved on without answering the pending question.]\n\n${waitingState.response.text}`
             : waitingState.response.text

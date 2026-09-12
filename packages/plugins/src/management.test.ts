@@ -117,6 +117,7 @@ describe('MCP management tools', () => {
     expect(waiting?.options.find((option) => option.id === 'approve')?.label).toBe(
       'Install Linear',
     )
+    expect(waiting?.options.find((option) => option.id === 'deny')?.label).toBe('Skip')
   })
 
   it('installs and atomically grants an existing account after approval', async () => {

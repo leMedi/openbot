@@ -208,7 +208,7 @@ function PluginConnectCard({
             <button
               type="button"
               onClick={() =>
-                onRespond?.({ optionId: decline.id, text: decline.label, dismissed: false })
+                onRespond?.({ optionId: decline.id, text: 'User skipped.', dismissed: false })
               }
               className="px-1.5 py-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground"
             >
@@ -241,7 +241,7 @@ function PluginConnectCard({
               connected ? 'text-success' : 'text-muted-foreground',
             )}
           >
-            {connected ? 'Connected' : widget.status === 'dismissed' ? 'Dismissed' : 'Declined'}
+            {connected ? 'Connected' : 'Skipped'}
           </span>
         </span>
       )}

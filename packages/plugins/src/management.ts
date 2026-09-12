@@ -333,7 +333,7 @@ export function createMcpManagementTools(
               label: selected.length > 0 ? `Enable ${entry.name}` : `Install ${entry.name}`,
               style: 'primary' as const,
             },
-            { id: 'deny', label: 'Not now' },
+            { id: 'deny', label: 'Skip' },
           ]
           const plugin = { key: entry.key, name: entry.name }
           await context.suspend(
