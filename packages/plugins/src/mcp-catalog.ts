@@ -7,7 +7,10 @@ import {
   siClickup,
   siCloudflareworkers,
   siEgnyte,
+  siGmail,
   siGithub,
+  siGooglecalendar,
+  siGoogledrive,
   siIntercom,
   siLinear,
   siNeon,
@@ -26,6 +29,8 @@ import { siAttio, siCanva, siClose, siMonday, siRamp } from "./vendored-icons";
 
 export type McpCatalogOauthAuth = {
   type: "oauth";
+  provider?: "dynamic" | "google-workspace";
+  scopes?: readonly string[];
 };
 
 export type McpCatalogApiKeyAuth = {
@@ -133,6 +138,107 @@ export const MCP_CATALOG = [
       "Read and update pages",
       "Manage databases",
       "Add comments",
+    ],
+  },
+  {
+    key: "gmail",
+    name: "Gmail",
+    description: "Search email, manage labels, and create drafts in Gmail.",
+    searchTerms: [
+      "gmail",
+      "google mail",
+      "email",
+      "inbox",
+      "messages",
+      "threads",
+      "drafts",
+      "labels",
+    ],
+    auth: [
+      {
+        type: "oauth",
+        provider: "google-workspace",
+        scopes: [
+          "https://www.googleapis.com/auth/gmail.modify",
+          "https://www.googleapis.com/auth/gmail.compose",
+        ],
+      },
+    ],
+    url: "https://gmailmcp.googleapis.com/mcp/v1",
+    icon: { path: siGmail.path, color: `#${siGmail.hex}` },
+    skills: [
+      "Search email threads",
+      "Read messages and threads",
+      "Create drafts",
+      "Manage labels",
+    ],
+  },
+  {
+    key: "google-drive",
+    name: "Google Drive",
+    description: "Search, read, and manage files in Google Drive.",
+    searchTerms: [
+      "google drive",
+      "drive",
+      "cloud storage",
+      "file storage",
+      "files",
+      "documents",
+      "folders",
+      "file sharing",
+    ],
+    auth: [
+      {
+        type: "oauth",
+        provider: "google-workspace",
+        scopes: [
+          "https://www.googleapis.com/auth/drive.readonly",
+          "https://www.googleapis.com/auth/drive.file",
+        ],
+      },
+    ],
+    url: "https://drivemcp.googleapis.com/mcp/v1",
+    icon: { path: siGoogledrive.path, color: `#${siGoogledrive.hex}` },
+    skills: [
+      "Search files",
+      "Read file contents",
+      "Create and copy files",
+      "Inspect metadata and permissions",
+    ],
+  },
+  {
+    key: "google-calendar",
+    name: "Google Calendar",
+    description: "Find availability and manage events in Google Calendar.",
+    searchTerms: [
+      "google calendar",
+      "calendar",
+      "events",
+      "meetings",
+      "scheduling",
+      "availability",
+    ],
+    auth: [
+      {
+        type: "oauth",
+        provider: "google-workspace",
+        scopes: [
+          "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+          "https://www.googleapis.com/auth/calendar.events.freebusy",
+          "https://www.googleapis.com/auth/calendar.events",
+        ],
+      },
+    ],
+    url: "https://calendarmcp.googleapis.com/mcp/v1",
+    icon: {
+      path: siGooglecalendar.path,
+      color: `#${siGooglecalendar.hex}`,
+    },
+    skills: [
+      "Search calendar events",
+      "Find available times",
+      "Create and update events",
+      "Respond to invitations",
     ],
   },
   {

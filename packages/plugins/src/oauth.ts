@@ -21,6 +21,7 @@ import {
   type OauthCredentials,
   type RuntimeMcpAccount,
 } from '@openbot/db'
+import { MCP_CATALOG, type McpCatalogOauthAuth } from './mcp-catalog'
 
 const OAUTH_FLOW_TTL_MS = 10 * 60_000
 const OAUTH_REFRESH_SKEW_MS = 30_000
@@ -202,7 +203,11 @@ async function prepareOauthFlow({
 }: PrepareMcpOauthInput): Promise<PreparedMcpOauthFlow> {
   secureOauthUrl(redirectUrl)
   const serverInfo = await discoverOauthServer(serverUrl)
-  const scope = serverInfo.resourceMetadata?.scopes_supported?.join(' ')
+  const catalogEntry = MCP_CATALOG.find((entry) => entry.url === serverUrl)
+  const oauth = catalogEntry?.auth.find(
+    (auth) => auth.type === 'oauth',
+  ) as McpCatalogOauthAuth | undefined
+  const scope = oauth?.scopes?.join(' ') ?? serverInfo.resourceMetadata?.scopes_supported?.join(' ')
   const clientMetadata = {
     client_name: 'OpenBot',
     redirect_uris: [redirectUrl],
@@ -210,12 +215,26 @@ async function prepareOauthFlow({
     response_types: ['code'],
     token_endpoint_auth_method: 'none',
   }
-  const registered = await registerClient(serverInfo.authorizationServerUrl, {
-    metadata: serverInfo.authorizationServerMetadata,
-    clientMetadata,
-    scope,
-    fetchFn: oauthFetch,
-  })
+  let registered: OAuthClientInformationMixed
+  if (oauth?.provider === 'google-workspace') {
+    const clientId = process.env.OPENBOT_GOOGLE_WORKSPACE_MCP_CLIENT_ID?.trim()
+    const clientSecret = process.env.OPENBOT_GOOGLE_WORKSPACE_MCP_CLIENT_SECRET?.trim()
+    if (!clientId || !clientSecret) {
+      throw new Error('Google Workspace MCP OAuth client credentials are not configured')
+    }
+    registered = {
+      client_id: clientId,
+      client_secret: clientSecret,
+      token_endpoint_auth_method: 'client_secret_post',
+    }
+  } else {
+    registered = await registerClient(serverInfo.authorizationServerUrl, {
+      metadata: serverInfo.authorizationServerMetadata,
+      clientMetadata,
+      scope,
+      fetchFn: oauthFetch,
+    })
+  }
   const resource = oauthResource(serverUrl, serverInfo.resourceMetadata)
   const { authorizationUrl, codeVerifier } = await startAuthorization(
     serverInfo.authorizationServerUrl,
@@ -228,6 +247,10 @@ async function prepareOauthFlow({
       scope,
     },
   )
+  if (oauth?.provider === 'google-workspace') {
+    authorizationUrl.searchParams.set('access_type', 'offline')
+    authorizationUrl.searchParams.set('prompt', 'consent')
+  }
   secureOauthUrl(authorizationUrl)
   const tokenEndpoint =
     serverInfo.authorizationServerMetadata?.token_endpoint ??
@@ -240,7 +263,10 @@ async function prepareOauthFlow({
     clientInformation: {
       client_id: registered.client_id,
       client_secret: registered.client_secret,
-      token_endpoint_auth_method: registered.token_endpoint_auth_method,
+      token_endpoint_auth_method:
+        'token_endpoint_auth_method' in registered
+          ? registered.token_endpoint_auth_method
+          : undefined,
     },
     authorizationServerMetadata: serverInfo.authorizationServerMetadata,
     resourceMetadata: serverInfo.resourceMetadata,
