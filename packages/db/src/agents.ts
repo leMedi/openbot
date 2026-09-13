@@ -1,5 +1,5 @@
 import { randomInt } from 'node:crypto'
-import { eq, inArray, max } from 'drizzle-orm'
+import { and, eq, inArray, max } from 'drizzle-orm'
 import { assertValidAvatarUpload, type AvatarUpload } from './avatars'
 import { db } from './client'
 import { MAIN_AGENT_CONVERSATION_ORIGIN, type DbExecutor } from './conversations'
@@ -216,12 +216,24 @@ export async function updateAgentProfile(
   id: string,
   patch: Partial<AgentProfileInput>,
 ) {
-  const [updated] = await db
-    .update(schema.agents)
-    .set({ ...patch, updatedAt: Date.now() })
-    .where(eq(schema.agents.id, id))
-    .returning()
-  return updated
+  return db.transaction(async (tx) => {
+    const now = Date.now()
+    const [updated] = await tx
+      .update(schema.agents)
+      .set({ ...patch, updatedAt: now })
+      .where(eq(schema.agents.id, id))
+      .returning()
+    if (updated && patch.name !== undefined) {
+      await tx
+        .update(schema.conversations)
+        .set({ title: patch.name, updatedAt: now })
+        .where(and(
+          eq(schema.conversations.ownerAgentId, id),
+          eq(schema.conversations.origin, MAIN_AGENT_CONVERSATION_ORIGIN),
+        ))
+    }
+    return updated
+  })
 }
 
 export async function updateAgentProfileAndMcpAccounts(
@@ -231,12 +243,23 @@ export async function updateAgentProfileAndMcpAccounts(
 ) {
   return db.transaction(async (tx) => {
     await validateMcpAccountIds(tx, accountIds)
+    const now = Date.now()
     const [updated] = await tx
       .update(schema.agents)
-      .set({ ...patch, updatedAt: Date.now() })
+      .set({ ...patch, updatedAt: now })
       .where(eq(schema.agents.id, id))
       .returning()
     if (!updated) return undefined
+
+    if (patch.name !== undefined) {
+      await tx
+        .update(schema.conversations)
+        .set({ title: patch.name, updatedAt: now })
+        .where(and(
+          eq(schema.conversations.ownerAgentId, id),
+          eq(schema.conversations.origin, MAIN_AGENT_CONVERSATION_ORIGIN),
+        ))
+    }
 
     await tx.delete(schema.agentMcpAccounts).where(eq(schema.agentMcpAccounts.agentId, id))
     if (accountIds.length > 0) {

@@ -78,6 +78,40 @@ export async function updateConversation(id: string, patch: ConversationUpdate) 
 }
 
 /**
+ * Renames a conversation. An agent's main conversation is its user-facing
+ * identity, so its title and the owning agent name move together atomically.
+ */
+export async function renameConversationTitle(id: string, title: string) {
+  return db.transaction(async (tx) => {
+    const [conversation] = await tx
+      .select()
+      .from(schema.conversations)
+      .where(eq(schema.conversations.id, id))
+      .limit(1)
+    if (!conversation) return undefined
+
+    const now = Date.now()
+    if (
+      conversation.origin === MAIN_AGENT_CONVERSATION_ORIGIN &&
+      conversation.ownerAgentId
+    ) {
+      if (title.length > 80) throw new Error('Agent name must be 80 characters or fewer')
+      await tx
+        .update(schema.agents)
+        .set({ name: title, updatedAt: now })
+        .where(eq(schema.agents.id, conversation.ownerAgentId))
+    }
+
+    const [updated] = await tx
+      .update(schema.conversations)
+      .set({ title, updatedAt: now })
+      .where(eq(schema.conversations.id, id))
+      .returning()
+    return updated
+  })
+}
+
+/**
  * Read-state changes deliberately leave updatedAt alone so marking a
  * conversation read or unread never reorders the sidebar.
  */

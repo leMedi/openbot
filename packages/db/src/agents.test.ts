@@ -27,6 +27,23 @@ test('creates one explicit main conversation for an agent', async () => {
   )
 })
 
+test('keeps an agent name and its main conversation title synchronized', async () => {
+  const created = await db.createAgent({ name: 'Original name' })
+
+  await db.renameConversationTitle(created.conversation.id, 'Renamed from conversation')
+  assert.equal((await db.getAgent(created.agent.id))?.name, 'Renamed from conversation')
+  assert.equal(
+    (await db.getConversation(created.conversation.id))?.title,
+    'Renamed from conversation',
+  )
+
+  await db.updateAgentProfile(created.agent.id, { name: 'Renamed from agent' })
+  assert.equal(
+    (await db.getConversation(created.conversation.id))?.title,
+    'Renamed from agent',
+  )
+})
+
 test('seeds and resolves the scripted agent onboarding conversation', async () => {
   const created = await db.db.transaction((tx) =>
     db.createAgentInTransaction(tx, { name: 'Onboarding agent' }, [], {

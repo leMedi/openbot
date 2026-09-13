@@ -4,7 +4,7 @@ import {
   listConversations,
   markConversationRead,
   markConversationUnread,
-  updateConversation,
+  renameConversationTitle,
 } from '@openbot/db'
 import { createServerFn } from '@tanstack/react-start'
 import * as z from 'zod'
@@ -28,7 +28,7 @@ export const getConversations = createServerFn({ method: 'GET' }).handler(() =>
 export const renameConversation = createServerFn({ method: 'POST' })
   .validator((input: unknown) => conversationRenameInput.parse(input))
   .handler(async ({ data }) => {
-    const updated = await updateConversation(data.id, { title: data.title })
+    const updated = await renameConversationTitle(data.id, data.title)
     if (!updated) throw new Error(`Conversation ${data.id} not found`)
     return updated
   })
