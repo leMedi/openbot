@@ -123,6 +123,28 @@ test('restores persisted user attachments after reload', () => {
   }])
 })
 
+test('reconciles persisted terminal turns with their streaming placeholder', () => {
+  for (const event of ['turn_cancelled', 'turn_failed'] as const) {
+    const entry = entryFromMessage(row({
+      id: `entry-${event}`,
+      turnId: 'turn-terminal',
+      kind: 'status',
+      direction: 'internal',
+      bodyText: event === 'turn_cancelled'
+        ? 'Turn cancelled: Cancelled by user'
+        : 'Turn failed: Provider timed out',
+      payloadJson: {
+        version: 1,
+        event,
+        message: event === 'turn_cancelled' ? 'Cancelled by user' : 'Provider timed out',
+      },
+    }), agent)
+
+    assert.equal(entry?.type, 'timeline')
+    assert.equal(entry?.id, 'streaming-turn-terminal')
+  }
+})
+
 test('adapts Computer progress and approval prompts without client execution', () => {
   const progress = entryFromMessage(
     row({

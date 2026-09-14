@@ -282,10 +282,17 @@ export function entryFromMessage(
   if (row.kind === 'status' && row.payloadJson.event === 'computer-use-audit') {
     return null
   }
+  const terminalTurnEntry =
+    row.kind === 'status' &&
+    (row.payloadJson.event === 'turn_cancelled' || row.payloadJson.event === 'turn_failed') &&
+    row.turnId
   // status / system / other display events
   return {
     type: 'timeline',
-    id: row.id,
+    // The live stream renders terminal errors by replacing this turn's
+    // `streaming-*` placeholder. Reuse that id when the durable row arrives so
+    // transcript polling reconciles it instead of briefly showing both copies.
+    id: terminalTurnEntry ? `streaming-${row.turnId}` : row.id,
     text: row.bodyText ?? 'Event',
     time,
     icon: 'notice',
