@@ -5,6 +5,7 @@ import { readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import {
   appendConversationMessage,
+  type AgentGroupMessageInput,
   createManagedFile,
   listConversationMessages,
   type Agent,
@@ -21,6 +22,7 @@ import {
 import * as z from 'zod'
 import type { DesktopToolRuntime } from '../desktop/runtime'
 import type { BrowserToolRuntime } from '../browser/runtime'
+import { isGroupPass } from '../orchestration'
 import { agentWorkspaceDirectory, resolveWorkspacePath } from './shell/workspace'
 
 export const SEND_MESSAGE_TOOL_NAME = 'SendMessage'
@@ -165,6 +167,10 @@ export type ToolTurnContext = {
   onDelivered: (message: ConversationMessage) => void
   /** Streams and counts an agent reaction as the visible output of its turn. */
   onReaction?: (message: ConversationMessage) => void
+  /** Group turns may explicitly pass or be capped by the room orchestrator. */
+  onGroupPass?: () => Promise<void>
+  groupMessageLimit?: number
+  canSendGroupMessage?: () => boolean
   /** Persists a waiting interaction and stops the current model loop. */
   suspend: (
     state: WaitingState,
@@ -208,6 +214,10 @@ export type ToolTurnContext = {
   sendDirectAgentMessage: (
     input: Omit<DirectAgentMessageInput, 'senderAgentId'>,
   ) => Promise<{ deliveryId: string; turn: Turn }>
+  /** Durably posts to one of this agent's groups and queues group orchestration. */
+  sendAgentGroupMessage?: (
+    input: Omit<AgentGroupMessageInput, 'senderAgentId'>,
+  ) => Promise<{ turn: Turn }>
   /** Fresh server-local Remote Desktop capability for this turn. */
   desktop?: DesktopToolRuntime
   /** Trusted page-level browser automation available only to browser-use workers. */
@@ -297,6 +307,13 @@ export async function executeSendMessage(
   }
 
   if (args.type === 'text') {
+    if (context.onGroupPass && isGroupPass(args.content)) {
+      await context.onGroupPass()
+      return { ok: true, passed: true }
+    }
+    if (context.groupMessageLimit !== undefined && context.canSendGroupMessage?.() === false) {
+      return { error: `This group turn is limited to ${context.groupMessageLimit} messages` }
+    }
     // Semantic exactly-once across a crash/restart: an identical text from
     // the interrupted attempt was already seen by the user.
     const replayed = context.priorDeliveries.find(

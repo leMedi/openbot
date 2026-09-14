@@ -4,7 +4,7 @@ import { and, asc, eq, or, sql } from 'drizzle-orm'
 import { db } from './client'
 import {
   allocateConversationSequence,
-  DIRECT_AGENT_CONVERSATION_ORIGIN,
+  getMainAgentConversation,
   type DbExecutor,
 } from './conversations'
 import { createId } from './ids'
@@ -91,6 +91,8 @@ export type UserMessageInput = {
   idempotencyKey?: string
   /** Entry this message replies to; silently dropped if it does not exist here. */
   replyToEntryId?: string | null
+  attachments?: Attachments
+  prependedMessages?: { id?: string; type: string; text: string }[]
 }
 
 async function findAcceptedMessage(
@@ -132,6 +134,10 @@ async function findAcceptedMessage(
   return { message, turn }
 }
 
+export function findAcceptedUserMessage(requestId: string, idempotencyKey: string) {
+  return findAcceptedMessage(requestId, idempotencyKey)
+}
+
 function isSqliteBusy(error: unknown) {
   return (
     typeof error === 'object' &&
@@ -166,6 +172,9 @@ async function validateAcceptedMessage(
     !isDeepStrictEqual(accepted.message.payloadJson, payload)
   ) {
     throw new Error('An idempotency token cannot be reused with different message input')
+  }
+  if (!isDeepStrictEqual(accepted.message.attachmentsJson, input.attachments ?? { version: 1, items: [] })) {
+    throw new Error('An idempotency token cannot be reused with different attachments')
   }
   let replyToEntryId: string | null = null
   if (input.replyToEntryId) {
@@ -226,10 +235,12 @@ export async function acceptUserMessage(input: UserMessageInput) {
             targetCondition,
           ))
           .limit(1)
+        let dismissedQuestion: string | undefined
         if (
           waitingTurn?.waitingStateJson &&
           waitingStateSchema.parse(waitingTurn.waitingStateJson).dismissOnMoveOn
         ) {
+          dismissedQuestion = waitingStateSchema.parse(waitingTurn.waitingStateJson).prompt
           const dismissedAt = Date.now()
           await tx
             .update(schema.turns)
@@ -280,6 +291,19 @@ export async function acceptUserMessage(input: UserMessageInput) {
             status: 'queued',
             requestId,
             idempotencyKey,
+            runtimeContextJson: {
+              version: 1,
+              ...(
+                dismissedQuestion || input.prependedMessages?.length
+                  ? { prependedMessages: [
+                      ...(input.prependedMessages ?? []),
+                      ...(dismissedQuestion
+                        ? [{ type: 'dismissed-question', text: dismissedQuestion }]
+                        : []),
+                    ] }
+                  : {}
+              ),
+            },
             createdAt: now,
             updatedAt: now,
           })
@@ -295,6 +319,7 @@ export async function acceptUserMessage(input: UserMessageInput) {
             payload: input.payload,
             turnId: turn.id,
             replyToEntryId,
+            attachments: input.attachments,
           },
           tx,
         )
@@ -321,48 +346,16 @@ export async function acceptUserMessage(input: UserMessageInput) {
   throw lastError
 }
 
-async function directAgentConversation(
-  agent: { id: string; name: string },
-  executor: DbExecutor,
-) {
-  const [existing] = await executor
-    .select()
-    .from(schema.conversations)
-    .where(
-      and(
-        eq(schema.conversations.ownerAgentId, agent.id),
-        eq(schema.conversations.origin, DIRECT_AGENT_CONVERSATION_ORIGIN),
-      ),
-    )
-    .orderBy(asc(schema.conversations.createdAt), asc(schema.conversations.id))
-    .limit(1)
-  if (existing) return existing
-
-  const now = Date.now()
-  const [created] = await executor
-    .insert(schema.conversations)
-    .values({
-      id: createId('cnv'),
-      ownerAgentId: agent.id,
-      title: 'Agent messages',
-      origin: DIRECT_AGENT_CONVERSATION_ORIGIN,
-      purpose: 'Direct messages with other local agents',
-      createdAt: now,
-      updatedAt: now,
-    })
-    .returning()
-  return created
-}
-
 export type DirectAgentMessageInput = {
   senderAgentId: string
   recipientAgentId: string
   content: string
+  images?: { url: string; alt?: string }[]
+  priority?: boolean
+  attachments?: Attachments
   idempotencyKey?: string
   /** Conversation whose task initiated this exchange. */
   sourceConversationId?: string | null
-  /** Conversation where a reply should resume the recipient's work. */
-  replyConversationId?: string | null
 }
 
 async function findAcceptedDirectMessage(
@@ -392,6 +385,10 @@ async function findAcceptedDirectMessage(
   return { deliveryId, outbound, inbound, turn }
 }
 
+export async function hasAcceptedDirectAgentMessage(idempotencyKey: string) {
+  return !!(await findAcceptedDirectMessage(idempotencyKey))
+}
+
 function validateAcceptedDirectMessage(
   accepted: NonNullable<Awaited<ReturnType<typeof findAcceptedDirectMessage>>>,
   input: DirectAgentMessageInput,
@@ -399,7 +396,7 @@ function validateAcceptedDirectMessage(
   const acceptedContext = directAgentMessageContextSchema.parse(
     accepted.turn.runtimeContextJson.directMessage,
   )
-  const expectedConversationId = input.replyConversationId ?? accepted.inbound.conversationId
+  const expectedConversationId = accepted.inbound.conversationId
   if (
     accepted.outbound.senderAgentId !== input.senderAgentId ||
     accepted.outbound.recipientAgentId !== input.recipientAgentId ||
@@ -408,6 +405,8 @@ function validateAcceptedDirectMessage(
     accepted.inbound.recipientAgentId !== input.recipientAgentId ||
     accepted.inbound.bodyText !== input.content ||
     acceptedContext.sourceConversationId !== (input.sourceConversationId ?? null) ||
+    acceptedContext.priority !== (input.priority ?? false) ||
+    !isDeepStrictEqual(acceptedContext.images, input.images ?? []) ||
     accepted.turn.conversationId !== expectedConversationId
   ) {
     throw new Error('A direct-message idempotency key cannot be reused with different input')
@@ -416,13 +415,13 @@ function validateAcceptedDirectMessage(
 }
 
 /**
- * Durable direct-agent inbox boundary: both transcript projections and the
- * recipient's queued work are accepted in one transaction.
+ * Durable direct-agent boundary: both main-transcript projections and the
+ * recipient's queued main-session turn are accepted in one transaction.
  */
 export async function acceptDirectAgentMessage(input: DirectAgentMessageInput) {
   const content = input.content.trim()
   if (!content) throw new Error('A direct agent message cannot be empty')
-  if (content.length > 20_000) throw new Error('A direct agent message is too long')
+  if (content.length > 8_000) throw new Error('A direct agent message is too long')
   if (input.senderAgentId === input.recipientAgentId) {
     throw new Error('An agent cannot send a direct message to itself')
   }
@@ -449,9 +448,12 @@ export async function acceptDirectAgentMessage(input: DirectAgentMessageInput) {
           .limit(1)
         if (!recipient) throw new Error(`Recipient agent ${input.recipientAgentId} not found`)
 
-        const senderConversation = await directAgentConversation(sender, tx)
-        const recipientConversation = await directAgentConversation(recipient, tx)
-        const turnConversationId = input.replyConversationId ?? recipientConversation.id
+        const senderConversation = await getMainAgentConversation(sender.id, tx)
+        const recipientConversation = await getMainAgentConversation(recipient.id, tx)
+        if (!senderConversation || !recipientConversation) {
+          throw new Error('Direct agent delivery requires both agents to have a main conversation')
+        }
+        const turnConversationId = recipientConversation.id
         const [turnConversation] = await tx
           .select({ id: schema.conversations.id })
           .from(schema.conversations)
@@ -469,6 +471,9 @@ export async function acceptDirectAgentMessage(input: DirectAgentMessageInput) {
           senderAgentName: sender.name,
           recipientAgentId: recipient.id,
           recipientAgentName: recipient.name,
+          images: input.images ?? [],
+          priority: input.priority ?? false,
+          imageFileIds: input.attachments?.items.map((item) => item.fileId) ?? [],
         })
         const outbound = await appendConversationMessage(
           {
@@ -481,6 +486,7 @@ export async function acceptDirectAgentMessage(input: DirectAgentMessageInput) {
             senderAgentId: sender.id,
             recipientAgentId: recipient.id,
             deliveryId,
+            attachments: input.attachments,
           },
           tx,
         )
@@ -495,6 +501,7 @@ export async function acceptDirectAgentMessage(input: DirectAgentMessageInput) {
             senderAgentId: sender.id,
             recipientAgentId: recipient.id,
             deliveryId,
+            attachments: input.attachments,
           },
           tx,
         )
@@ -508,6 +515,7 @@ export async function acceptDirectAgentMessage(input: DirectAgentMessageInput) {
             targetAgentId: recipient.id,
             lane: 'agent',
             source: 'direct-agent-message',
+            priority: input.priority ?? false,
             status: 'queued',
             idempotencyKey,
             runtimeContextJson: {
@@ -521,6 +529,9 @@ export async function acceptDirectAgentMessage(input: DirectAgentMessageInput) {
                 recipientAgentId: recipient.id,
                 content,
                 sourceConversationId: input.sourceConversationId ?? null,
+                images: input.images ?? [],
+                priority: input.priority ?? false,
+                imageFileIds: input.attachments?.items.map((item) => item.fileId) ?? [],
               }),
             },
             createdAt: now,
@@ -545,4 +556,78 @@ export async function acceptDirectAgentMessage(input: DirectAgentMessageInput) {
     }
   }
   throw lastError
+}
+
+export type AgentGroupMessageInput = {
+  senderAgentId: string
+  groupId: string
+  content: string
+  idempotencyKey?: string
+}
+
+/** Durably posts an agent-authored message to a group and wakes its orchestrator. */
+export async function acceptAgentGroupMessage(input: AgentGroupMessageInput) {
+  const content = input.content.trim()
+  if (!content) throw new Error('An agent group message cannot be empty')
+  if (content.length > 8_000) throw new Error('An agent group message is too long')
+  const idempotencyKey = input.idempotencyKey ?? `group_${randomUUID()}`
+
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select()
+      .from(schema.turns)
+      .where(eq(schema.turns.idempotencyKey, idempotencyKey))
+      .limit(1)
+    if (existing) {
+      if (existing.source !== 'group-agent-message' || existing.targetGroupId !== input.groupId) {
+        throw new Error('An idempotency key cannot be reused with different group input')
+      }
+      const [message] = await tx
+        .select()
+        .from(schema.conversationMessages)
+        .where(and(
+          eq(schema.conversationMessages.turnId, existing.id),
+          eq(schema.conversationMessages.senderAgentId, input.senderAgentId),
+        ))
+        .limit(1)
+      if (!message || message.bodyText !== content) {
+        throw new Error('An idempotency key cannot be reused with different group input')
+      }
+      return { message, turn: existing }
+    }
+
+    const [group] = await tx.select().from(schema.groups)
+      .where(eq(schema.groups.id, input.groupId)).limit(1)
+    if (!group) throw new Error(`Group ${input.groupId} not found`)
+    if (!group.membersJson.members.some((member) => member.agentId === input.senderAgentId)) {
+      throw new Error('An agent can only post to a group it belongs to')
+    }
+    const [conversation] = await tx.select().from(schema.conversations)
+      .where(eq(schema.conversations.ownerGroupId, group.id)).limit(1)
+    if (!conversation) throw new Error(`Group ${group.id} has no conversation`)
+
+    const now = Date.now()
+    const [turn] = await tx.insert(schema.turns).values({
+      id: createId('trn'),
+      conversationId: conversation.id,
+      targetGroupId: group.id,
+      lane: 'agent',
+      source: 'group-agent-message',
+      status: 'queued',
+      idempotencyKey,
+      createdAt: now,
+      updatedAt: now,
+    }).returning()
+    const message = await appendConversationMessage({
+      conversationId: conversation.id,
+      kind: 'message',
+      role: 'assistant',
+      direction: 'outbound',
+      bodyText: content,
+      payload: { version: 1, event: 'agent-group-message' },
+      turnId: turn.id,
+      senderAgentId: input.senderAgentId,
+    }, tx)
+    return { message, turn }
+  })
 }

@@ -31,6 +31,9 @@ export type Attachment = {
   size?: string
   kind: 'file' | 'image' | 'link'
   url?: string
+  /** Base64 payload used only while a local composer attachment is being submitted. */
+  data?: string
+  mediaType?: string
 }
 
 export type Card =

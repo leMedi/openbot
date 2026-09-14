@@ -223,6 +223,7 @@ export function entryFromMessage(
       author: YOU,
       time,
       text: row.bodyText ?? '',
+      ...(row.attachmentsJson.items.length > 0 && { attachments: attachmentsFrom(row) }),
       reactions: reactionsFrom(row),
       replyTo: row.replyToEntryId ?? undefined,
     }
@@ -260,6 +261,7 @@ export function entryFromMessage(
       author,
       time,
       markdown: row.bodyText ?? '',
+      ...(row.attachmentsJson.items.length > 0 && { attachments: attachmentsFrom(row) }),
       reactions: reactionsFrom(row),
       replyTo: row.replyToEntryId ?? undefined,
     }

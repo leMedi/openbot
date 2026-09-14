@@ -1,0 +1,1 @@
+ALTER TABLE `turns` ADD `priority` integer DEFAULT false NOT NULL;

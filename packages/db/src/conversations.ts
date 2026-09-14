@@ -11,8 +11,6 @@ export type ConversationCreateInput = {
   purpose?: string | null
 }
 
-/** Private inboxes used only for asynchronous agent-to-agent delivery. */
-export const DIRECT_AGENT_CONVERSATION_ORIGIN = 'agent-direct'
 /** The single user-facing conversation used to manage an agent. */
 export const MAIN_AGENT_CONVERSATION_ORIGIN = 'agent-main'
 
@@ -40,6 +38,21 @@ export async function getConversation(id: string) {
     .select()
     .from(schema.conversations)
     .where(eq(schema.conversations.id, id))
+    .limit(1)
+  return conversation
+}
+
+export async function getMainAgentConversation(
+  agentId: string,
+  executor: DbExecutor = db,
+) {
+  const [conversation] = await executor
+    .select()
+    .from(schema.conversations)
+    .where(and(
+      eq(schema.conversations.ownerAgentId, agentId),
+      eq(schema.conversations.origin, MAIN_AGENT_CONVERSATION_ORIGIN),
+    ))
     .limit(1)
   return conversation
 }
@@ -177,15 +190,14 @@ export async function clearConversation(id: string) {
       .limit(1)
     if (!existing) throw new Error(`Conversation ${id} not found`)
 
-    // Group ownership and dedicated agent conversations are unique. Group
-    // rooms cannot own routines, so they retain the original
-    // delete-then-insert order. Main conversations and private inboxes use a
-    // temporary origin until the old row is gone.
+    // Group ownership and main agent conversations are unique. Group rooms
+    // cannot own routines, so they retain the original delete-then-insert
+    // order. Main conversations use a temporary origin until the old row is
+    // gone.
     if (existing.ownerGroupId) {
       await tx.delete(schema.conversations).where(eq(schema.conversations.id, id))
     }
     const temporaryOrigin =
-      existing.origin === DIRECT_AGENT_CONVERSATION_ORIGIN ||
       existing.origin === MAIN_AGENT_CONVERSATION_ORIGIN
       ? 'conversation-clear-replacement'
       : existing.origin

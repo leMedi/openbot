@@ -96,6 +96,33 @@ test('adapts screenshots and normalized failures at the presentation boundary', 
   assert.equal(busy.result?.status, 'desktop busy')
 })
 
+test('restores persisted user attachments after reload', () => {
+  const entry = entryFromMessage(row({
+    kind: 'message',
+    role: 'user',
+    direction: 'inbound',
+    bodyText: 'See attached',
+    payloadJson: { version: 1 },
+    attachmentsJson: {
+      version: 1,
+      items: [{
+        fileId: 'file-user',
+        position: 0,
+        metadata: { name: 'photo.png', mediaType: 'image/png', byteSize: 12 },
+      }],
+    },
+  }), agent)
+  assert.equal(entry?.type, 'message')
+  if (entry?.type !== 'message') return
+  assert.deepEqual(entry.attachments, [{
+    id: 'file-user',
+    name: 'photo.png',
+    size: '12 B',
+    kind: 'image',
+    url: '/api/files/file-user',
+  }])
+})
+
 test('adapts Computer progress and approval prompts without client execution', () => {
   const progress = entryFromMessage(
     row({

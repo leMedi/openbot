@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import test from 'node:test'
+import type { Routine } from '@openbot/db'
 
 const testData = path.resolve(process.cwd(), '../../.data', `prompt-tests-${process.pid}`)
 await rm(testData, { recursive: true, force: true })
@@ -13,8 +14,25 @@ const {
   renderGeneralSubagentSystemPrompt,
   renderDefaultSystemPrompt,
   renderRuntimeCapabilitiesPrompt,
+  renderRoutinesPrompt,
   renderUserProfilePrompt,
 } = await import('./system')
+
+test('renders the approved persisted routine section', () => {
+  const prompt = renderRoutinesPrompt([{
+    id: 'rtn_daily',
+    name: 'Daily brief',
+    enabled: true,
+    cronExpression: '0 9 * * *',
+    timezone: 'Europe/Paris',
+    instruction: 'Summarize today.',
+  } as Routine])
+  assert.equal(
+    prompt,
+    '[existing_routines]\n- Daily brief (id: rtn_daily) — enabled; 0 9 * * * in Europe/Paris; instruction: Summarize today.',
+  )
+  assert.equal(renderRoutinesPrompt([]), '')
+})
 
 test('removes graphical desktop guidance when desktop mode is disabled', () => {
   const prompt = renderDefaultSystemPrompt(false)

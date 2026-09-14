@@ -400,6 +400,12 @@ export const directAgentMessagePayloadSchema = z.object({
   senderAgentName: z.string().min(1),
   recipientAgentId: z.string().min(1),
   recipientAgentName: z.string().min(1),
+  images: z.array(z.object({
+    url: z.string().min(1).max(2_000),
+    alt: z.string().max(500).optional(),
+  })).max(6).default([]),
+  priority: z.boolean().default(false),
+  imageFileIds: z.array(z.string().min(1)).max(6).default([]),
 })
 
 export const directAgentMessageContextSchema = z.object({
@@ -409,8 +415,14 @@ export const directAgentMessageContextSchema = z.object({
   senderAgentId: z.string().min(1),
   senderAgentName: z.string().min(1),
   recipientAgentId: z.string().min(1),
-  content: z.string().min(1).max(20_000),
+  content: z.string().min(1).max(8_000),
   sourceConversationId: z.string().min(1).nullable().default(null),
+  images: z.array(z.object({
+    url: z.string().min(1).max(2_000),
+    alt: z.string().max(500).optional(),
+  })).max(6).default([]),
+  priority: z.boolean().default(false),
+  imageFileIds: z.array(z.string().min(1)).max(6).default([]),
 })
 
 export const routineWakeSchema = z.object({

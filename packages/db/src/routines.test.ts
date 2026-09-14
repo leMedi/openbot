@@ -80,7 +80,7 @@ test('rebinds routines when their delivery conversation is cleared', async () =>
   assert.equal((await store.getRoutine(routine.id))?.conversationId, fresh.id)
 })
 
-test('preserves unique group and direct-inbox identity while clearing', async () => {
+test('stores direct messages in visible main chats and preserves group identity while clearing', async () => {
   const sender = await store.createAgent({ name: 'Sender' })
   const recipient = await store.createAgent({ name: 'Recipient' })
   const direct = await store.acceptDirectAgentMessage({
@@ -88,21 +88,24 @@ test('preserves unique group and direct-inbox identity while clearing', async ()
     recipientAgentId: recipient.agent.id,
     content: 'hello',
   })
+  assert.equal(direct.outbound.conversationId, sender.conversation.id)
+  assert.equal(direct.inbound.conversationId, recipient.conversation.id)
+  assert.equal(direct.turn.conversationId, recipient.conversation.id)
   const directRoutine = await store.createRoutine({
     agentId: recipient.agent.id,
     conversationId: direct.turn.conversationId,
-    name: 'Inbox routine',
-    instruction: 'Check the inbox.',
+    name: 'Main routine',
+    instruction: 'Check the main chat.',
     cronExpression: '0 10 * * *',
     timezone: 'UTC',
   })
   const freshDirect = await store.clearConversation(direct.turn.conversationId)
-  assert.equal(freshDirect.origin, 'agent-direct')
+  assert.equal(freshDirect.origin, store.MAIN_AGENT_CONVERSATION_ORIGIN)
   assert.equal((await store.getRoutine(directRoutine.id))?.conversationId, freshDirect.id)
 
   const visibleConversationIds = new Set((await store.listConversations()).map((row) => row.id))
-  assert.equal(visibleConversationIds.has(direct.outbound.conversationId), false)
-  assert.equal(visibleConversationIds.has(direct.inbound.conversationId), false)
+  assert.equal(visibleConversationIds.has(sender.conversation.id), true)
+  assert.equal(visibleConversationIds.has(freshDirect.id), true)
 
   const group = await store.createGroup({
     name: 'Clearable room',
@@ -112,7 +115,48 @@ test('preserves unique group and direct-inbox identity while clearing', async ()
   assert.equal(freshGroup.ownerGroupId, group.group.id)
 })
 
-test('resumes the originating conversation when an agent replies', async () => {
+test('durably accepts an agent-authored group post', async () => {
+  const member = await store.createAgent({ name: 'Group poster' })
+  const { group, conversation } = await store.createGroup({
+    name: 'Agent-posted room',
+    members: [{ type: 'agent', agentId: member.agent.id }],
+  })
+  const accepted = await store.acceptAgentGroupMessage({
+    senderAgentId: member.agent.id,
+    groupId: group.id,
+    content: 'A durable room update',
+    idempotencyKey: `group-post-${crypto.randomUUID()}`,
+  })
+  assert.equal(accepted.turn.targetGroupId, group.id)
+  assert.equal(accepted.turn.conversationId, conversation.id)
+  assert.equal(accepted.message.senderAgentId, member.agent.id)
+  assert.equal(accepted.message.bodyText, 'A durable room update')
+})
+
+test('queues each persisted group round only once', async () => {
+  const member = await store.createAgent({ name: 'Round member' })
+  const { group, conversation } = await store.createGroup({
+    name: 'Durable rounds',
+    members: [{ type: 'agent', agentId: member.agent.id }],
+  })
+  const accepted = await store.acceptUserMessage({
+    conversationId: conversation.id,
+    text: 'Discuss this.',
+  })
+  assert.equal(accepted.turn.targetGroupId, group.id)
+  await store.claimQueuedTurn(accepted.turn.id)
+  const input = {
+    groupTurnId: accepted.turn.id,
+    orchestrationRound: 0,
+    targets: [{ agentId: member.agent.id, maxMessages: 2 }],
+  }
+  const first = await store.queueGroupChildTurns(input)
+  const replay = await store.queueGroupChildTurns(input)
+  assert.equal(first.childTurns.length, 1)
+  assert.equal(replay.childTurns[0]?.id, first.childTurns[0]?.id)
+})
+
+test('queues each direct message in the recipient main conversation', async () => {
   const sender = await store.createAgent({ name: 'Origin sender' })
   const recipient = await store.createAgent({ name: 'Origin recipient' })
   const first = await store.acceptDirectAgentMessage({
@@ -121,14 +165,13 @@ test('resumes the originating conversation when an agent replies', async () => {
     content: 'Please check this.',
     sourceConversationId: sender.conversation.id,
   })
-  assert.notEqual(first.turn.conversationId, sender.conversation.id)
+  assert.equal(first.turn.conversationId, recipient.conversation.id)
 
   const reply = await store.acceptDirectAgentMessage({
     senderAgentId: recipient.agent.id,
     recipientAgentId: sender.agent.id,
     content: 'It checks out.',
-    sourceConversationId: sender.conversation.id,
-    replyConversationId: sender.conversation.id,
+    sourceConversationId: recipient.conversation.id,
   })
   assert.equal(reply.turn.conversationId, sender.conversation.id)
 })

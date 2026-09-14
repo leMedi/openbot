@@ -457,6 +457,11 @@ function OpenBot() {
               // The server drops references it cannot resolve (e.g. an
               // optimistic local id), degrading to a plain message.
               replyToEntryId: draft.replyToId ?? null,
+              attachments: draft.attachments.map((attachment) => ({
+                name: attachment.name,
+                mediaType: attachment.mediaType ?? 'application/octet-stream',
+                data: attachment.data ?? '',
+              })),
               requestId: crypto.randomUUID(),
               idempotencyKey: draft.idempotencyKey ?? crypto.randomUUID(),
             },

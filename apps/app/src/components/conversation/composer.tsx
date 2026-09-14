@@ -26,6 +26,15 @@ const MAX_ATTACHMENTS = 6
 // Client-persisted, account-sensitive draft storage.
 const draftKey = (scope: string) => `openbot:conversation-draft:acct-mehdi:${scope}`
 
+function base64FromArrayBuffer(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let offset = 0; offset < bytes.length; offset += 32_768) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768))
+  }
+  return btoa(binary)
+}
+
 const isMac =
   typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform ?? '')
 
@@ -260,20 +269,16 @@ export function Composer({
     if (editor) editor.view.dispatch(editor.state.tr)
   }, [editor, replyTo])
 
-  function stageFiles(files: File[]) {
-    setAttachments((current) => {
-      const next = [...current]
-      for (const f of files) {
-        if (next.length >= MAX_ATTACHMENTS) break
-        next.push({
-          id: `${f.name}-${Date.now()}-${next.length}`,
-          name: f.name,
-          size: f.size >= 1024 ? `${Math.round(f.size / 1024)} KB` : `${f.size} B`,
-          kind: f.type.startsWith('image/') ? 'image' : 'file',
-        })
-      }
-      return next
-    })
+  async function stageFiles(files: File[]) {
+    const staged = await Promise.all(files.slice(0, MAX_ATTACHMENTS).map(async (f, index) => ({
+      id: `${f.name}-${Date.now()}-${index}`,
+      name: f.name,
+      size: f.size >= 1024 ? `${Math.round(f.size / 1024)} KB` : `${f.size} B`,
+      kind: f.type.startsWith('image/') ? ('image' as const) : ('file' as const),
+      mediaType: f.type || 'application/octet-stream',
+      data: base64FromArrayBuffer(await f.arrayBuffer()),
+    })))
+    setAttachments((current) => [...current, ...staged].slice(0, MAX_ATTACHMENTS))
   }
 
   submitRef.current = () => {

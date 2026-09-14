@@ -41,7 +41,7 @@ test('scopes mutating computer control to the computer-use worker', () => {
       'Task',
       'SendMessage',
       'ReactToMessage',
-      'SendAgentMessage',
+      'SendToAgent',
       'updateMemory',
       'recallMemory',
       'runShell',

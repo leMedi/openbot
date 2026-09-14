@@ -54,7 +54,7 @@ test('seeds and resolves the scripted agent onboarding conversation', async () =
 
   const messages = await db.listConversationMessages(created.conversation.id)
   assert.equal(messages.length, 2)
-  assert.equal(messages[0]?.bodyText, 'Hi — I’m Onboarding agent. Let’s set up how I can help you.')
+  assert.equal(messages[0]?.bodyText, 'Hi - I’m Onboarding agent. Let’s set up how I can help you.')
   const turn = await db.findUnsettledForegroundTurn(created.conversation.id)
   assert.equal(turn?.status, 'waiting')
   assert.equal(turn?.waitingStateJson?.originatingToolCall.name, db.AGENT_ONBOARDING_TOOL_NAME)

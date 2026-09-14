@@ -2,32 +2,32 @@ import type { WaitingState } from './json-schemas'
 
 export const AGENT_ONBOARDING_COPY = {
   greeting: (agentName: string) =>
-    `Hi — I’m ${agentName}. Let’s set up how I can help you.`,
+    `Hi - I’m ${agentName}. Let’s set up how I can help you.`,
   purposeQuestion: 'What would you mainly like my help with?',
   purposeHelp: 'Choose a starting point. You can refine this with me at any time.',
   purposes: [
     {
       id: 'day-to-day',
       label: 'Day-to-day',
-      description: 'Planning, organization, and everyday tasks',
-      followUp: 'What day-to-day tasks or responsibilities should I help you stay on top of?',
+      description: 'Email, calendar, notes and keeping things moving',
+      followUp: `Perfect! That's where I can take most off your plates. Where do those live for you right now?`,
     },
     {
       id: 'building-coding',
       label: 'Building & coding',
-      description: 'Software, technical projects, and product work',
+      description: 'Repos, features, debugging, side projects',
       followUp: 'What are you building, and which languages, tools, or constraints should I know about?',
     },
     {
       id: 'research-writing',
       label: 'Research & writing',
-      description: 'Exploration, synthesis, and written work',
+      description: 'Looking things up, Draft Summaries',
       followUp: 'What topics and kinds of research or writing should I help you with?',
     },
     {
       id: 'something-specific',
       label: 'Something specific',
-      description: 'A focused role or outcome',
+      description: `You've got a concrete job in mind`,
       followUp: 'Tell me the specific role, outcome, or project you want me to focus on.',
     },
   ],

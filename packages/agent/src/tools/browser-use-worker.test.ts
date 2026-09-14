@@ -57,7 +57,7 @@ test('exposes browser delegation through Task and gives browser workers the exac
   for (const forbidden of [
     'Computer',
     'SendMessage',
-    'SendAgentMessage',
+    'SendToAgent',
     'browserUse',
     'computerUse',
     'updateMemory',

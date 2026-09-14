@@ -37,11 +37,11 @@ import {
   reactToMessageToolDefinition,
 } from './react-to-message'
 import {
-  executeSendAgentMessage,
-  SEND_AGENT_MESSAGE_TOOL_NAME,
-  sendAgentMessageArgsSchema,
-  sendAgentMessageToolDefinition,
-} from './send-agent-message'
+  executeSendToAgent,
+  SEND_TO_AGENT_TOOL_NAME,
+  sendToAgentArgsSchema,
+  sendToAgentToolDefinition,
+} from './send-to-agent'
 import {
   executeSendMessage,
   SEND_MESSAGE_TOOL_NAME,
@@ -93,7 +93,7 @@ export const agentToolDefinitions: ToolDefinition[] = [
   taskToolDefinition,
   sendMessageToolDefinition,
   reactToMessageToolDefinition,
-  sendAgentMessageToolDefinition,
+  sendToAgentToolDefinition,
   ...memoryToolDefinitions,
   runShellToolDefinition,
   readToolDefinition,
@@ -226,11 +226,11 @@ export async function executeAgentToolCall(
     if (call.function.name === STOP_SUBAGENT_TOOL_NAME) {
       return respond(await executeStopSubagent(stopSubagentArgsSchema.parse(args), context))
     }
-    if (call.function.name === SEND_AGENT_MESSAGE_TOOL_NAME) {
+    if (call.function.name === SEND_TO_AGENT_TOOL_NAME) {
       return respond(
-        await executeSendAgentMessage(
+        await executeSendToAgent(
           agent,
-          sendAgentMessageArgsSchema.parse(args),
+          sendToAgentArgsSchema.parse(args),
           call,
           context,
         ),

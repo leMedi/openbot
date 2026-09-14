@@ -1,7 +1,7 @@
 // System prompt rendering: the default assistant prompt, the agent profile
 // section, and their assembly with the memory sections into one system prompt.
 
-import type { Agent, Group, MemoryItem, Profile } from '@openbot/db'
+import type { Agent, Group, MemoryItem, Profile, Routine } from '@openbot/db'
 import { renderMemoryPrompt } from '@openbot/memory'
 import { isAgentDesktopEnabled, isDesktopEnabled } from '../desktop/mode'
 
@@ -406,6 +406,7 @@ export function renderAgentPrompt(
   agent: Agent,
   context: ConversationPromptContext = { kind: 'private' },
   availableAgents: Agent[] = [],
+  availableGroups: Group[] = [],
 ): string {
   const sharedRoom = context.kind === 'group'
   const name = agent.name.trim()
@@ -419,12 +420,31 @@ export function renderAgentPrompt(
   }
   if (description) lines.push(`Description: ${description}`)
   const peers = availableAgents.filter((candidate) => candidate.id !== agent.id)
-  if (peers.length > 0) {
-    lines.push('Other local agents available through SendAgentMessage:')
-    lines.push(...peers.map((peer) => `- ${peer.name} (${peer.id})`))
-    lines.push(
-      'Direct delivery is asynchronous: the tool acknowledges durable queueing immediately, and any reply arrives on a later turn.',
+  if (!sharedRoom) {
+    const groups = availableGroups.filter((group) =>
+      group.membersJson.members.some((member) => member.agentId === agent.id),
     )
+    if (peers.length > 0 || groups.length > 0) {
+      lines.push('Your teammates are separate assistants with their own persona, memory, and main chat.')
+      lines.push('SendToAgent is asynchronous. Target an agent ID or a group ID you belong to. Do not wait or poll for replies.')
+      if (peers.length > 0) {
+        lines.push('Agents:')
+        lines.push(...peers.map((peer) =>
+          `- ${peer.name} (id: ${peer.id})${peer.description.trim() ? ` — ${peer.description.trim()}` : ''}`,
+        ))
+      }
+      if (groups.length > 0) {
+        const nameById = new Map(availableAgents.map((candidate) => [candidate.id, candidate.name]))
+        lines.push('Groups you belong to:')
+        lines.push(...groups.map((group) => {
+          const members = group.membersJson.members
+            .map((member) => nameById.get(member.agentId))
+            .filter(Boolean)
+            .join(', ')
+          return `- ${group.name} (id: ${group.id})${members ? ` — with ${members}` : ''}`
+        }))
+      }
+    }
   }
   if (context.kind === 'group') {
     const others = context.members
@@ -433,17 +453,29 @@ export function renderAgentPrompt(
     lines.push(
       `You are speaking in the shared group room "${context.group.name}"${
         others.length > 0 ? ` together with ${others.join(', ')}` : ''
-      }. Messages from other members appear as "[name]: ...". Reply as yourself, without a name prefix.`,
+      }. You have your full toolkit, but only SendMessage reaches the room. Stay in character as ${agent.name}. Use SendMessage once or twice when you have something useful to add; otherwise send exactly "(pass)". Never reveal private one-on-one context.`,
     )
   }
   return lines.length === 0 ? '' : ['Agent profile:', ...lines].join('\n')
+}
+
+export function renderRoutinesPrompt(routines: Routine[]) {
+  if (routines.length === 0) return ''
+  return [
+    '[existing_routines]',
+    ...routines.map((routine) =>
+      `- ${routine.name} (id: ${routine.id}) — ${routine.enabled ? 'enabled' : 'paused'}; ${routine.cronExpression} in ${routine.timezone}; instruction: ${routine.instruction}`,
+    ),
+  ].join('\n')
 }
 
 export type SystemPromptInput = {
   agent: Agent
   userProfile: Profile
   availableAgents?: Agent[]
+  availableGroups?: Group[]
   memory: MemoryItem[]
+  routines?: Routine[]
   conversation: ConversationPromptContext
   mcpToolCount?: number
   toolCapabilities?: PromptToolCapabilities
@@ -456,7 +488,7 @@ export function renderSystemPrompt(input: SystemPromptInput): string {
   const desktopObservationEnabled = desktopAvailable && (
     input.toolCapabilities?.screenshotEnabled ?? input.toolCapabilities?.taskEnabled ?? true
   )
-  return [
+  const base = [
     renderDefaultSystemPrompt(desktopAvailable, input.toolCapabilities),
     renderRuntimeCapabilitiesPrompt({
       desktopEnabled,
@@ -464,9 +496,24 @@ export function renderSystemPrompt(input: SystemPromptInput): string {
       mcpToolCount: input.mcpToolCount ?? 0,
       pluginManagementEnabled: input.toolCapabilities?.pluginManagementEnabled,
     }),
+  ]
+  if (input.conversation.kind === 'group') {
+    return [
+      ...base,
+      renderAgentPrompt(input.agent, input.conversation),
+    ].filter(Boolean).join('\n\n')
+  }
+  return [
+    ...base,
     renderUserProfilePrompt(input.userProfile),
-    renderAgentPrompt(input.agent, input.conversation, input.availableAgents),
+    renderAgentPrompt(
+      input.agent,
+      input.conversation,
+      input.availableAgents,
+      input.availableGroups,
+    ),
     renderMemoryPrompt(input.memory),
+    renderRoutinesPrompt(input.routines ?? []),
   ]
     .filter(Boolean)
     .join('\n\n')

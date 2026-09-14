@@ -138,9 +138,6 @@ export const conversations = sqliteTable('conversations', {
   uniqueIndex('conversations_group_owner_unique')
     .on(table.ownerGroupId)
     .where(sql`${table.ownerGroupId} IS NOT NULL`),
-  uniqueIndex('conversations_agent_direct_unique')
-    .on(table.ownerAgentId)
-    .where(sql`${table.ownerAgentId} IS NOT NULL AND ${table.origin} = 'agent-direct'`),
   uniqueIndex('conversations_agent_main_unique')
     .on(table.ownerAgentId)
     .where(sql`${table.ownerAgentId} IS NOT NULL AND ${table.origin} = 'agent-main'`),
@@ -190,6 +187,7 @@ export const turns = sqliteTable('turns', {
   }),
   lane: text('lane').notNull(),
   source: text('source').notNull(),
+  priority: integer('priority', { mode: 'boolean' }).notNull().default(false),
   status: text('status').notNull().default('queued'),
   mode: text('mode').notNull().default('default'),
   modelProvider: text('model_provider'),

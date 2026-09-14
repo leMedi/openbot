@@ -19,11 +19,20 @@ export const Route = createFileRoute('/api/files/$fileId')({
         }
 
         const filename = managed.file.originalName.replace(/[\r\n"\\]/g, '_')
+        const safeInlineTypes = new Set([
+          'image/png',
+          'image/jpeg',
+          'image/gif',
+          'image/webp',
+        ])
+        const mediaType = managed.file.mediaType ?? 'application/octet-stream'
+        const inline = safeInlineTypes.has(mediaType)
         return new Response(new Uint8Array(managed.bytes), {
           headers: {
-            'content-type': managed.file.mediaType ?? 'application/octet-stream',
+            'content-type': inline ? mediaType : 'application/octet-stream',
             'content-length': String(managed.file.byteSize),
-            'content-disposition': `inline; filename="${filename}"`,
+            'content-disposition': `${inline ? 'inline' : 'attachment'}; filename="${filename}"`,
+            'x-content-type-options': 'nosniff',
             'cache-control': 'private, max-age=3600',
             etag,
           },

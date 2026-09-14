@@ -37,6 +37,8 @@ const lanePriority = sql`CASE ${schema.turns.lane}
   WHEN 'agent' THEN 1
   ELSE 2 END`
 
+const messagePriority = sql`CASE WHEN ${schema.turns.priority} THEN 0 ELSE 1 END`
+
 const unsettledPriority = sql`CASE ${schema.turns.status}
   WHEN 'waiting' THEN 0
   WHEN 'running' THEN 0
@@ -91,7 +93,7 @@ export async function findNextQueuedTurn(conversationId: string) {
         eq(schema.turns.status, 'queued'),
       ),
     )
-    .orderBy(asc(lanePriority), asc(schema.turns.createdAt), asc(schema.turns.id))
+    .orderBy(asc(lanePriority), asc(messagePriority), asc(schema.turns.createdAt), asc(schema.turns.id))
     .limit(1)
   return turn
 }
@@ -118,7 +120,7 @@ export async function findNextQueuedTurnForAgent(agentId: string) {
         )`,
       ),
     )
-    .orderBy(asc(lanePriority), asc(schema.turns.createdAt), asc(schema.turns.id))
+    .orderBy(asc(lanePriority), asc(messagePriority), asc(schema.turns.createdAt), asc(schema.turns.id))
     .limit(1)
   return turn
 }
@@ -343,6 +345,21 @@ export async function claimQueuedTurn(id: string) {
     )
     .returning()
   return claimed
+}
+
+/** Requeues a non-user turn after a priority peer message interrupted its model run. */
+export async function requeuePriorityInterruptedTurn(id: string) {
+  const [turn] = await db.update(schema.turns).set({
+    status: 'queued',
+    startedAt: null,
+    runtimeContextJson: sql`json_set(${schema.turns.runtimeContextJson}, '$.priorityRedeliveryAt', ${Date.now()})`,
+    updatedAt: Date.now(),
+  }).where(and(
+    eq(schema.turns.id, id),
+    eq(schema.turns.status, 'running'),
+    sql`${schema.turns.lane} <> 'user'`,
+  )).returning()
+  return turn
 }
 
 /**
@@ -1320,20 +1337,19 @@ export function finalizeTurnTerminal(input: TurnTerminalInput) {
 export type GroupChildTurnsInput = {
   /** The running group-targeted turn being orchestrated. */
   groupTurnId: string
-  /** The selected member agents, in round order (one child turn each). */
-  targetAgentIds: string[]
+  /** Selected members and their per-turn output caps, in round order. */
+  targets: { agentId: string; maxMessages: number }[]
   orchestrationRound?: number
 }
 
 /**
  * The group orchestrator's delegation boundary: one transaction queues the
  * agent-targeted child turns (one per selected member, in round order) in the
- * group's shared conversation and settles the parent group turn as succeeded.
- * Either the delegation fully exists afterwards or the group turn stays
- * running for startup recovery to re-queue.
+ * group's shared conversation. The parent remains running while the
+ * orchestrator evaluates later rounds and settles it after the bounded run.
  */
 export async function queueGroupChildTurns(input: GroupChildTurnsInput) {
-  if (input.targetAgentIds.length === 0) {
+  if (input.targets.length === 0) {
     throw new Error('A group round needs at least one member')
   }
   return db.transaction(async (tx) => {
@@ -1350,20 +1366,34 @@ export async function queueGroupChildTurns(input: GroupChildTurnsInput) {
       throw new Error(`Turn ${input.groupTurnId} is not running`)
     }
 
+    const existing = (await tx
+      .select()
+      .from(schema.turns)
+      .where(and(
+        eq(schema.turns.parentTurnId, parent.id),
+        eq(schema.turns.orchestrationRound, input.orchestrationRound ?? 0),
+      )))
+      .sort((a, b) => (a.positionInRound ?? 0) - (b.positionInRound ?? 0))
+    if (existing.length > 0) return { childTurns: existing, groupTurn: parent }
+
     const now = Date.now()
     const childTurns = await tx
       .insert(schema.turns)
       .values(
-        input.targetAgentIds.map((targetAgentId, index) => ({
+        input.targets.map((target, index) => ({
           id: createId('trn'),
           conversationId: parent.conversationId,
-          targetAgentId,
+          targetAgentId: target.agentId,
           parentTurnId: parent.id,
           lane: 'agent' as const,
           source: 'group-orchestrator' as const,
           status: 'queued' as const,
           orchestrationRound: input.orchestrationRound ?? 0,
           positionInRound: index,
+          runtimeContextJson: {
+            version: 1 as const,
+            groupMessageLimit: target.maxMessages,
+          },
           createdAt: now,
           updatedAt: now,
         })),
@@ -1372,9 +1402,7 @@ export async function queueGroupChildTurns(input: GroupChildTurnsInput) {
     // Insert order is not guaranteed back from returning(); restore round order.
     childTurns.sort((a, b) => (a.positionInRound ?? 0) - (b.positionInRound ?? 0))
 
-    const groupTurn = await completeTurn(parent.id, { status: 'succeeded' }, tx)
-    if (!groupTurn) throw new Error(`Turn ${input.groupTurnId} not found`)
-    return { childTurns, groupTurn }
+    return { childTurns, groupTurn: parent }
   })
 }
 
