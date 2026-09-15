@@ -62,9 +62,11 @@ test('projects bounded worker-local authorization context', () => {
 
 test('uses strict classifier JSON and the configured model runtime', async () => {
   let received: unknown
+  let options: unknown
   const runtime = {
-    completeSimple: async (_model: unknown, context: unknown) => {
+    completeSimple: async (_model: unknown, context: unknown, requestOptions: unknown) => {
       received = context
+      options = requestOptions
       return {
         stopReason: 'stop',
         content: [{ type: 'text', text: '{"decision":"allow","reason":"Requested navigation"}' }],
@@ -73,7 +75,12 @@ test('uses strict classifier JSON and the configured model runtime', async () =>
   } as unknown as ModelRuntime
   const review = createPiBrowserReviewer({
     runtime,
-    model: { provider: 'provider', id: 'orchestrator' } as never,
+    model: {
+      provider: 'opencode-go',
+      id: 'orchestrator',
+      baseUrl: 'https://opencode.ai/zen/go/v1',
+    } as never,
+    sessionId: 'trn_browser_review',
     getMessages: () => messages,
   })
   const decision = await review({
@@ -88,9 +95,13 @@ test('uses strict classifier JSON and the configured model runtime', async () =>
   assert.deepEqual(decision, {
     kind: 'allow',
     reason: 'Requested navigation',
-    model: 'provider/orchestrator',
+    model: 'opencode-go/orchestrator',
   })
   assert.match(JSON.stringify(received), /Open the requested listing/)
+  assert.deepEqual((options as { headers?: unknown }).headers, {
+    'x-opencode-session': 'trn_browser_review',
+    'x-opencode-client': 'openbot',
+  })
 })
 
 test('rejects malformed classifier output for manual review', async () => {
@@ -103,6 +114,7 @@ test('rejects malformed classifier output for manual review', async () => {
   const review = createPiBrowserReviewer({
     runtime,
     model: { provider: 'provider', id: 'orchestrator' } as never,
+    sessionId: 'trn_browser_review',
     getMessages: () => [],
   })
   const decision = await review({

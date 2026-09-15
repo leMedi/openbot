@@ -1,6 +1,7 @@
 import type { Api, Message, Model } from '@earendil-works/pi-ai'
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import * as z from 'zod'
+import { openCodeSessionHeaders } from '../provider-session'
 import type { BrowserToolArgs, BrowserToolName } from '../tools/browser'
 
 const MAX_MESSAGE_CHARS = 4_000
@@ -123,6 +124,7 @@ function assistantText(message: Awaited<ReturnType<ModelRuntime['completeSimple'
 export function createPiBrowserReviewer(input: {
   runtime: ModelRuntime
   model: Model<Api>
+  sessionId: string
   getMessages: () => readonly Message[]
 }) {
   const model = `${input.model.provider}/${input.model.id}`
@@ -155,6 +157,7 @@ export function createPiBrowserReviewer(input: {
         temperature: 0,
         maxTokens: 500,
         maxRetries: 0,
+        headers: openCodeSessionHeaders(input.model, input.sessionId),
       })
       if (response.stopReason === 'error' || response.stopReason === 'aborted') {
         return {

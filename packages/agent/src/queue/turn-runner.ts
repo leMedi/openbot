@@ -514,6 +514,7 @@ async function executeTurn(turnId: string) {
       ? createPiBrowserReviewer({
           runtime: browserReviewModel.runtime,
           model: browserReviewModel.model,
+          sessionId: turnId,
           getMessages: () => browserReviewMessages(),
         })
       : undefined
