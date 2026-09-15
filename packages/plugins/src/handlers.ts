@@ -15,6 +15,7 @@ import {
   matchesMcpCatalogEntry,
   mcpCatalogServerConfiguration,
 } from './mcp-catalog'
+import { availableMcpCatalogEntries } from './mcp-catalog-availability'
 import {
   agentMcpAccountsInput,
   mcpAccountUpdateInput,
@@ -42,6 +43,9 @@ export async function installCatalogServer(input: unknown) {
   const { key } = mcpCatalogInstallInput.parse(input)
   const entry = findMcpCatalogEntry(key)
   if (!entry) throw new Error(`Unknown MCP catalog entry: ${key}`)
+  if (!availableMcpCatalogEntries().some((candidate) => candidate.key === entry.key)) {
+    throw new Error(`MCP catalog entry is not configured: ${key}`)
+  }
 
   const existing = (await listMcpServers()).find((server) => server.serverKey === entry.key)
   if (existing) {

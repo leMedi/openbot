@@ -35,7 +35,7 @@ import { useIsMobile } from '@/hooks/use-is-mobile'
 import { addAgent, getAgents } from '@/server/agents'
 import { getAiProviders } from '@/server/providers'
 import { addGroup, getGroups } from '@/server/groups'
-import { getMcpConfiguration } from '@/server/mcp'
+import { getAvailableMcpCatalogKeys, getMcpConfiguration } from '@/server/mcp'
 import { getUserProfile } from '@/server/profile'
 import {
   cancelConversationTurn,
@@ -73,16 +73,35 @@ const LAST_CONVERSATION_KEY = 'openbot:last-conversation'
 
 export const Route = createFileRoute('/')({
   loader: async () => {
-    const [agents, groups, conversations, mcp, profile, providers, desktopMode] = await Promise.all([
+    const [
+      agents,
+      groups,
+      conversations,
+      mcp,
+      mcpCatalogKeys,
+      profile,
+      providers,
+      desktopMode,
+    ] = await Promise.all([
       getAgents(),
       getGroups(),
       getConversations(),
       getMcpConfiguration(),
+      getAvailableMcpCatalogKeys(),
       getUserProfile(),
       getAiProviders(),
       getDesktopMode(),
     ])
-    return { agents, groups, conversations, mcp, profile, providers, desktopMode }
+    return {
+      agents,
+      groups,
+      conversations,
+      mcp,
+      mcpCatalogKeys,
+      profile,
+      providers,
+      desktopMode,
+    }
   },
   component: OpenBot,
 })
@@ -93,6 +112,7 @@ function OpenBot() {
     groups,
     conversations: conversationRows,
     mcp,
+    mcpCatalogKeys,
     profile,
     providers,
     desktopMode,
@@ -649,6 +669,7 @@ function OpenBot() {
         }}
         servers={mcp.servers}
         accounts={mcp.accounts}
+        availableCatalogKeys={mcpCatalogKeys}
         initialError={pluginsError}
         onChanged={() => router.invalidate()}
       />

@@ -9,7 +9,8 @@ import {
   type ToolDefinition,
   type WaitingState,
 } from '@openbot/db'
-import { MCP_CATALOG, type McpCatalogEntry, matchesMcpCatalogEntry } from './mcp-catalog'
+import { type McpCatalogEntry, matchesMcpCatalogEntry } from './mcp-catalog'
+import { availableMcpCatalogEntries } from './mcp-catalog-availability'
 import { installCatalogServer } from './handlers'
 
 export type PluginApproval = {
@@ -201,7 +202,9 @@ export async function applyApprovedPlugin(
   approval: PluginApproval,
 ) {
   if (!approval.approved) return undefined
-  const entry = MCP_CATALOG.find((candidate) => candidate.key === approval.pluginId)
+  const entry = availableMcpCatalogEntries().find(
+    (candidate) => candidate.key === approval.pluginId,
+  )
   if (!entry) throw new Error(`Unknown approved plugin: ${approval.pluginId}`)
   const accountIds = [...approval.accountIds].sort()
   if (new Set(accountIds).size !== accountIds.length) {
@@ -221,6 +224,7 @@ export function createMcpManagementTools(
   return {
     definitions,
     async execute(call) {
+      const catalog = availableMcpCatalogEntries()
       let parsed: unknown
       try {
         parsed = JSON.parse(call.function.arguments || '{}')
@@ -238,7 +242,7 @@ export function createMcpManagementTools(
         }
         const query = typeof input.query === 'string' ? input.query.trim() : ''
         const tokens = searchTokens(query)
-        const matches = MCP_CATALOG.filter((entry) =>
+        const matches = catalog.filter((entry) =>
           !query || (tokens.length > 0 && matchesSearch(entry, tokens)),
         )
         if (matches.length === 0) return `No plugins match "${query}".`
@@ -271,7 +275,7 @@ export function createMcpManagementTools(
       }
 
       const pluginId = typeof input.plugin_id === 'string' ? input.plugin_id : ''
-      const entry = MCP_CATALOG.find((candidate) => candidate.key === pluginId)
+      const entry = catalog.find((candidate) => candidate.key === pluginId)
       if (!entry) return `Unknown plugin: ${pluginId || '(missing plugin_id)'}.`
       if (call.function.name === 'GetPlugin') return renderPlugin(agentId, entry)
 

@@ -7,10 +7,18 @@ import {
   mcpServerCreateInput,
   mcpServerUpdateInput,
 } from '@openbot/plugins'
+import type { McpCatalogKey } from '@openbot/plugins/mcp-catalog'
 import { createServerFn } from '@tanstack/react-start'
 
 export const getMcpConfiguration = createServerFn({ method: 'GET' }).handler(async () =>
   (await import('@openbot/plugins')).readConfiguration(),
+)
+
+export const getAvailableMcpCatalogKeys = createServerFn({ method: 'GET' }).handler(
+  async () => {
+    const { availableMcpCatalogEntries } = await import('@openbot/plugins')
+    return availableMcpCatalogEntries().map((entry) => entry.key) as McpCatalogKey[]
+  },
 )
 
 export const addMcpServer = createServerFn({ method: 'POST' })

@@ -32,6 +32,7 @@ export function PluginsDialog({
   onOpenChange,
   servers,
   accounts,
+  availableCatalogKeys,
   initialError = '',
   onChanged,
 }: {
@@ -39,6 +40,7 @@ export function PluginsDialog({
   onOpenChange: (open: boolean) => void
   servers: SafeMcpServer[]
   accounts: SafeMcpAccount[]
+  availableCatalogKeys: McpCatalogKey[]
   initialError?: string
   onChanged: () => Promise<unknown>
 }) {
@@ -57,6 +59,7 @@ export function PluginsDialog({
             <PluginsTab
               servers={servers}
               accounts={accounts}
+              availableCatalogKeys={availableCatalogKeys}
               initialError={initialError}
               onChanged={onChanged}
             />
@@ -136,16 +139,23 @@ function hostOf(url: string) {
 function PluginsTab({
   servers,
   accounts,
+  availableCatalogKeys,
   initialError,
   onChanged,
 }: {
   servers: SafeMcpServer[]
   accounts: SafeMcpAccount[]
+  availableCatalogKeys: McpCatalogKey[]
   initialError: string
   onChanged: () => Promise<unknown>
 }) {
   const [query, setQuery] = useState('')
-  const [catalogKey, setCatalogKey] = useState<McpCatalogKey | ''>(MCP_CATALOG[0].key)
+  const availableCatalog = MCP_CATALOG.filter((entry) =>
+    availableCatalogKeys.includes(entry.key),
+  )
+  const [catalogKey, setCatalogKey] = useState<McpCatalogKey | ''>(
+    availableCatalog[0]?.key ?? '',
+  )
   const [detailId, setDetailId] = useState('')
   const [creatingServer, setCreatingServer] = useState(false)
   const [draft, setDraft] = useState<McpDraft | null>(null)
@@ -156,7 +166,7 @@ function PluginsTab({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(initialError)
 
-  const detailCatalog = MCP_CATALOG.find((entry) => entry.key === catalogKey)
+  const detailCatalog = availableCatalog.find((entry) => entry.key === catalogKey)
   const detail = creatingServer
     ? undefined
     : catalogKey
@@ -165,7 +175,7 @@ function PluginsTab({
         )
       : servers.find((server) => server.id === detailId)
   const normalizedQuery = query.trim().toLowerCase()
-  const catalogRail = MCP_CATALOG.filter((entry) =>
+  const catalogRail = availableCatalog.filter((entry) =>
     `${entry.name} ${entry.skills.join(' ')}`.toLowerCase().includes(normalizedQuery),
   )
   const catalogAccountCount = (entry: McpCatalogEntry) => {
@@ -186,10 +196,10 @@ function PluginsTab({
 
   useEffect(() => {
     const savedKey = sessionStorage.getItem('openbot:selected-mcp')
-    if (savedKey && MCP_CATALOG.some((entry) => entry.key === savedKey)) {
+    if (savedKey && availableCatalog.some((entry) => entry.key === savedKey)) {
       setCatalogKey(savedKey as McpCatalogKey)
     }
-  }, [])
+  }, [availableCatalogKeys])
 
   useEffect(() => {
     setError(initialError)
@@ -205,10 +215,10 @@ function PluginsTab({
       if (firstCustom) setDetailId(firstCustom.id)
     }
     if (detailId && !servers.some((server) => server.id === detailId)) {
-      setCatalogKey(MCP_CATALOG[0].key)
+      setCatalogKey(availableCatalog[0]?.key ?? '')
       setDetailId('')
     }
-  }, [catalogKey, creatingServer, detailId, servers])
+  }, [availableCatalogKeys, catalogKey, creatingServer, detailId, servers])
 
   function resetDetailState() {
     setCreatingServer(false)
