@@ -217,6 +217,19 @@ export function entryFromMessage(
   if (row.kind === 'message' && row.role === 'user') {
     const payload = (row.payloadJson ?? {}) as SendMessagePayloadView
     if (payload.event === 'turn_response') return null
+    const isAgentMessage = payload.event === 'direct-agent-message' && row.senderAgentId !== null
+    if (isAgentMessage) {
+      return {
+        type: 'message',
+        id: row.id,
+        author,
+        time,
+        markdown: row.bodyText ?? '',
+        ...(row.attachmentsJson.items.length > 0 && { attachments: attachmentsFrom(row) }),
+        reactions: reactionsFrom(row),
+        replyTo: row.replyToEntryId ?? undefined,
+      }
+    }
     return {
       type: 'message',
       id: row.id,
@@ -386,7 +399,11 @@ export function activityFromMessages(
           toolStatus: call.status,
         }
       }
-      if (row.kind === 'message' && row.role === 'user') {
+      if (
+        row.kind === 'message' &&
+        row.role === 'user' &&
+        row.payloadJson.event !== 'direct-agent-message'
+      ) {
         return { kind: 'you', text: row.bodyText ?? '' }
       }
       if (row.kind === 'message') {

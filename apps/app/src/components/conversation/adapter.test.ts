@@ -123,6 +123,26 @@ test('restores persisted user attachments after reload', () => {
   }])
 })
 
+test('renders inbound direct-agent rows as the sending agent', () => {
+  const sender: Author = { id: 'agent-2', name: 'Sender', color: '#ffffff', kind: 'agent' }
+  const entry = entryFromMessage(row({
+    kind: 'message',
+    role: 'user',
+    direction: 'inbound',
+    senderAgentId: sender.id,
+    bodyText: 'Agent update',
+    payloadJson: {
+      version: 1,
+      event: 'direct-agent-message',
+      senderAgentName: sender.name,
+    },
+  }), sender)
+  assert.equal(entry?.type, 'message')
+  if (entry?.type !== 'message') return
+  assert.equal(entry.author, sender)
+  assert.equal(entry.markdown, 'Agent update')
+})
+
 test('reconciles persisted terminal turns with their streaming placeholder', () => {
   for (const event of ['turn_cancelled', 'turn_failed'] as const) {
     const entry = entryFromMessage(row({

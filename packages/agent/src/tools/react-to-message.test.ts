@@ -53,6 +53,7 @@ test('toggles an agent reaction on a user message', async () => {
     await renderPrivateTurnPrompt({
       conversationId: created.conversation.id,
       turnId: accepted.turn.id,
+      workspace: path.join(testData, 'workspace'),
     }),
     `[message_id: ${userMessage.id}] Good news!`,
   )
@@ -119,4 +120,19 @@ test('rejects unknown and non-user targets', async () => {
     ),
   )
   assert.match(ownMessage.error, /not a user message/)
+
+  const peer = await db.createAgent({ name: 'Peer' })
+  const direct = await db.acceptDirectAgentMessage({
+    senderAgentId: peer.agent.id,
+    recipientAgentId: created.agent.id,
+    content: 'Agent-authored input',
+  })
+  const agentMessage = JSON.parse(
+    await executeAgentToolCall(
+      created.agent,
+      call(direct.inbound.id, '👍'),
+      context(created.conversation.id),
+    ),
+  )
+  assert.match(agentMessage.error, /not a user message/)
 })

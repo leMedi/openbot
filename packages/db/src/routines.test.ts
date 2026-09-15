@@ -90,6 +90,9 @@ test('stores direct messages in visible main chats and preserves group identity 
   })
   assert.equal(direct.outbound.conversationId, sender.conversation.id)
   assert.equal(direct.inbound.conversationId, recipient.conversation.id)
+  assert.equal(direct.inbound.role, 'user')
+  assert.equal(direct.inbound.senderAgentId, sender.agent.id)
+  assert.equal(direct.inbound.turnId, direct.turn.id)
   assert.equal(direct.turn.conversationId, recipient.conversation.id)
   const directRoutine = await store.createRoutine({
     agentId: recipient.agent.id,

@@ -109,7 +109,12 @@ export async function toggleAgentReaction(input: ToggleAgentReactionInput) {
         ),
       )
       .limit(1)
-    if (!message || message.kind !== 'message' || message.role !== 'user') {
+    if (
+      !message ||
+      message.kind !== 'message' ||
+      message.role !== 'user' ||
+      message.senderAgentId !== null
+    ) {
       throw new Error('User message not found')
     }
 

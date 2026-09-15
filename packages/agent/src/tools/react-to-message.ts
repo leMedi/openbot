@@ -55,7 +55,8 @@ export async function executeReactToMessage(
     (message) =>
       message.id === args.message_id &&
       message.kind === 'message' &&
-      message.role === 'user',
+      message.role === 'user' &&
+      message.senderAgentId === null,
   )
   if (!target) {
     return {

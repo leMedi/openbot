@@ -475,37 +475,6 @@ export async function acceptDirectAgentMessage(input: DirectAgentMessageInput) {
           priority: input.priority ?? false,
           imageFileIds: input.attachments?.items.map((item) => item.fileId) ?? [],
         })
-        const outbound = await appendConversationMessage(
-          {
-            conversationId: senderConversation.id,
-            kind: 'message',
-            role: 'assistant',
-            direction: 'outbound',
-            bodyText: content,
-            payload,
-            senderAgentId: sender.id,
-            recipientAgentId: recipient.id,
-            deliveryId,
-            attachments: input.attachments,
-          },
-          tx,
-        )
-        const inbound = await appendConversationMessage(
-          {
-            conversationId: recipientConversation.id,
-            kind: 'message',
-            role: 'assistant',
-            direction: 'inbound',
-            bodyText: content,
-            payload,
-            senderAgentId: sender.id,
-            recipientAgentId: recipient.id,
-            deliveryId,
-            attachments: input.attachments,
-          },
-          tx,
-        )
-
         const now = Date.now()
         const [turn] = await tx
           .insert(schema.turns)
@@ -538,6 +507,37 @@ export async function acceptDirectAgentMessage(input: DirectAgentMessageInput) {
             updatedAt: now,
           })
           .returning()
+        const outbound = await appendConversationMessage(
+          {
+            conversationId: senderConversation.id,
+            kind: 'message',
+            role: 'assistant',
+            direction: 'outbound',
+            bodyText: content,
+            payload,
+            senderAgentId: sender.id,
+            recipientAgentId: recipient.id,
+            deliveryId,
+            attachments: input.attachments,
+          },
+          tx,
+        )
+        const inbound = await appendConversationMessage(
+          {
+            conversationId: recipientConversation.id,
+            kind: 'message',
+            role: 'user',
+            direction: 'inbound',
+            bodyText: content,
+            payload,
+            turnId: turn.id,
+            senderAgentId: sender.id,
+            recipientAgentId: recipient.id,
+            deliveryId,
+            attachments: input.attachments,
+          },
+          tx,
+        )
         return { deliveryId, outbound, inbound, turn }
       })
     } catch (error) {
