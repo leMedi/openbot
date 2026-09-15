@@ -126,6 +126,8 @@ export type MessageRowHandlers = {
   isWidgetActive?: (entry: MessageEntry) => boolean
   /** Sends the user's answer for the entry's widget. */
   onWidgetRespond?: (id: string, response: WidgetResponse) => void
+  /** Reopens a pending Remote Desktop handoff without resolving it. */
+  onOpenDesktopHelp?: () => void
 }
 
 export function MessageRow({
@@ -238,6 +240,7 @@ export function MessageRow({
                     widget={entry.widget}
                     interactive={!readOnly && (handlers.isWidgetActive?.(entry) ?? false)}
                     onRespond={(response) => handlers.onWidgetRespond?.(entry.id, response)}
+                    onOpenDesktop={handlers.onOpenDesktopHelp}
                   />
                 </div>
               )}
@@ -250,6 +253,7 @@ export function MessageRow({
             widget={entry.widget}
             interactive={!readOnly && (handlers.isWidgetActive?.(entry) ?? false)}
             onRespond={(response) => handlers.onWidgetRespond?.(entry.id, response)}
+            onOpenDesktop={handlers.onOpenDesktopHelp}
           />
         )}
 

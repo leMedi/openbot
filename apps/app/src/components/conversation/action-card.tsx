@@ -12,16 +12,73 @@ export function ActionCard({
   widget,
   interactive,
   onRespond,
+  onOpenDesktop,
 }: {
   widget: WidgetView
   /** Only the widget of the currently suspended turn accepts input. */
   interactive?: boolean
   onRespond?: (response: WidgetResponse) => void
+  onOpenDesktop?: () => void
 }) {
   if (widget.plugin) {
     return <PluginConnectCard widget={widget} interactive={interactive} onRespond={onRespond} />
   }
+  if (widget.kind === 'handoff') {
+    return (
+      <DesktopHandoffCard
+        widget={widget}
+        interactive={interactive}
+        onRespond={onRespond}
+        onOpenDesktop={onOpenDesktop}
+      />
+    )
+  }
   return <ChoiceCard widget={widget} interactive={interactive} onRespond={onRespond} />
+}
+
+function DesktopHandoffCard({
+  widget,
+  interactive,
+  onRespond,
+  onOpenDesktop,
+}: {
+  widget: WidgetView
+  interactive?: boolean
+  onRespond?: (response: WidgetResponse) => void
+  onOpenDesktop?: () => void
+}) {
+  const pending = widget.status === 'pending'
+  const active = pending && !!interactive
+  if (!pending) {
+    return (
+      <p className="text-[11px] font-medium text-muted-foreground">
+        {widget.response?.optionId === 'hand_back' ? 'Desktop handed back' : 'Desktop step skipped'}
+      </p>
+    )
+  }
+  return (
+    <div className="flex min-w-64 flex-col gap-2">
+      {widget.helpText && <p className="text-[11px] text-muted-foreground">{widget.helpText}</p>}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          disabled={!active || !onOpenDesktop}
+          onClick={onOpenDesktop}
+          className="rounded-md bg-primary px-3.5 py-1.5 text-[11.5px] font-semibold text-white disabled:opacity-50"
+        >
+          Open Remote Desktop
+        </button>
+        <button
+          type="button"
+          disabled={!active || !onRespond}
+          onClick={() => onRespond?.({ optionId: 'skip', text: 'Skip', dismissed: false })}
+          className="px-1.5 py-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
+        >
+          Skip
+        </button>
+      </div>
+    </div>
+  )
 }
 
 function ChoiceCard({

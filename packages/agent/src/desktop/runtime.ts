@@ -110,6 +110,7 @@ export type DesktopRuntimeOptions = {
     state: WaitingState,
     delivery: { bodyText: string; payload: SendMessagePayload },
   ) => Promise<ConversationMessage | undefined>
+  isAutomationBlocked?: () => Promise<boolean>
   timeoutMs?: number
 }
 
@@ -447,6 +448,13 @@ export class DesktopToolRuntime {
   async screenshot(toolCallId: string): Promise<ComputerResult> {
     const prior = await this.priorResult(toolCallId)
     if (prior) return prior
+    if (await this.options.isAutomationBlocked?.()) {
+      return this.persist(toolCallId, 'Screenshot', {
+        ok: false,
+        status: 'desktop_busy',
+        summary: 'The Remote Desktop is currently handed to the user',
+      })
+    }
     const operation = combinedSignal(this.options.signal, this.timeoutMs)
     const owner = `${this.options.turnId}:${toolCallId}:screenshot`
     let leaseKey = this.options.leaseKey
@@ -512,6 +520,13 @@ export class DesktopToolRuntime {
   async computer(toolCallId: string, args: ComputerArgs): Promise<ComputerResult> {
     const prior = await this.priorResult(toolCallId)
     if (prior) return prior
+    if (await this.options.isAutomationBlocked?.()) {
+      return this.persist(toolCallId, 'Computer', {
+        ok: false,
+        status: 'desktop_busy',
+        summary: 'The Remote Desktop is currently handed to the user',
+      })
+    }
     const operation = combinedSignal(this.options.signal, this.timeoutMs)
     let display: DesktopDisplay | undefined
     let owner: string | undefined

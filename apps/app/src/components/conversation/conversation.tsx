@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Agent, ConversationMessage, Turn, WaitingState } from '@openbot/db'
 import { ChevronLeft, PanelRightOpen, Pencil, Square } from 'lucide-react'
 import { BotAvatar } from '@/components/openbot/bot-avatar'
+import { DesktopDialog } from '@/components/openbot/inspector'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -26,6 +27,8 @@ import type {
 
 let seq = 100
 const nextId = () => `local-${seq++}`
+const ignoreDesktopConnection = () => {}
+const ignoreDesktopPresence = () => {}
 
 function nowTime() {
   const d = new Date()
@@ -93,6 +96,8 @@ export type ConversationProps = {
   onStopSubagent?: (subagentId: string) => Promise<unknown>
   /** A queued/running turn to reattach to on mount (reload during a turn). */
   pendingTurnId?: string | null
+  /** Agent whose Remote Desktop is opened for a RequestDesktopHelp handoff. */
+  desktopAgentId?: string
   /**
    * Resolves the author identity for a persisted message (group rooms map
    * sender agents onto member identities). Defaults to `agent`.
@@ -124,6 +129,7 @@ export function Conversation({
   onSteerSubagent,
   onStopSubagent,
   pendingTurnId,
+  desktopAgentId,
   resolveAuthor,
 }: ConversationProps) {
   const [entries, setEntries] = useState<Entry[]>(initialEntries)
@@ -131,6 +137,7 @@ export function Conversation({
   const [threadRootId, setThreadRootId] = useState<string | null>(null)
   const [threadReplyTo, setThreadReplyTo] = useState<string | undefined>()
   const [fullOpen, setFullOpen] = useState(false)
+  const [desktopHelpOpen, setDesktopHelpOpen] = useState(false)
   const [activeTurnId, setActiveTurnId] = useState<string | null>(pendingTurnId ?? null)
   const [waiting, setWaiting] = useState<{
     turnId: string
@@ -144,6 +151,18 @@ export function Conversation({
 
   const working = entries.some((e) => e.type === 'message' && e.delivery === 'streaming')
   const oneToOne = !members || members.length === 0
+  const desktopHandoff = waiting?.state.interactionKind === 'handoff' ? waiting : null
+  const desktopHandoffResume = desktopHandoff?.state.resumeData
+  const desktopHandoffAgentId = desktopHandoffResume &&
+    typeof desktopHandoffResume === 'object' &&
+    !Array.isArray(desktopHandoffResume) &&
+    typeof desktopHandoffResume.agentId === 'string'
+      ? desktopHandoffResume.agentId
+      : desktopAgentId
+
+  useEffect(() => {
+    if (desktopHandoff) setDesktopHelpOpen(true)
+  }, [desktopHandoff?.turnId, desktopHandoff?.state.originatingToolCall.id])
 
   useEffect(() => {
     const el = scrollRef.current
@@ -551,6 +570,7 @@ export function Conversation({
     isWidgetActive: (entry) =>
       !!waiting && entry.widget?.toolCallId === waiting.state.originatingToolCall.id,
     onWidgetRespond: (entryId, response) => void respondToWidget(entryId, response),
+    onOpenDesktopHelp: () => setDesktopHelpOpen(true),
   }
 
   const threadHandlers: MessageRowHandlers = {
@@ -732,6 +752,37 @@ export function Conversation({
           agentName={agent.name}
           tabs={activityTabs}
           onClose={() => setFullOpen(false)}
+        />
+      )}
+      {desktopHandoff && desktopHandoffAgentId && (
+        <DesktopDialog
+          open={desktopHelpOpen}
+          onOpenChange={setDesktopHelpOpen}
+          agentId={desktopHandoffAgentId}
+          title={title ?? agent.name}
+          instruction={desktopHandoff.state.prompt}
+          onConnectionChange={ignoreDesktopConnection}
+          onPresenceChange={ignoreDesktopPresence}
+          onHandBack={() => {
+            const entryId = widgetEntryIdFor(
+              desktopHandoff.state.originatingToolCall.id,
+            ) ?? ''
+            void respondToWidget(entryId, {
+              optionId: 'hand_back',
+              text: 'Hand back',
+              dismissed: false,
+            })
+          }}
+          onSkip={() => {
+            const entryId = widgetEntryIdFor(
+              desktopHandoff.state.originatingToolCall.id,
+            ) ?? ''
+            void respondToWidget(entryId, {
+              optionId: 'skip',
+              text: 'Skip',
+              dismissed: false,
+            })
+          }}
         />
       )}
     </div>

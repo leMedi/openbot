@@ -22,7 +22,7 @@ import type { Bot, Conversation } from './data'
 import { createDesktopClipboardController } from './desktop-clipboard'
 import { desktopReconnectDelay, instrumentDesktopLiveness } from './desktop-liveness'
 
-type DesktopConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'error'
+export type DesktopConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'error'
 
 const desktopConnectionLabels: Record<DesktopConnectionState, string> = {
   connecting: 'Connecting',
@@ -548,13 +548,16 @@ export function Inspector({
   )
 }
 
-function DesktopDialog({
+export function DesktopDialog({
   open,
   onOpenChange,
   agentId,
   title,
   onConnectionChange,
   onPresenceChange,
+  instruction,
+  onHandBack,
+  onSkip,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -562,6 +565,9 @@ function DesktopDialog({
   title: string
   onConnectionChange: (connection: DesktopConnectionState) => void
   onPresenceChange: (present: boolean) => void
+  instruction?: string
+  onHandBack?: () => void
+  onSkip?: () => void
 }) {
   const [viewerElement, setViewerElement] = useState<HTMLDivElement | null>(null)
   const [connection, setConnection] = useState<DesktopConnectionState>('connecting')
@@ -859,7 +865,7 @@ function DesktopDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex h-[90vh] w-[95vw] max-w-none flex-col sm:max-w-none">
-        <DialogHeader>
+         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 pr-8">
             <span className="flex-1">Live View · {title}</span>
             <span className="flex items-center gap-1.5 text-xs font-normal text-muted-foreground">
@@ -867,7 +873,10 @@ function DesktopDialog({
               {desktopConnectionLabels[connection]}
             </span>
           </DialogTitle>
-        </DialogHeader>
+         </DialogHeader>
+        {instruction && (
+          <p className="rounded-lg border bg-muted/30 px-3 py-2 text-sm">{instruction}</p>
+        )}
         <div
           ref={setViewerElement}
           className="min-h-0 flex-1 overflow-hidden rounded-lg bg-black outline-none focus-within:ring-2 focus-within:ring-ring focus-visible:ring-2 focus-visible:ring-ring"
@@ -880,7 +889,7 @@ function DesktopDialog({
             canvas?.focus()
           }}
         />
-        <div className="flex min-h-6 items-center justify-center gap-3 text-xs" aria-live="polite">
+         <div className="flex min-h-6 items-center justify-center gap-3 text-xs" aria-live="polite">
           <span className="text-muted-foreground">{viewerPresent ? 'Local operator active' : 'Local operator away'}</span>
           <span className="text-muted-foreground">
             Clipboard {clipboardAccess === 'active' ? 'sync active' : clipboardAccess === 'checking' ? 'sync checking' : 'access restricted'}
@@ -894,7 +903,13 @@ function DesktopDialog({
           {(connection === 'error' || connection === 'reconnecting' || liveness === 'stalled') && (
             <Button size="xs" variant="outline" onClick={retryNow}>Retry now</Button>
           )}
-        </div>
+         </div>
+        {instruction && (
+          <DialogFooter>
+            <Button variant="secondary" onClick={onSkip}>Skip</Button>
+            <Button onClick={onHandBack}>Hand back</Button>
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   )

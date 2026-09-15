@@ -37,6 +37,12 @@ import {
   reactToMessageToolDefinition,
 } from './react-to-message'
 import {
+  executeRequestDesktopHelp,
+  REQUEST_DESKTOP_HELP_TOOL_NAME,
+  requestDesktopHelpArgsSchema,
+  requestDesktopHelpToolDefinition,
+} from './request-desktop-help'
+import {
   executeSendToAgent,
   SEND_TO_AGENT_TOOL_NAME,
   sendToAgentArgsSchema,
@@ -91,6 +97,7 @@ export type { ToolTurnContext }
 
 export const agentToolDefinitions: ToolDefinition[] = [
   taskToolDefinition,
+  requestDesktopHelpToolDefinition,
   sendMessageToolDefinition,
   reactToMessageToolDefinition,
   sendToAgentToolDefinition,
@@ -145,7 +152,8 @@ export const backgroundToolDefinitions: ToolDefinition[] = agentToolDefinitions.
     tool.function.name !== CHECK_SUBAGENT_TOOL_NAME &&
     tool.function.name !== MESSAGE_SUBAGENT_TOOL_NAME &&
     tool.function.name !== STOP_SUBAGENT_TOOL_NAME &&
-    tool.function.name !== MANAGE_ROUTINE_TOOL_NAME,
+    tool.function.name !== MANAGE_ROUTINE_TOOL_NAME &&
+    tool.function.name !== REQUEST_DESKTOP_HELP_TOOL_NAME,
 )
 
 /** Routine runs can deliver, use memory/MCP, and inspect their workspace, but
@@ -185,6 +193,16 @@ export async function executeAgentToolCall(
     if (call.function.name === REACT_TO_MESSAGE_TOOL_NAME) {
       return respond(
         await executeReactToMessage(agent, reactToMessageArgsSchema.parse(args), context),
+      )
+    }
+    if (call.function.name === REQUEST_DESKTOP_HELP_TOOL_NAME) {
+      return respond(
+        await executeRequestDesktopHelp(
+          agent,
+          requestDesktopHelpArgsSchema.parse(args),
+          call,
+          context,
+        ),
       )
     }
     if (call.function.name === SCREENSHOT_TOOL_NAME) {

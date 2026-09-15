@@ -16,6 +16,7 @@ import {
   finalizeComputerUseWorkerTurn,
   finalizeGeneralSubagentTurn,
   findChildTurns,
+  findPendingDesktopHandoff,
   findNextQueuedTurnForAgent,
   findNextQueuedTurnForGroup,
   getAgent,
@@ -54,6 +55,7 @@ import {
   DefaultResourceLoader,
   SettingsManager,
 } from '@earendil-works/pi-coding-agent'
+import type { Message as PiMessage } from '@earendil-works/pi-ai'
 import {
   applyApprovedPlugin,
   createMcpManagementTools,
@@ -71,6 +73,7 @@ import {
   browserApprovalFromWaitingState,
   BrowserToolRuntime,
 } from '../browser/runtime'
+import { createPiBrowserReviewer } from '../browser/reviewer'
 import { x11AutomationLeaseKey } from '../automation/lease'
 import {
   computerApprovalFromWaitingState,
@@ -114,6 +117,7 @@ import {
 } from '../tools/computer'
 import { COMPUTER_USE_WORKER_TOOL_NAME } from '../tools/computer-use-worker'
 import { BROWSER_USE_WORKER_TOOL_NAME } from '../tools/browser-use-worker'
+import { REQUEST_DESKTOP_HELP_TOOL_NAME } from '../tools/request-desktop-help'
 import { executorTaskToolDefinition, TASK_TOOL_NAME } from '../tools/task'
 import { toPiBuiltinTools, toPiMcpTools } from '../tools/pi'
 import { listCompletedShellWakes, shellOutputRelativePath } from '../tools/shell/workspace'
@@ -278,7 +282,8 @@ async function projectSubagents(
     const activity = (conversations.get(worker.conversationId) ?? []).filter((message) =>
       message.turnId === worker.id &&
       message.bodyText &&
-      message.payloadJson.event !== 'subagent-control')
+      message.payloadJson.event !== 'subagent-control' &&
+      message.payloadJson.event !== 'browser-use-audit')
     const live = activeTurns.get(worker.id)?.runtimeActivity?.()
     return subagentSummarySchema.parse({
       id: worker.id,
@@ -501,6 +506,17 @@ async function executeTurn(turnId: string) {
       )
     }
     const { runtime: modelRuntime, model } = selectedModel
+    const browserReviewModel = isBrowserUseWorker
+      ? await resolveConfiguredModel(setting.orchestratorModel).catch(() => undefined)
+      : undefined
+    let browserReviewMessages: () => readonly PiMessage[] = () => []
+    const browserReviewer = browserReviewModel
+      ? createPiBrowserReviewer({
+          runtime: browserReviewModel.runtime,
+          model: browserReviewModel.model,
+          getMessages: () => browserReviewMessages(),
+        })
+      : undefined
     const modelKey = formatModelReference({ provider: model.provider, modelId: model.id })
     const waitingState = claimed.waitingStateJson
       ? waitingStateSchema.parse(claimed.waitingStateJson)
@@ -577,7 +593,8 @@ async function executeTurn(turnId: string) {
           tool.function.name !== SCREENSHOT_TOOL_NAME &&
           tool.function.name !== COMPUTER_TOOL_NAME &&
           tool.function.name !== COMPUTER_USE_WORKER_TOOL_NAME &&
-          tool.function.name !== BROWSER_USE_WORKER_TOOL_NAME
+          tool.function.name !== BROWSER_USE_WORKER_TOOL_NAME &&
+          tool.function.name !== REQUEST_DESKTOP_HELP_TOOL_NAME
         ),
       )
       .map((tool) =>
@@ -739,6 +756,9 @@ async function executeTurn(turnId: string) {
               task: string
               title: string
             }) => {
+              if (await findPendingDesktopHandoff(agent.id)) {
+                throw new Error('The Remote Desktop is currently handed to the user')
+              }
               const worker = await enqueueComputerUseWorkerTurn({
                 parentTurnId: turnId,
                 ...input,
@@ -757,6 +777,9 @@ async function executeTurn(turnId: string) {
               task: string
               title: string
             }) => {
+              if (await findPendingDesktopHandoff(agent.id)) {
+                throw new Error('The Remote Desktop is currently handed to the user')
+              }
               const worker = await enqueueBrowserUseWorkerTurn({
                 parentTurnId: turnId,
                 ...input,
@@ -839,6 +862,7 @@ async function executeTurn(turnId: string) {
           emit({ type: 'message', message })
         },
         suspend: toolContext.suspend,
+        isAutomationBlocked: async () => !!await findPendingDesktopHandoff(agent.id),
       })
     }
     if (isBrowserUseWorker) {
@@ -859,6 +883,8 @@ async function executeTurn(turnId: string) {
           emit({ type: 'message', message })
         },
         suspend: toolContext.suspend,
+        ...(browserReviewer && { review: browserReviewer }),
+        isAutomationBlocked: async () => !!await findPendingDesktopHandoff(agent.id),
       })
     }
     const managementTools = hasMcpAccess && !isGeneralSubagent
@@ -926,6 +952,7 @@ async function executeTurn(turnId: string) {
       settingsManager: SettingsManager.inMemory(),
     })
     session = created.session
+    browserReviewMessages = () => created.session.state.messages as PiMessage[]
     active.abortSession = () => created.session.abort()
     if (!isSubagentWorker) {
       active.deliverPriorityMessage = async (message) => {

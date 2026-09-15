@@ -84,7 +84,7 @@ export type WidgetResponse = {
 /** Inline interaction attached to an agent message (SendMessage widget). */
 export type WidgetView = {
   toolCallId: string
-  kind: 'question' | 'approval'
+  kind: 'question' | 'approval' | 'handoff'
   helpText?: string
   options: WidgetOption[]
   allowCustom: boolean

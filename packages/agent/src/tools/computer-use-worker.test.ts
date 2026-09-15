@@ -39,6 +39,7 @@ test('scopes mutating computer control to the computer-use worker', () => {
     agentToolDefinitions.map((tool) => tool.function.name),
     [
       'Task',
+      'RequestDesktopHelp',
       'SendMessage',
       'ReactToMessage',
       'SendToAgent',

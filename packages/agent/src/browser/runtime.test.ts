@@ -185,6 +185,98 @@ test('applies Grok review categories and resumes only an exact one-shot approval
   assert.equal(calls, 2)
 })
 
+test('uses classifier decisions in enforce mode and falls back to one-shot approval', async () => {
+  const allowedContext = await turnContext('allowlist')
+  let allowedCalls = 0
+  const allowed = new browserRuntime.BrowserToolRuntime(options(allowedContext, {
+    review: async () => ({
+      kind: 'allow',
+      reason: 'The task explicitly requests this navigation.',
+      model: 'provider/orchestrator',
+    }),
+    runOperation: async (input) => {
+      allowedCalls += 1
+      await writeFile(input.screenshotPath!, png)
+      return { ok: true, summary: 'Navigated', screenshot: true }
+    },
+  }))
+  assert.equal((await allowed.execute('classified_allow', 'browser_navigate', {
+    url: 'https://example.com',
+  })).status, 'success')
+  assert.equal(allowedCalls, 1)
+  const audit = (await db.listConversationMessages(allowedContext.conversation.id)).find(
+    (row) => row.payloadJson.event === 'browser-use-audit' &&
+      row.payloadJson.toolCallId === 'classified_allow' &&
+      row.payloadJson.stage === 'review_decision',
+  )
+  assert.equal(audit?.payloadJson.reviewerModel, 'provider/orchestrator')
+
+  for (const kind of ['block', 'reject'] as const) {
+    const blockedContext = await turnContext('allowlist')
+    let waiting: WaitingState | undefined
+    const blocked = new browserRuntime.BrowserToolRuntime(options(blockedContext, {
+      review: async () => ({
+        kind,
+        reason: kind === 'block' ? 'The action is not clearly authorized.' : 'Classifier failed.',
+        model: 'provider/orchestrator',
+      }),
+      suspend: async (state) => {
+        waiting = state
+        return undefined
+      },
+    }))
+    assert.equal((await blocked.execute(`classified_${kind}`, 'browser_click', {
+      ref: 'e1',
+      element: 'Submit the form',
+    })).status, 'approval_required')
+    assert.match(waiting?.helpText ?? '', kind === 'block' ? /not clearly authorized/ : /Classifier failed/)
+  }
+})
+
+test('blocks browser operations while the Remote Desktop is handed to the user', async () => {
+  const context = await turnContext('off')
+  let calls = 0
+  const runtime = new browserRuntime.BrowserToolRuntime(options(context, {
+    isAutomationBlocked: async () => true,
+    runOperation: async () => {
+      calls += 1
+      return { ok: true, summary: 'Unexpected operation' }
+    },
+  }))
+  const result = await runtime.execute('blocked_handoff', 'browser_snapshot', {})
+  assert.equal(result.status, 'browser_busy')
+  assert.match(result.summary, /handed to the user/)
+  assert.equal(calls, 0)
+})
+
+test('rechecks a new desktop handoff after classifier review', async () => {
+  const context = await turnContext('allowlist')
+  let handoffChecks = 0
+  let operationCalls = 0
+  const runtime = new browserRuntime.BrowserToolRuntime(options(context, {
+    isAutomationBlocked: async () => {
+      handoffChecks += 1
+      return handoffChecks > 1
+    },
+    review: async () => ({
+      kind: 'allow',
+      reason: 'The action is explicitly requested.',
+      model: 'provider/orchestrator',
+    }),
+    runOperation: async () => {
+      operationCalls += 1
+      return { ok: true, summary: 'Unexpected operation' }
+    },
+  }))
+  const result = await runtime.execute('handoff_after_review', 'browser_click', {
+    ref: 'e1',
+    element: 'Requested listing',
+  })
+  assert.equal(result.status, 'browser_busy')
+  assert.equal(operationCalls, 0)
+  assert.equal(handoffChecks, 2)
+})
+
 test('refuses any further mutation after an unsettled execution audit', async () => {
   const context = await turnContext()
   await db.appendConversationMessage({

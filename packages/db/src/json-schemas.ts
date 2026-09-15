@@ -194,7 +194,7 @@ const widgetPluginSchema = z.object({
 
 export const waitingStateSchema = z.object({
   version: z.literal(1),
-  interactionKind: z.enum(['question', 'approval']).default('question'),
+  interactionKind: z.enum(['question', 'approval', 'handoff']).default('question'),
   prompt: z.string().min(1),
   helpText: z.string().min(1).optional(),
   options: z.array(widgetOptionSchema),
@@ -230,7 +230,7 @@ export const sendMessagePayloadSchema = z.object({
     .object({
       prompt: z.string().min(1),
       helpText: z.string().min(1).optional(),
-      interactionKind: z.enum(['question', 'approval']).default('question'),
+      interactionKind: z.enum(['question', 'approval', 'handoff']).default('question'),
       options: z.array(widgetOptionSchema),
       allowCustom: z.boolean().default(false),
       dismissOnMoveOn: z.boolean().default(false),
@@ -337,6 +337,7 @@ export const browserUsePayloadSchema = z.discriminatedUnion('event', [
     fingerprint: z.string().min(1),
     stage: z.enum(['review_decision', 'execution_started']),
     decision: z.enum(['allowed', 'blocked', 'approval_required', 'approved']).optional(),
+    reviewerModel: z.string().min(1).optional(),
     summary: z.string().min(1),
   }),
 ])

@@ -138,6 +138,7 @@ test('gives the browser-use worker the Grok page-level operating contract', () =
   assert.match(prompt, /exact URL/)
   assert.match(prompt, /passwords, complete 2FA or captchas, make payments/)
   assert.match(prompt, /fallback through computerUse/)
+  assert.match(prompt, /stop and report the exact site and step required/)
   assert.doesNotMatch(prompt, /SendMessage/)
 })
 
@@ -149,6 +150,8 @@ test('guides desktop parents to browserUse first and computerUse for fallback', 
   assert.match(prompt, /Reach for the `browserUse` subagent first/)
   assert.match(prompt, /Use the `computerUse` subagent only/)
   assert.match(prompt, /Browser sign-in trouble is a switching moment/)
+  assert.match(prompt, /call RequestDesktopHelp directly/)
+  assert.match(prompt, /dispatch a new browserUse task/)
   assert.ok(
     prompt.indexOf('A connector is the BEST way') < prompt.indexOf('Reach for the `browserUse`'),
   )

@@ -206,6 +206,25 @@ export async function findUnsettledForegroundTurn(conversationId: string) {
   return turn
 }
 
+/** The one durable Remote Desktop handoff currently awaiting this agent's user. */
+export async function findPendingDesktopHandoff(
+  agentId: string,
+  executor: DbExecutor = db,
+) {
+  const waiting = await executor
+    .select()
+    .from(schema.turns)
+    .where(and(
+      eq(schema.turns.targetAgentId, agentId),
+      eq(schema.turns.status, 'waiting'),
+    ))
+    .orderBy(asc(schema.turns.createdAt), asc(schema.turns.id))
+  return waiting.find((turn) => {
+    const parsed = waitingStateSchema.safeParse(turn.waitingStateJson)
+    return parsed.success && parsed.data.interactionKind === 'handoff'
+  })
+}
+
 /** Every queued turn across all conversations, oldest first (startup recovery). */
 export function listQueuedTurns() {
   return db
@@ -457,10 +476,30 @@ export async function completeTurn(
   return updated
 }
 
+async function hasOtherPendingDesktopHandoff(
+  executor: DbExecutor,
+  turnId: string,
+) {
+  const [current] = await executor
+    .select({ targetAgentId: schema.turns.targetAgentId })
+    .from(schema.turns)
+    .where(and(eq(schema.turns.id, turnId), eq(schema.turns.status, 'running')))
+    .limit(1)
+  if (!current) return true
+  return !!(
+    current.targetAgentId &&
+    await findPendingDesktopHandoff(current.targetAgentId, executor)
+  )
+}
+
 export async function markTurnWaiting(id: string, state: WaitingState) {
   const parsed = waitingStateSchema.parse(state)
   const now = Date.now()
   return db.transaction(async (tx) => {
+    if (
+      parsed.interactionKind === 'handoff' &&
+      await hasOtherPendingDesktopHandoff(tx, id)
+    ) return undefined
     const [turn] = await tx
       .update(schema.turns)
       .set({ status: 'waiting', waitingStateJson: parsed, updatedAt: now })
@@ -503,6 +542,10 @@ export async function deliverWidgetAndMarkTurnWaiting(
   const parsed = waitingStateSchema.parse(state)
   const now = Date.now()
   return db.transaction(async (tx) => {
+    if (
+      parsed.interactionKind === 'handoff' &&
+      await hasOtherPendingDesktopHandoff(tx, id)
+    ) return undefined
     const [turn] = await tx
       .update(schema.turns)
       .set({ status: 'waiting', waitingStateJson: parsed, updatedAt: now })

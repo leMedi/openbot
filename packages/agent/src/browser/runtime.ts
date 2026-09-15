@@ -28,6 +28,7 @@ import {
   type BrowserToolArgs,
   type BrowserToolName,
 } from '../tools/browser'
+import type { BrowserReviewDecision, BrowserReviewTarget } from './reviewer'
 
 export type BrowserOutcome =
   | 'success'
@@ -84,6 +85,11 @@ export type BrowserRuntimeOptions = {
   ) => Promise<ConversationMessage | undefined>
   runOperation?: BrowserOperationRunner
   capturePageState?: (signal: AbortSignal) => Promise<unknown>
+  review?: (
+    target: BrowserReviewTarget,
+    signal: AbortSignal,
+  ) => Promise<BrowserReviewDecision>
+  isAutomationBlocked?: () => Promise<boolean>
   recoveredAt?: number
 }
 
@@ -338,6 +344,7 @@ export class BrowserToolRuntime {
     stage: 'review_decision' | 'execution_started',
     summary: string,
     decision?: 'allowed' | 'blocked' | 'approval_required' | 'approved',
+    reviewerModel?: string,
   ) {
     const payload = browserUsePayloadSchema.parse({
       version: 1,
@@ -347,6 +354,7 @@ export class BrowserToolRuntime {
       fingerprint,
       stage,
       ...(decision && { decision }),
+      ...(reviewerModel && { reviewerModel }),
       summary,
     })
     await appendConversationMessage({
@@ -581,6 +589,13 @@ export class BrowserToolRuntime {
       })
     }
     const args = parsed.data as BrowserToolArgs
+    if (await this.options.isAutomationBlocked?.()) {
+      return this.persist(toolCallId, name, {
+        ok: false,
+        status: 'browser_busy',
+        summary: 'The Remote Desktop is currently handed to the user',
+      })
+    }
     const mutating = isMutating(name, args)
     const requestedViewId = 'viewId' in args && typeof args.viewId === 'string'
       ? args.viewId
@@ -662,14 +677,54 @@ export class BrowserToolRuntime {
       })
     }
     if (hasApproval) this.approved = undefined
-    const automaticallyAllowed =
-      this.options.approvalMode === 'off' || this.options.approvalMode === 'shadow'
+    const targetPageUrl = state && typeof state === 'object' && !Array.isArray(state) &&
+      typeof (state as Record<string, unknown>).targetPageUrl === 'string'
+      ? (state as Record<string, unknown>).targetPageUrl as string
+      : undefined
+    const reviewTarget: BrowserReviewTarget = {
+      toolCallId,
+      name,
+      args,
+      summary,
+      fingerprint,
+      stateId,
+      ...(targetPageUrl && { targetPageUrl }),
+    }
+    let review: BrowserReviewDecision | undefined
+    if (!hasApproval && this.options.approvalMode !== 'off' && this.options.review) {
+      if (this.options.approvalMode === 'shadow') {
+        void this.options.review(reviewTarget, this.options.signal).then((decision) =>
+          this.audit(
+            toolCallId,
+            name,
+            fingerprint,
+            'review_decision',
+            `Shadow review: ${decision.reason}`,
+            decision.kind === 'allow' ? 'allowed' : 'blocked',
+            decision.model,
+          )).catch(() => {})
+      } else {
+        review = await this.options.review(reviewTarget, this.options.signal)
+        if (this.options.signal.aborted) {
+          return this.persist(toolCallId, name, {
+            ok: false,
+            status: 'cancelled',
+            summary: 'Browser review was cancelled',
+            fingerprint,
+            stateId,
+          })
+        }
+      }
+    }
+    const automaticallyAllowed = this.options.approvalMode === 'off' ||
+      this.options.approvalMode === 'shadow' || review?.kind === 'allow'
     if (!automaticallyAllowed && !hasApproval) {
+      const reviewReason = review?.reason ?? 'This browser action requires manual review.'
       const waiting: WaitingState = {
         version: 1,
         interactionKind: 'approval',
         prompt: `Allow the browser worker to ${summary}?`,
-        helpText: 'This browser action can change content or navigation in the persistent browser.',
+        helpText: reviewReason,
         options: [
           { id: 'approve', label: 'Allow once', style: 'primary' },
           { id: 'deny', label: 'Deny', style: 'danger' },
@@ -680,7 +735,15 @@ export class BrowserToolRuntime {
         resumeData: { version: 1, kind: 'browser-approval', fingerprint, stateId },
         response: null,
       }
-      await this.audit(toolCallId, name, fingerprint, 'review_decision', waiting.helpText!, 'approval_required')
+      await this.audit(
+        toolCallId,
+        name,
+        fingerprint,
+        'review_decision',
+        waiting.helpText!,
+        'approval_required',
+        review?.model,
+      )
       await this.options.suspend(waiting, {
         bodyText: waiting.prompt,
         payload: {
@@ -711,8 +774,11 @@ export class BrowserToolRuntime {
       name,
       fingerprint,
       'review_decision',
-      hasApproval ? 'Allowed by one-shot browser approval' : `Allowed by approval mode: ${this.options.approvalMode}`,
+      hasApproval
+        ? 'Allowed by one-shot browser approval'
+        : review?.reason ?? `Allowed by approval mode: ${this.options.approvalMode}`,
       hasApproval ? 'approved' : 'allowed',
+      review?.model,
     )
 
     const owner = `${this.options.turnId}:${toolCallId}:browser`
@@ -726,6 +792,15 @@ export class BrowserToolRuntime {
       })
     }
     try {
+      if (await this.options.isAutomationBlocked?.()) {
+        return this.persist(toolCallId, name, {
+          ok: false,
+          status: 'browser_busy',
+          summary: 'The Remote Desktop is currently handed to the user',
+          fingerprint,
+          stateId,
+        })
+      }
       let currentStateId: string
       try {
         currentStateId = digest(

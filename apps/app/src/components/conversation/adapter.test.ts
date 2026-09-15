@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { ConversationMessage } from '@openbot/db'
-import { entryFromMessage } from './adapter'
+import { activityFromMessages, entryFromMessage } from './adapter'
 import type { Author } from './types'
 
 const agent: Author = {
@@ -214,4 +214,48 @@ test('adapts Computer progress and approval prompts without client execution', (
   if (approval?.type !== 'message') return
   assert.equal(approval.widget?.kind, 'approval')
   assert.equal(approval.widget?.status, 'pending')
+})
+
+test('hides browser worker internals from chat and renders desktop handoffs', () => {
+  const browser = entryFromMessage(row({
+    kind: 'tool_result',
+    role: 'tool',
+    payloadJson: {
+      version: 1,
+      event: 'browser-use',
+      toolCallId: 'browser-call',
+      name: 'browser_click',
+    },
+  }), agent)
+  assert.equal(browser, null)
+  assert.equal(activityFromMessages([
+    row({
+      kind: 'tool_result',
+      role: 'tool',
+      payloadJson: { version: 1, event: 'browser-use', toolCallId: 'browser-call' },
+    }),
+  ], agent)[0]?.items.length, 0)
+
+  const handoff = entryFromMessage(row({
+    kind: 'message',
+    role: 'assistant',
+    bodyText: 'Sign in to Avito.ma.',
+    payloadJson: {
+      version: 1,
+      deliveryKind: 'send-message',
+      type: 'widget',
+      toolCallId: 'handoff-call',
+      widget: {
+        prompt: 'Sign in to Avito.ma.',
+        interactionKind: 'handoff',
+        options: [
+          { id: 'hand_back', label: 'Hand back' },
+          { id: 'skip', label: 'Skip' },
+        ],
+      },
+    },
+  }), agent)
+  assert.equal(handoff?.type, 'message')
+  if (handoff?.type !== 'message') return
+  assert.equal(handoff.widget?.kind, 'handoff')
 })

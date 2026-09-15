@@ -575,3 +575,32 @@ test('dispatches server tools, shares Shell files, and replays visible SSE state
   assert.equal(events.at(-1)?.type, 'done')
   assert.equal(visible.length, 2)
 })
+
+test('blocks desktop inspection and mutation during a user handoff', async () => {
+  const context = await turnContext()
+  let driverCalls = 0
+  const runtime = new DesktopToolRuntime({
+    ...runtimeOptions(context, {
+      async getDisplay() {
+        driverCalls += 1
+        return display
+      },
+      async captureScreenshot() {
+        driverCalls += 1
+        return image('blocked')
+      },
+      async execute() {
+        driverCalls += 1
+        return {}
+      },
+    }),
+    isAutomationBlocked: async () => true,
+  })
+  assert.equal((await runtime.screenshot('handoff-screenshot')).status, 'desktop_busy')
+  assert.equal((await runtime.computer('handoff-computer', schema.computerArgsSchema.parse({
+    action: 'key',
+    key: 'TAB',
+    description: 'Move focus',
+  }))).status, 'desktop_busy')
+  assert.equal(driverCalls, 0)
+})

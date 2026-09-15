@@ -170,6 +170,11 @@ export function renderResumeText(input: {
         ? '[The user approved the exact pending Computer action. Call Computer again with unchanged arguments. The approval applies only while the Remote Desktop state is unchanged.]'
         : '[The user denied the pending Computer action. Do not retry it unless they explicitly ask for a new action.]'
   }
+  if (waitingState.originatingToolCall.name === 'RequestDesktopHelp') {
+    return waitingState.response.optionId === 'hand_back'
+      ? '[The user handed the Remote Desktop back to you. Continue the original task. Start with the read-only Screenshot tool to inspect the current state, then dispatch a new browserUse task to continue from the persistent browser session.]'
+      : '[The user skipped the requested Remote Desktop step. Do not retry it. Report the resulting blocker if it still prevents the original task.]'
+  }
   if (input.pluginApproval) {
     return input.pluginApproval.approved
       ? input.approvedPluginHasAccount

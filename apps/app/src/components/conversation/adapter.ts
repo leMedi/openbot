@@ -148,7 +148,11 @@ function widgetViewFrom(
       : undefined
   return {
     toolCallId: payload.toolCallId,
-    kind: widget.interactionKind === 'approval' ? 'approval' : 'question',
+    kind: widget.interactionKind === 'approval'
+      ? 'approval'
+      : widget.interactionKind === 'handoff'
+        ? 'handoff'
+        : 'question',
     ...(typeof widget.helpText === 'string' && { helpText: widget.helpText }),
     options: widgetOptionsFrom(widget.options),
     allowCustom: widget.allowCustom === true,
@@ -214,6 +218,9 @@ export function entryFromMessage(
   widgetResponse?: WidgetResponse,
 ): Entry | null {
   const time = timeLabel(row.createdAt)
+  if (typeof row.payloadJson.event === 'string' && row.payloadJson.event.startsWith('browser-use')) {
+    return null
+  }
   if (row.kind === 'message' && row.role === 'user') {
     const payload = (row.payloadJson ?? {}) as SendMessagePayloadView
     if (payload.event === 'turn_response') return null
@@ -388,7 +395,9 @@ export function activityFromMessages(
   agent: Author,
 ): ActivityTab[] {
   const items: ActivityItem[] = rows
-    .filter((row) => row.payloadJson.event !== 'computer-use-audit')
+    .filter((row) =>
+      row.payloadJson.event !== 'computer-use-audit' &&
+      !(typeof row.payloadJson.event === 'string' && row.payloadJson.event.startsWith('browser-use')))
     .map((row): ActivityItem => {
       if (row.kind === 'tool_call' || row.kind === 'tool_result') {
         const call = toolCallFrom(row)

@@ -459,6 +459,11 @@ function OpenBot() {
         initialEntries={entries}
         activityTabs={tabs}
         pendingTurnId={transcriptReady ? transcript?.pendingTurnId : null}
+        desktopAgentId={
+          desktopMode === 'per-agent' && mainAgent?.xDisplayNumber != null
+            ? mainAgent.id
+            : undefined
+        }
         onSendMessage={(draft) =>
           sendConversationMessage({
             data: {
