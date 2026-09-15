@@ -32,12 +32,14 @@ export function PluginsDialog({
   onOpenChange,
   servers,
   accounts,
+  initialError = '',
   onChanged,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   servers: SafeMcpServer[]
   accounts: SafeMcpAccount[]
+  initialError?: string
   onChanged: () => Promise<unknown>
 }) {
   return (
@@ -52,7 +54,12 @@ export function PluginsDialog({
             </TabsList>
           </div>
           <TabsContent value="plugins" className="min-h-0 flex-1">
-            <PluginsTab servers={servers} accounts={accounts} onChanged={onChanged} />
+            <PluginsTab
+              servers={servers}
+              accounts={accounts}
+              initialError={initialError}
+              onChanged={onChanged}
+            />
           </TabsContent>
           <TabsContent value="skills" className="min-h-0 flex-1 overflow-y-auto">
             <SkillsTab />
@@ -129,10 +136,12 @@ function hostOf(url: string) {
 function PluginsTab({
   servers,
   accounts,
+  initialError,
   onChanged,
 }: {
   servers: SafeMcpServer[]
   accounts: SafeMcpAccount[]
+  initialError: string
   onChanged: () => Promise<unknown>
 }) {
   const [query, setQuery] = useState('')
@@ -145,7 +154,7 @@ function PluginsTab({
   const [renamingId, setRenamingId] = useState('')
   const [renameValue, setRenameValue] = useState('')
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError] = useState(initialError)
 
   const detailCatalog = MCP_CATALOG.find((entry) => entry.key === catalogKey)
   const detail = creatingServer
@@ -181,6 +190,10 @@ function PluginsTab({
       setCatalogKey(savedKey as McpCatalogKey)
     }
   }, [])
+
+  useEffect(() => {
+    setError(initialError)
+  }, [initialError])
 
   useEffect(() => {
     if (creatingServer) return
@@ -473,6 +486,11 @@ function PluginsTab({
       {/* Detail */}
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="max-w-xl px-7 py-6">
+          {error && (
+            <p role="alert" className="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+              {error}
+            </p>
+          )}
           {draft ? (
             <div>
               <h2 className="text-xl font-bold tracking-tight">
@@ -694,7 +712,6 @@ function PluginsTab({
           ) : (
             <p className="text-sm text-muted-foreground">Add an MCP server to get started.</p>
           )}
-          {error && <p className="mt-4 text-xs text-destructive">{error}</p>}
         </div>
       </div>
     </div>

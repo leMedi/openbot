@@ -26,6 +26,7 @@ import {
   RenameConversationDialog,
 } from '@/components/openbot/modals'
 import { PluginsDialog } from '@/components/openbot/plugins-dialog'
+import { mcpOauthErrorMessage } from '@/lib/mcp-oauth-error'
 import { RoutinesDialog } from '@/components/openbot/routines-dialog'
 import { SettingsDialog } from '@/components/openbot/settings-dialog'
 import { Sidebar } from '@/components/openbot/sidebar'
@@ -120,6 +121,7 @@ function OpenBot() {
   }
 
   const [pluginsOpen, setPluginsOpen] = useState(false)
+  const [pluginsError, setPluginsError] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [routinesOpen, setRoutinesOpen] = useState(false)
   const [updateAvailable, setUpdateAvailable] = useState(false)
@@ -139,8 +141,16 @@ function OpenBot() {
     const url = new URL(window.location.href)
     const result = url.searchParams.get('mcpOAuth')
     if (!result) return
-    if (result !== 'resumed') setPluginsOpen(true)
+    if (result !== 'resumed') {
+      setPluginsError(
+        result === 'error'
+          ? mcpOauthErrorMessage(url.searchParams.get('mcpOAuthError'))
+          : '',
+      )
+      setPluginsOpen(true)
+    }
     url.searchParams.delete('mcpOAuth')
+    url.searchParams.delete('mcpOAuthError')
     window.history.replaceState(null, '', url)
   }, [])
 
@@ -628,9 +638,13 @@ function OpenBot() {
 
       <PluginsDialog
         open={pluginsOpen}
-        onOpenChange={setPluginsOpen}
+        onOpenChange={(open) => {
+          setPluginsOpen(open)
+          if (!open) setPluginsError('')
+        }}
         servers={mcp.servers}
         accounts={mcp.accounts}
+        initialError={pluginsError}
         onChanged={() => router.invalidate()}
       />
       {!profile.onboardingCompleted && (

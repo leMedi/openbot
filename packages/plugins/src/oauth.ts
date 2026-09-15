@@ -28,6 +28,22 @@ const OAUTH_REFRESH_SKEW_MS = 30_000
 const MAX_PENDING_OAUTH_FLOWS = 100
 const OAUTH_REQUEST_TIMEOUT_MS = 10_000
 
+export type McpOauthErrorCode =
+  | 'google-workspace-not-configured'
+  | 'authorization-invalid'
+  | 'authorization-start-failed'
+  | 'authorization-completion-failed'
+
+export class McpOauthError extends Error {
+  readonly code: McpOauthErrorCode
+
+  constructor(code: McpOauthErrorCode, message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'McpOauthError'
+    this.code = code
+  }
+}
+
 export type McpOauthTokens = {
   access_token: string
   refresh_token?: string
@@ -202,11 +218,27 @@ async function prepareOauthFlow({
   state,
 }: PrepareMcpOauthInput): Promise<PreparedMcpOauthFlow> {
   secureOauthUrl(redirectUrl)
-  const serverInfo = await discoverOauthServer(serverUrl)
   const catalogEntry = MCP_CATALOG.find((entry) => entry.url === serverUrl)
   const oauth = catalogEntry?.auth.find(
     (auth) => auth.type === 'oauth',
   ) as McpCatalogOauthAuth | undefined
+  let googleClientInformation: OAuthClientInformationMixed | undefined
+  if (oauth?.provider === 'google-workspace') {
+    const clientId = process.env.OPENBOT_GOOGLE_WORKSPACE_MCP_CLIENT_ID?.trim()
+    const clientSecret = process.env.OPENBOT_GOOGLE_WORKSPACE_MCP_CLIENT_SECRET?.trim()
+    if (!clientId || !clientSecret) {
+      throw new McpOauthError(
+        'google-workspace-not-configured',
+        'Google Workspace MCP OAuth client credentials are not configured',
+      )
+    }
+    googleClientInformation = {
+      client_id: clientId,
+      client_secret: clientSecret,
+      token_endpoint_auth_method: 'client_secret_post',
+    }
+  }
+  const serverInfo = await discoverOauthServer(serverUrl)
   const scope = oauth?.scopes?.join(' ') ?? serverInfo.resourceMetadata?.scopes_supported?.join(' ')
   const clientMetadata = {
     client_name: 'OpenBot',
@@ -216,17 +248,8 @@ async function prepareOauthFlow({
     token_endpoint_auth_method: 'none',
   }
   let registered: OAuthClientInformationMixed
-  if (oauth?.provider === 'google-workspace') {
-    const clientId = process.env.OPENBOT_GOOGLE_WORKSPACE_MCP_CLIENT_ID?.trim()
-    const clientSecret = process.env.OPENBOT_GOOGLE_WORKSPACE_MCP_CLIENT_SECRET?.trim()
-    if (!clientId || !clientSecret) {
-      throw new Error('Google Workspace MCP OAuth client credentials are not configured')
-    }
-    registered = {
-      client_id: clientId,
-      client_secret: clientSecret,
-      token_endpoint_auth_method: 'client_secret_post',
-    }
+  if (googleClientInformation) {
+    registered = googleClientInformation
   } else {
     registered = await registerClient(serverInfo.authorizationServerUrl, {
       metadata: serverInfo.authorizationServerMetadata,
@@ -369,8 +392,13 @@ export function createMcpOauthCoordinator(options: McpOauthCoordinatorOptions) {
           redirectUrl: redirectUrl.toString(),
           state,
         })
-      } catch {
-        throw new Error('Could not begin MCP OAuth authorization')
+      } catch (cause) {
+        if (cause instanceof McpOauthError) throw cause
+        throw new McpOauthError(
+          'authorization-start-failed',
+          'Could not begin MCP OAuth authorization',
+          { cause },
+        )
       } finally {
         preparing -= 1
       }
@@ -397,16 +425,21 @@ export function createMcpOauthCoordinator(options: McpOauthCoordinatorOptions) {
       pending.delete(input.state)
       if (flow) clearTimeout(flow.timeout)
       if (!flow || flow.expiresAt < now()) {
-        throw new Error('OAuth authorization is invalid or expired')
+        throw new McpOauthError(
+          'authorization-invalid',
+          'OAuth authorization is invalid or expired',
+        )
       }
       const expectedIssuer = flow.issuer ?? flow.authorizationServerUrl
       if (flow.issuerRequired && !input.issuer) {
-        throw new Error('OAuth authorization issuer is required')
+        throw new McpOauthError('authorization-invalid', 'OAuth authorization issuer is required')
       }
       if (input.issuer && input.issuer !== expectedIssuer) {
-        throw new Error('OAuth authorization issuer does not match')
+        throw new McpOauthError('authorization-invalid', 'OAuth authorization issuer does not match')
       }
-      if (!input.code) throw new Error('OAuth authorization code is required')
+      if (!input.code) {
+        throw new McpOauthError('authorization-invalid', 'OAuth authorization code is required')
+      }
 
       try {
         const server = await getMcpServer(flow.serverId)
@@ -433,8 +466,13 @@ export function createMcpOauthCoordinator(options: McpOauthCoordinatorOptions) {
           ),
         })
         return { account, continuation: flow.continuation }
-      } catch {
-        throw new Error('Could not complete MCP OAuth authorization')
+      } catch (cause) {
+        if (cause instanceof McpOauthError) throw cause
+        throw new McpOauthError(
+          'authorization-completion-failed',
+          'Could not complete MCP OAuth authorization',
+          { cause },
+        )
       }
     },
 

@@ -6,7 +6,7 @@ import { expect, it } from 'vitest'
 process.env.OPENBOT_DATA_DIR ??= mkdtempSync(path.join(tmpdir(), 'openbot-oauth-tests-'))
 
 const { createMcpServer } = await import('@openbot/db')
-const { createMcpOauthCoordinator } = await import('./oauth')
+const { createMcpOauthCoordinator, McpOauthError } = await import('./oauth')
 
 it('returns the durable turn continuation with the connected account', async () => {
   const server = await createMcpServer({
@@ -51,4 +51,33 @@ it('returns the durable turn continuation with the connected account', async () 
 
   expect(completed.account).toEqual(expect.objectContaining({ serverId: server.id }))
   expect(completed.continuation).toEqual(continuation)
+})
+
+it('keeps the authorization start failure and its cause diagnosable', async () => {
+  const server = await createMcpServer({
+    serverKey: 'oauth-error-test',
+    name: 'OAuth error test',
+    transport: 'streamable_http',
+    configuration: {
+      version: 1,
+      url: 'https://mcp-error.example.test/mcp',
+      apiKeyHeader: 'Authorization',
+      apiKeyPrefix: 'Bearer',
+    },
+  })
+  const cause = new Error('Provider discovery failed')
+  const coordinator = createMcpOauthCoordinator({
+    prepare: async () => { throw cause },
+    exchange: async () => ({ access_token: 'unused', token_type: 'Bearer' }),
+  })
+
+  await expect(coordinator.begin({
+    serverId: server.id,
+    label: 'default',
+    redirectUrl: 'https://openbot.example.test/api/mcp/oauth/callback',
+  })).rejects.toMatchObject({
+    name: 'McpOauthError',
+    code: 'authorization-start-failed',
+    cause,
+  } satisfies Partial<InstanceType<typeof McpOauthError>>)
 })

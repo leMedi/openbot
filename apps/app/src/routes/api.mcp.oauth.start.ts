@@ -3,13 +3,16 @@ import {
   beginMcpOauthAuthorization,
   findMcpCatalogEntry,
   installCatalogServer,
+  McpOauthError,
   mcpOauthPublicUrl,
 } from '@openbot/plugins'
 import { getTurn, waitingStateSchema } from '@openbot/db'
+import type { McpOauthFeedbackCode } from '@/lib/mcp-oauth-error'
 
-function resultRedirect(requestUrl: string, result: 'error') {
+function resultRedirect(requestUrl: string, errorCode: McpOauthFeedbackCode) {
   const url = mcpOauthPublicUrl(requestUrl)
-  url.searchParams.set('mcpOAuth', result)
+  url.searchParams.set('mcpOAuth', 'error')
+  url.searchParams.set('mcpOAuthError', errorCode)
   return Response.redirect(url)
 }
 
@@ -68,9 +71,12 @@ export const Route = createFileRoute('/api/mcp/oauth/start')({
             continuation,
           })
           return Response.redirect(authorization.authorizationUrl)
-        } catch {
+        } catch (cause) {
+          const errorCode: McpOauthFeedbackCode =
+            cause instanceof McpOauthError ? cause.code : 'authorization-start-failed'
+          console.error(`Could not begin MCP OAuth authorization (${errorCode})`)
           try {
-            return resultRedirect(request.url, 'error')
+            return resultRedirect(request.url, errorCode)
           } catch {
             return Response.json({ error: 'MCP OAuth public URL is not configured' }, { status: 400 })
           }
