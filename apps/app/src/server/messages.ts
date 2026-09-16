@@ -3,6 +3,7 @@ import {
   createManagedFile,
   deleteManagedFileIfUnreferenced,
   findUnsettledForegroundTurn,
+  findWaitingConversationTurn,
   findAcceptedUserMessage,
   listConversationMessages,
   readManagedFile,
@@ -63,12 +64,14 @@ export const getConversationMessages = createServerFn({ method: 'GET' })
   .handler(async ({ data }) => {
     // Any transcript read is a fine moment to resume interrupted queued work.
     recoverQueuedTurns()
-    const [rows, unsettled] = await Promise.all([
+    const [rows, unsettled, waiting] = await Promise.all([
       listConversationMessages(data.conversationId),
       findUnsettledForegroundTurn(data.conversationId),
+      findWaitingConversationTurn(data.conversationId),
     ])
-    // The pending turn lets a reloading client reattach to in-flight output.
-    return { rows, pendingTurnId: unsettled?.id ?? null }
+    // Waiting interactions take priority so persisted worker approval cards
+    // regain their active controls after a reload.
+    return { rows, pendingTurnId: waiting?.id ?? unsettled?.id ?? null }
   })
 
 export const sendConversationMessage = createServerFn({ method: 'POST' })

@@ -18,6 +18,7 @@ const {
   finalizeGeneralSubagentTurn,
   findNextQueuedTurnForAgent,
   findUnsettledForegroundTurn,
+  findWaitingConversationTurn,
   generalSubagentCompletionWakeSchema,
   generalSubagentContextSchema,
   getTurn,
@@ -268,4 +269,5 @@ test('a new user message does not dismiss a waiting subagent', async () => {
     idempotencyKey: crypto.randomUUID(),
   })
   assert.equal((await listSubagentTurns(context.agent.id, true))[0]?.status, 'waiting')
+  assert.equal((await findWaitingConversationTurn(context.conversation.id))?.id, worker.id)
 })

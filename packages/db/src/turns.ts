@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { and, asc, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import { db } from './client'
 import type { DbExecutor } from './conversations'
 import { createId } from './ids'
@@ -199,6 +199,25 @@ export async function findUnsettledForegroundTurn(conversationId: string) {
     .orderBy(
       asc(unsettledPriority),
       asc(lanePriority),
+      asc(schema.turns.createdAt),
+      asc(schema.turns.id),
+    )
+    .limit(1)
+  return turn
+}
+
+/** A durable user interaction, including one requested by a background worker. */
+export async function findWaitingConversationTurn(conversationId: string) {
+  const [turn] = await db
+    .select()
+    .from(schema.turns)
+    .where(and(
+      eq(schema.turns.conversationId, conversationId),
+      eq(schema.turns.status, 'waiting'),
+      isNotNull(schema.turns.waitingStateJson),
+    ))
+    .orderBy(
+      asc(unsettledSourcePriority),
       asc(schema.turns.createdAt),
       asc(schema.turns.id),
     )
