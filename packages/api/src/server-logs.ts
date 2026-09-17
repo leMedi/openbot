@@ -7,9 +7,16 @@ import { format } from 'node:util'
 // the Vite dev server, the production bundle, and the Debian runtime wrapper
 // share one buffer even when this module is instantiated more than once.
 
-import type { ServerLogEntry, ServerLogLevel } from '@/lib/server-logs'
 
-export type { ServerLogEntry, ServerLogLevel } from '@/lib/server-logs'
+
+export type ServerLogLevel = 'debug' | 'info' | 'warn' | 'error'
+
+export type ServerLogEntry = {
+  id: number
+  time: string
+  level: ServerLogLevel
+  message: string
+}
 
 type LogStore = {
   entries: ServerLogEntry[]

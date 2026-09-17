@@ -1,5 +1,5 @@
 import { createStartHandler, defaultStreamHandler } from '@tanstack/react-start/server'
-import { installServerLogCapture } from '@/server/logs'
+import { installServerLogCapture } from '@openbot/api'
 import { startRoutineScheduler } from '@openbot/agent'
 
 // Custom Start server entry: the default request handler, plus console

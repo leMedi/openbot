@@ -20,7 +20,6 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
-import { addGroup, removeGroup, updateGroup, updateGroupMembers } from '@/server/groups'
 import { BotAvatar } from './bot-avatar'
 import type { Bot } from './data'
 import {
@@ -29,6 +28,7 @@ import {
   groupAvatarUrl,
   groupMemberIds,
 } from './groups'
+import { orpc } from '@/lib/orpc'
 
 const ACCEPTED_AVATAR_TYPES = 'image/png,image/jpeg,image/webp,image/gif'
 
@@ -94,15 +94,11 @@ export function GroupDialog({
       let sharedConversation: Conversation | null = null
       const existing = editing ? group : createdRef.current?.group
       if (existing) {
-        saved = await updateGroup({
-          data: { id: existing.id, patch: { name, description } },
-        })
-        saved = await updateGroupMembers({
-          data: { id: existing.id, members: membersInput },
-        })
+        saved = await orpc.groups.update({ id: existing.id, patch: { name, description } })
+        saved = await orpc.groups.setMembers({ id: existing.id, members: membersInput })
         sharedConversation = createdRef.current?.conversation ?? null
       } else {
-        const created = await addGroup({ data: { name, description, members: membersInput } })
+        const created = await orpc.groups.create({ name, description, members: membersInput })
         createdRef.current = created
         saved = created.group
         sharedConversation = created.conversation
@@ -334,7 +330,7 @@ export function DeleteGroupDialog({
     setDeleting(true)
     setError(null)
     try {
-      const result = await removeGroup({ data: { id: group.id } })
+      const result = await orpc.groups.remove({ id: group.id })
       onDeleted(result)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Deleting the group failed')

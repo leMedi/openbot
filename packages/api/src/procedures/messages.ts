@@ -12,15 +12,16 @@ import {
   toggleUserReaction,
   waitingStateSchema,
 } from '@openbot/db'
-import { createServerFn } from '@tanstack/react-start'
-import * as z from 'zod'
 import {
   cancelTurnExecution,
   ensureDrainForTurn,
   recoverQueuedTurns,
+  type TurnStreamEvent,
+  watchTurn,
 } from '@openbot/agent'
-
-const messagesQueryInput = z.object({ conversationId: z.string().min(1) })
+import * as z from 'zod'
+import { badRequest, base } from '../base'
+import { fromWatcher } from '../watch'
 
 const sendMessageInput = z.object({
   conversationId: z.string().min(1),
@@ -57,58 +58,57 @@ const reactionInput = z.object({
   reaction: z.string().trim().min(1).max(64),
 })
 
-const cancelTurnInput = z.object({ turnId: z.string().min(1) })
+const turnInput = z.object({ turnId: z.string().min(1) })
 
-export const getConversationMessages = createServerFn({ method: 'GET' })
-  .validator((input: unknown) => messagesQueryInput.parse(input))
-  .handler(async ({ data }) => {
-    // Any transcript read is a fine moment to resume interrupted queued work.
-    recoverQueuedTurns()
-    const [rows, unsettled, waiting] = await Promise.all([
-      listConversationMessages(data.conversationId),
-      findUnsettledForegroundTurn(data.conversationId),
-      findWaitingConversationTurn(data.conversationId),
-    ])
-    // Waiting interactions take priority so persisted worker approval cards
-    // regain their active controls after a reload.
-    return { rows, pendingTurnId: waiting?.id ?? unsettled?.id ?? null }
-  })
+export const messages = {
+  list: base
+    .input(z.object({ conversationId: z.string().min(1) }))
+    .handler(async ({ input }) => {
+      // Any transcript read is a fine moment to resume interrupted queued work.
+      recoverQueuedTurns()
+      const [rows, unsettled, waiting] = await Promise.all([
+        listConversationMessages(input.conversationId),
+        findUnsettledForegroundTurn(input.conversationId),
+        findWaitingConversationTurn(input.conversationId),
+      ])
+      // Waiting interactions take priority so persisted worker approval cards
+      // regain their active controls after a reload.
+      return { rows, pendingTurnId: waiting?.id ?? unsettled?.id ?? null }
+    }),
 
-export const sendConversationMessage = createServerFn({ method: 'POST' })
-  .validator((input: unknown) => sendMessageInput.parse(input))
-  .handler(async ({ data }) => {
-    const existing = await findAcceptedUserMessage(data.requestId, data.idempotencyKey)
+  send: base.input(sendMessageInput).handler(async ({ input }) => {
+    const existing = await findAcceptedUserMessage(input.requestId, input.idempotencyKey)
     if (existing) {
-      const resolvedReply = data.replyToEntryId && (
-        await listConversationMessages(data.conversationId)
-      ).some((message) => message.id === data.replyToEntryId)
-        ? data.replyToEntryId
+      const resolvedReply = input.replyToEntryId && (
+        await listConversationMessages(input.conversationId)
+      ).some((message) => message.id === input.replyToEntryId)
+        ? input.replyToEntryId
         : null
       const persistedAttachments = await Promise.all(
         existing.message.attachmentsJson.items.map((item) => readManagedFile(item.fileId)),
       )
-      const sameAttachments = persistedAttachments.length === data.attachments.length &&
+      const sameAttachments = persistedAttachments.length === input.attachments.length &&
         persistedAttachments.every((stored, index) => {
-          const incoming = data.attachments[index]
+          const incoming = input.attachments[index]
           return !!stored && !!incoming &&
             stored.file.originalName === incoming.name &&
             stored.file.mediaType === incoming.mediaType &&
             Buffer.from(stored.bytes).equals(Buffer.from(incoming.data, 'base64'))
         })
       if (
-        existing.turn.conversationId !== data.conversationId ||
-        existing.message.bodyText !== data.text ||
+        existing.turn.conversationId !== input.conversationId ||
+        existing.message.bodyText !== input.text ||
         existing.message.replyToEntryId !== resolvedReply ||
         !sameAttachments
       ) {
-        throw new Error('An idempotency key cannot be reused with different message input')
+        throw badRequest('An idempotency key cannot be reused with different message input')
       }
       ensureDrainForTurn(existing.turn)
       return existing
     }
     // A new user message supersedes the current turn. Cancel it before
     // accepting the replacement so the scheduler cannot start both turns.
-    const unsettled = await findUnsettledForegroundTurn(data.conversationId)
+    const unsettled = await findUnsettledForegroundTurn(input.conversationId)
     const unansweredQuestion = unsettled?.waitingStateJson
       ? waitingStateSchema.safeParse(unsettled.waitingStateJson)
       : undefined
@@ -116,10 +116,10 @@ export const sendConversationMessage = createServerFn({ method: 'POST' })
     let totalBytes = 0
     let accepted: Awaited<ReturnType<typeof acceptUserMessage>>
     try {
-      for (const [position, attachment] of data.attachments.entries()) {
+      for (const [position, attachment] of input.attachments.entries()) {
         const bytes = Buffer.from(attachment.data, 'base64')
         totalBytes += bytes.byteLength
-        if (totalBytes > 25 * 1024 * 1024) throw new Error('Attachments are too large')
+        if (totalBytes > 25 * 1024 * 1024) throw badRequest('Attachments are too large')
         const extension = (attachment.name.includes('.')
           ? attachment.name.split('.').pop()!
           : 'bin').replace(/[^a-zA-Z0-9]/g, '').slice(0, 20) || 'bin'
@@ -147,11 +147,11 @@ export const sendConversationMessage = createServerFn({ method: 'POST' })
         })
       }
       accepted = await acceptUserMessage({
-        conversationId: data.conversationId,
-        text: data.text,
-        replyToEntryId: data.replyToEntryId,
-        requestId: data.requestId,
-        idempotencyKey: data.idempotencyKey,
+        conversationId: input.conversationId,
+        text: input.text,
+        replyToEntryId: input.replyToEntryId,
+        requestId: input.requestId,
+        idempotencyKey: input.idempotencyKey,
         attachments: files.length > 0 ? { version: 1, items: files } : undefined,
         prependedMessages: unansweredQuestion?.success
           ? [{
@@ -171,24 +171,30 @@ export const sendConversationMessage = createServerFn({ method: 'POST' })
     // durable accept, and visible output arrives over the turn stream.
     ensureDrainForTurn(accepted.turn)
     return accepted
-  })
+  }),
 
-export const toggleConversationReaction = createServerFn({ method: 'POST' })
-  .validator((input: unknown) => reactionInput.parse(input))
-  .handler(async ({ data }) => {
-    const result = await toggleUserReaction(data)
+  toggleReaction: base.input(reactionInput).handler(async ({ input }) => {
+    const result = await toggleUserReaction(input)
     if (result.wakeTurn) ensureDrainForTurn(result.wakeTurn)
     return result.message
-  })
+  }),
 
-export const respondToConversationTurn = createServerFn({ method: 'POST' })
-  .validator((input: unknown) => waitingResponseInput.parse(input))
-  .handler(async ({ data }) => {
-    const resumed = await respondToWaitingTurn(data)
+  respond: base.input(waitingResponseInput).handler(async ({ input }) => {
+    const resumed = await respondToWaitingTurn(input)
     ensureDrainForTurn(resumed.turn)
     return resumed
-  })
+  }),
 
-export const cancelConversationTurn = createServerFn({ method: 'POST' })
-  .validator((input: unknown) => cancelTurnInput.parse(input))
-  .handler(async ({ data }) => cancelTurnExecution(data.turnId))
+  cancelTurn: base.input(turnInput).handler(({ input }) => cancelTurnExecution(input.turnId)),
+
+  /**
+   * Streams one turn's visible output: one `message` per delivered
+   * SendMessage or durable tool-result row, then a terminal `done`, `waiting`
+   * interaction, or `error`. Reconnecting replays persisted rows and
+   * continues live. Execution does not depend on this connection.
+   */
+  watchTurn: base.input(turnInput).handler(async function* ({ input, signal }) {
+    recoverQueuedTurns()
+    yield* fromWatcher<TurnStreamEvent>((onEvent, watchSignal) => watchTurn(input.turnId, onEvent, watchSignal), signal)
+  }),
+}

@@ -3,11 +3,11 @@ import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import test from 'node:test'
 
-const testData = path.resolve(process.cwd(), '../../.data', `app-agent-server-tests-${process.pid}`)
+const testData = path.resolve(process.cwd(), '../../.data', `api-agents-tests-${process.pid}`)
 await rm(testData, { recursive: true, force: true })
 process.env.OPENBOT_DATA_DIR = testData
 
-const { agentDeleteInputSchema } = await import('./agents')
+const { agentDeleteInputSchema } = await import('./procedures/agents')
 
 test('agent deletion accepts only a strict generated agent id input', () => {
   const valid = { id: `agt_${'A0_-'.repeat(5)}A0` }

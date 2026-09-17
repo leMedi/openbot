@@ -14,15 +14,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-import {
-  addRoutine,
-  changeRoutineEnabled,
-  editRoutine,
-  getRoutineHistory,
-  getRoutines,
-  removeRoutine,
-  runRoutine,
-} from '@/server/routines'
+import { orpc, subscribe } from '@/lib/orpc'
 
 type Draft = {
   name: string
@@ -80,7 +72,7 @@ export function RoutinesDialog({
   const selected = routines.find((routine) => routine.id === selectedId) ?? null
 
   async function refresh(preferredId = selectedId) {
-    const rows = await getRoutines({ data: { agentId } })
+    const rows = await orpc.routines.list({ agentId })
     setRoutines(rows)
     const nextId = preferredId && rows.some((routine) => routine.id === preferredId)
       ? preferredId
@@ -89,7 +81,7 @@ export function RoutinesDialog({
     const next = rows.find((routine) => routine.id === nextId)
     if (next) {
       setDraft(routineDraft(next))
-      setHistory(await getRoutineHistory({ data: { id: next.id } }))
+      setHistory(await orpc.routines.history({ id: next.id }))
     } else {
       setDraft(blankDraft(defaultTimezone))
       setHistory([])
@@ -98,8 +90,8 @@ export function RoutinesDialog({
 
   async function refreshRunState(routineId: string) {
     const [rows, runs] = await Promise.all([
-      getRoutines({ data: { agentId } }),
-      getRoutineHistory({ data: { id: routineId } }),
+      orpc.routines.list({ agentId }),
+      orpc.routines.history({ id: routineId }),
     ])
     setRoutines(rows)
     setHistory(runs)
@@ -110,14 +102,14 @@ export function RoutinesDialog({
     let cancelled = false
     setLoading(true)
     setError('')
-    getRoutines({ data: { agentId } })
+    orpc.routines.list({ agentId })
       .then(async (rows) => {
         if (cancelled) return
         setRoutines(rows)
         const first = rows[0] ?? null
         setSelectedId(first?.id ?? null)
         setDraft(first ? routineDraft(first) : blankDraft(defaultTimezone))
-        setHistory(first ? await getRoutineHistory({ data: { id: first.id } }) : [])
+        setHistory(first ? await orpc.routines.history({ id: first.id }) : [])
       })
       .catch((cause: unknown) => {
         if (!cancelled) setError(cause instanceof Error ? cause.message : 'Could not load routines')
@@ -130,21 +122,18 @@ export function RoutinesDialog({
 
   useEffect(() => {
     if (!open) return
-    const source = new EventSource('/api/routines/stream')
-    source.onmessage = (message) => {
-      try {
-        const event = JSON.parse(message.data) as { routineId?: string }
+    return subscribe((options) => orpc.routines.watch(undefined, options), {
+      onEvent: (event) => {
         if (event.routineId === selectedId) void refreshRunState(selectedId)
-      } catch { /* Ignore malformed live updates. */ }
-    }
-    return () => source.close()
+      },
+    })
   }, [open, selectedId, agentId])
 
   function select(routine: Routine) {
     setSelectedId(routine.id)
     setDraft(routineDraft(routine))
     setError('')
-    void getRoutineHistory({ data: { id: routine.id } }).then(setHistory)
+    void orpc.routines.history({ id: routine.id }).then(setHistory)
   }
 
   function startNew() {
@@ -161,24 +150,18 @@ export function RoutinesDialog({
       validateRoutineSchedule(draft.cronExpression, draft.timezone)
       let saved: Routine
       if (selected) {
-        saved = await editRoutine({
-          data: {
-            id: selected.id,
-            name: draft.name,
-            instruction: draft.instruction,
-            cronExpression: draft.cronExpression,
-            timezone: draft.timezone,
-          },
+        saved = await orpc.routines.update({
+          id: selected.id,
+          name: draft.name,
+          instruction: draft.instruction,
+          cronExpression: draft.cronExpression,
+          timezone: draft.timezone,
         })
         if (saved.enabled !== draft.enabled) {
-          saved = await changeRoutineEnabled({
-            data: { id: saved.id, enabled: draft.enabled },
-          })
+          saved = await orpc.routines.setEnabled({ id: saved.id, enabled: draft.enabled })
         }
       } else {
-        saved = await addRoutine({
-          data: { agentId, conversationId, ...draft },
-        })
+        saved = await orpc.routines.create({ agentId, conversationId, ...draft })
       }
       await refresh(saved.id)
     } catch (cause) {
@@ -192,7 +175,7 @@ export function RoutinesDialog({
     if (!selected || !window.confirm(`Delete “${selected.name}”? Run history remains in its conversation.`)) return
     setSaving(true)
     try {
-      await removeRoutine({ data: { id: selected.id, confirmed: true } })
+      await orpc.routines.remove({ id: selected.id, confirmed: true })
       await refresh(null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not delete routine')
@@ -206,7 +189,7 @@ export function RoutinesDialog({
     setSaving(true)
     setError('')
     try {
-      await runRoutine({ data: { id: selected.id } })
+      await orpc.routines.run({ id: selected.id })
       await refreshRunState(selected.id)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not run routine')

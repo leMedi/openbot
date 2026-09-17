@@ -15,17 +15,9 @@ import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
-import {
-  addMcpApiKeyAccount,
-  addMcpServer,
-  changeMcpAccount,
-  changeMcpServer,
-  installMcpFromCatalog,
-  removeMcpAccount,
-  removeMcpServer,
-} from '@/server/mcp'
 import { BotAvatar } from './bot-avatar'
 import { SKILLS, type Skill } from './data'
+import { orpc } from '@/lib/orpc'
 
 export function PluginsDialog({
   open,
@@ -232,7 +224,7 @@ function PluginsTab({
   async function ensureDetailServer() {
     if (detail) return detail
     if (!detailCatalog) throw new Error('Select an MCP before connecting an account')
-    const installed = await installMcpFromCatalog({ data: { key: detailCatalog.key } })
+    const installed = await orpc.mcp.installFromCatalog({ key: detailCatalog.key })
     setDetailId(installed.id)
     await onChanged()
     return installed
@@ -255,8 +247,8 @@ function PluginsTab({
         },
       }
       const saved = detail && !creatingServer
-        ? await changeMcpServer({ data: { id: detail.id, patch: input } })
-        : await addMcpServer({ data: input })
+        ? await orpc.mcp.updateServer({ id: detail.id, patch: input })
+        : await orpc.mcp.createServer(input)
       await onChanged()
       setDetailId(saved.id)
       setCreatingServer(false)
@@ -279,7 +271,7 @@ function PluginsTab({
     setSaving(true)
     setError('')
     try {
-      await removeMcpServer({ data: { id: server.id } })
+      await orpc.mcp.removeServer({ id: server.id })
       setDetailId('')
       await onChanged()
     } catch (cause) {
@@ -307,12 +299,10 @@ function PluginsTab({
     setError('')
     try {
       const server = await ensureDetailServer()
-      await addMcpApiKeyAccount({
-        data: {
-          serverId: server.id,
-          label: nextAccountLabel(accounts.filter((account) => account.serverId === server.id)),
-          apiKey,
-        },
+      await orpc.mcp.createApiKeyAccount({
+        serverId: server.id,
+        label: nextAccountLabel(accounts.filter((account) => account.serverId === server.id)),
+        apiKey,
       })
       setApiKey('')
       setAddingAccount(null)
@@ -351,7 +341,7 @@ function PluginsTab({
     setSaving(true)
     setError('')
     try {
-      await changeMcpAccount({ data: { id: account.id, patch: { label } } })
+      await orpc.mcp.updateAccount({ id: account.id, patch: { label } })
       await onChanged()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not rename the MCP account')
@@ -365,7 +355,7 @@ function PluginsTab({
     setSaving(true)
     setError('')
     try {
-      await removeMcpAccount({ data: { id: account.id } })
+      await orpc.mcp.removeAccount({ id: account.id })
       await onChanged()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not remove the MCP account')

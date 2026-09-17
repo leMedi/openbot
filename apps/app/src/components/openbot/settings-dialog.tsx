@@ -40,23 +40,11 @@ import {
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
-import { clearAppData, type AppDataTarget } from '@/server/data'
-import { saveUserProfile } from '@/server/profile'
-import {
-  disconnectAiProvider,
-  getAiProviders,
-  refreshAiProviders,
-  saveAiModelSettings,
-} from '@/server/providers'
 import { ModelPicker } from './model-picker'
 import { ProviderBrandIcon } from './provider-brand-icon'
-import {
-  checkServerUpdate,
-  getServerConfig,
-  getServerUpdate,
-  startServerUpdate,
-} from '@/server/config'
 import { formatServerLogs, type ServerLogEntry, type ServerLogLevel } from '@/lib/server-logs'
+import type { AppDataTarget, UpdateStatus } from '@openbot/api'
+import { orpc, subscribe } from '@/lib/orpc'
 
 type Tab = 'general' | 'providers' | 'server' | 'data'
 
@@ -227,9 +215,7 @@ function DataTab({
     setClearing(true)
     setError(null)
     try {
-      const { firstConversationId } = await clearAppData({
-        data: { targets: selected },
-      })
+      const { firstConversationId } = await orpc.data.clear({ targets: selected })
       await onDataCleared(firstConversationId)
       setConfirming(false)
       setSelected([])
@@ -380,9 +366,7 @@ function GeneralTab({
     setSaved(false)
     setError(null)
     try {
-      const updated = await saveUserProfile({
-        data: { firstName, lastName, about, timezone },
-      })
+      const updated = await orpc.profile.update({ firstName, lastName, about, timezone })
       onSaved(updated)
       setSaved(true)
     } catch (cause) {
@@ -498,12 +482,12 @@ export function ProvidersTab({
   const [answer, setAnswer] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const eventSourceRef = useRef<EventSource | null>(null)
+  const closeStreamRef = useRef<(() => void) | null>(null)
   const flowIdRef = useRef<string | null>(null)
 
   useEffect(() => setConfiguration(initialConfiguration), [initialConfiguration])
   useEffect(() => () => {
-    eventSourceRef.current?.close()
+    closeStreamRef.current?.()
     const flowId = flowIdRef.current
     if (flowId) void fetch(`/api/provider-auth-flows/${flowId}`, { method: 'DELETE' })
   }, [])
@@ -517,14 +501,14 @@ export function ProvidersTab({
   const modelOptions = configuration.models
 
   async function reload() {
-    const updated = await getAiProviders()
+    const updated = await orpc.providers.list()
     setConfiguration(updated)
     onChanged()
   }
 
   function closeEventSource() {
-    eventSourceRef.current?.close()
-    eventSourceRef.current = null
+    closeStreamRef.current?.()
+    closeStreamRef.current = null
     flowIdRef.current = null
   }
 
@@ -555,12 +539,9 @@ export function ProvidersTab({
       const flow: ActiveAuthFlow = { flowId: body.flowId, authType, notifications: [] }
       setSession((current) => current ? { ...current, flow } : { provider, chose: false, flow })
       flowIdRef.current = body.flowId
-      const source = new EventSource(`/api/provider-auth-flows/${body.flowId}/stream`)
-      eventSourceRef.current = source
       const patchFlow = (patch: (flow: ActiveAuthFlow) => ActiveAuthFlow) =>
         setSession((current) => current?.flow ? { ...current, flow: patch(current.flow) } : current)
-      source.onmessage = (message) => {
-        const event = JSON.parse(message.data) as ProviderAuthFlowEvent
+      const onEvent = (event: ProviderAuthFlowEvent) => {
         if (event.type === 'prompt') {
           setAnswer('')
           patchFlow((flow) => ({ ...flow, prompt: event }))
@@ -581,11 +562,19 @@ export function ProvidersTab({
           patchFlow((flow) => ({ ...flow, error: event.message }))
         }
       }
-      source.onerror = () => {
-        if (eventSourceRef.current !== source) return
+      const lostConnection = () => {
+        if (closeStreamRef.current !== close) return
         closeEventSource()
         patchFlow((flow) => ({ ...flow, error: 'The provider login connection closed unexpectedly' }))
       }
+      // The flow replays its events on reattach, so a dropped connection is
+      // retried a few times before it is reported.
+      const close = subscribe(
+        (options) => orpc.providers.watchLogin({ flowId: body.flowId }, options),
+        { onEvent, onEnd: lostConnection, onError: lostConnection },
+        { retry: 3 },
+      )
+      closeStreamRef.current = close
     } catch (cause) {
       setSession((current) => current
         ? { ...current, flow: { flowId: '', authType, notifications: [], error: cause instanceof Error ? cause.message : 'Provider login could not start' } }
@@ -639,7 +628,7 @@ export function ProvidersTab({
     setBusy(true)
     setError(null)
     try {
-      const catalog = await disconnectAiProvider({ data: { providerId } })
+      const catalog = await orpc.providers.disconnect({ providerId })
       setConfiguration((current) => ({ ...catalog, setting: current.setting }))
       onChanged()
     } catch (cause) {
@@ -653,11 +642,9 @@ export function ProvidersTab({
     setBusy(true)
     setError(null)
     try {
-      const setting = await saveAiModelSettings({
-        data: {
-          defaultAgentModel: configuration.setting.defaultAgentModel,
-          orchestratorModel: configuration.setting.orchestratorModel,
-        },
+      const setting = await orpc.providers.saveModelSettings({
+        defaultAgentModel: configuration.setting.defaultAgentModel,
+        orchestratorModel: configuration.setting.orchestratorModel,
       })
       setConfiguration((current) => ({ ...current, setting }))
       onChanged()
@@ -679,7 +666,7 @@ export function ProvidersTab({
           onClick={() => {
             setBusy(true)
             setError(null)
-            void refreshAiProviders({ data: {} })
+            void orpc.providers.refresh({})
               .then((catalog) => setConfiguration((current) => ({
                 ...catalog,
                 setting: current.setting,
@@ -1112,7 +1099,7 @@ function ServerTab({
   open: boolean
   onUpdateStatus: (updateAvailable: boolean) => void
 }) {
-  const [status, setStatus] = useState<Awaited<ReturnType<typeof getServerUpdate>> | null>(null)
+  const [status, setStatus] = useState<UpdateStatus | null>(null)
   const [host, setHost] = useState('—')
   const [latency, setLatency] = useState<number | null>(null)
   const [checking, setChecking] = useState(false)
@@ -1127,7 +1114,7 @@ function ServerTab({
     setChecking(true); setError(null)
     const started = performance.now()
     try {
-      const [nextStatus, config] = await Promise.all([checkServerUpdate(), getServerConfig()])
+      const [nextStatus, config] = await Promise.all([orpc.config.checkUpdate(), orpc.config.get()])
       setStatus(nextStatus); onUpdateStatus(nextStatus.updateAvailable); setHost(config.host); setLatency(Math.round(performance.now() - started))
     } catch (cause) {
       onUpdateStatus(false)
@@ -1138,10 +1125,10 @@ function ServerTab({
 
   useEffect(() => {
     if (!open) return
-    void Promise.all([getServerUpdate(), getServerConfig()]).then(([nextStatus, config]) => {
+    void Promise.all([orpc.config.update(), orpc.config.get()]).then(([nextStatus, config]) => {
       setStatus(nextStatus); onUpdateStatus(nextStatus.updateAvailable); setHost(config.host)
       const started = performance.now()
-      return getServerConfig().then(() => setLatency(Math.round(performance.now() - started)))
+      return orpc.config.get().then(() => setLatency(Math.round(performance.now() - started)))
     }).catch((cause) => {
       onUpdateStatus(false)
       setError(cause instanceof Error ? cause.message : 'Could not load server status')
@@ -1160,7 +1147,7 @@ function ServerTab({
       let startTimeout: number | undefined
       try {
         await Promise.race([
-          startServerUpdate(),
+          orpc.config.startUpdate(),
           new Promise<void>((resolve) => {
             startTimeout = window.setTimeout(resolve, 15_000)
           }),
@@ -1245,19 +1232,20 @@ function ServerLogs({ open }: { open: boolean }) {
 
   useEffect(() => {
     if (!open) return
-    const source = new EventSource('/api/server-logs/stream')
-    source.onopen = () => setStreaming(true)
-    source.onmessage = (message) => {
-      const entry = JSON.parse(message.data) as ServerLogEntry
-      setEntries((current) => {
-        if (current.some((item) => item.id === entry.id)) return current
-        const next = [...current, entry]
-        return next.length > MAX_VISIBLE_LOGS ? next.slice(next.length - MAX_VISIBLE_LOGS) : next
-      })
-    }
-    // EventSource reconnects on its own and resumes from Last-Event-ID.
-    source.onerror = () => setStreaming(false)
-    return () => { source.close(); setStreaming(false) }
+    // The stream reconnects forever and resumes from the last event id.
+    const close = subscribe((options) => orpc.logs.watch(undefined, options), {
+      onOpen: () => setStreaming(true),
+      onEvent: (entry) => {
+        setEntries((current) => {
+          if (current.some((item) => item.id === entry.id)) return current
+          const next = [...current, entry]
+          return next.length > MAX_VISIBLE_LOGS ? next.slice(next.length - MAX_VISIBLE_LOGS) : next
+        })
+      },
+      onEnd: () => setStreaming(false),
+      onError: () => setStreaming(false),
+    }, { retry: Number.POSITIVE_INFINITY, onRetry: () => { setStreaming(false) } })
+    return () => { close(); setStreaming(false) }
   }, [open])
 
   useEffect(() => {

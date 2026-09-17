@@ -1,13 +1,13 @@
-import { createServerFn } from '@tanstack/react-start'
 import { getDesktopMode as getConfiguredDesktopMode } from '@openbot/agent'
-import { readInstalledVersion } from './version'
+import { badRequest, base } from '../base'
+import { readInstalledVersion } from '../version'
 
 const repo = process.env.OPENBOT_GITHUB_REPO ?? 'leMedi/openbot'
 const releasePattern = /^main-([0-9a-f]{12})$/
 let cachedUpdate: UpdateStatus | null = null
 let updatePromise: Promise<UpdateStatus> | null = null
 
-type UpdateStatus = {
+export type UpdateStatus = {
   installedVersion: string
   latestVersion: string | null
   updateAvailable: boolean
@@ -58,34 +58,34 @@ async function getDesktopStatus(): Promise<
   }
 }
 
-export const getServerConfig = createServerFn({ method: 'GET' }).handler(async () => ({
-  model: process.env.OPENBOT_AI_MODEL ?? '',
-  host: process.env.OPENBOT_PUBLIC_URL ?? `http://${process.env.HOST ?? '127.0.0.1'}:${process.env.PORT ?? '3000'}`,
-  desktop: await getDesktopStatus(),
-}))
+export const config = {
+  get: base.handler(async () => ({
+    model: process.env.OPENBOT_AI_MODEL ?? '',
+    host: process.env.OPENBOT_PUBLIC_URL ?? `http://${process.env.HOST ?? '127.0.0.1'}:${process.env.PORT ?? '3000'}`,
+    desktop: await getDesktopStatus(),
+  })),
 
-export const getDesktopMode = createServerFn({ method: 'GET' }).handler(() =>
-  getConfiguredDesktopMode(),
-)
+  desktopMode: base.handler(() => getConfiguredDesktopMode()),
 
-export const getServerUpdate = createServerFn({ method: 'GET' }).handler(async () => cachedUpdate ?? refreshUpdateCheck())
+  update: base.handler(async () => cachedUpdate ?? refreshUpdateCheck()),
 
-export const checkServerUpdate = createServerFn({ method: 'POST' }).handler(refreshUpdateCheck)
+  checkUpdate: base.handler(() => refreshUpdateCheck()),
 
-export const startServerUpdate = createServerFn({ method: 'POST' }).handler(async () => {
-  const update = cachedUpdate ?? await refreshUpdateCheck()
-  if (!update.updateAvailable) throw new Error('No update is available')
-  const command = process.env.OPENBOT_UPDATE_COMMAND || '/opt/openbot/current/update-debian.sh'
-  const [{ access, constants }, { spawn }] = await Promise.all([
-    import('node:fs/promises'),
-    import('node:child_process'),
-  ])
-  try { await access(command, constants.X_OK) } catch { throw new Error('Automatic updates are not configured for this server') }
-  const child = spawn(command, [], { detached: true, stdio: 'ignore' })
-  await new Promise<void>((resolve, reject) => {
-    child.once('spawn', resolve)
-    child.once('error', reject)
-  })
-  child.unref()
-  return { started: true }
-})
+  startUpdate: base.handler(async () => {
+    const update = cachedUpdate ?? await refreshUpdateCheck()
+    if (!update.updateAvailable) throw badRequest('No update is available')
+    const command = process.env.OPENBOT_UPDATE_COMMAND || '/opt/openbot/current/update-debian.sh'
+    const [{ access, constants }, { spawn }] = await Promise.all([
+      import('node:fs/promises'),
+      import('node:child_process'),
+    ])
+    try { await access(command, constants.X_OK) } catch { throw badRequest('Automatic updates are not configured for this server') }
+    const child = spawn(command, [], { detached: true, stdio: 'ignore' })
+    await new Promise<void>((resolve, reject) => {
+      child.once('spawn', resolve)
+      child.once('error', reject)
+    })
+    child.unref()
+    return { started: true }
+  }),
+}

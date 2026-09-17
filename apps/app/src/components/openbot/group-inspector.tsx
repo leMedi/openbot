@@ -9,9 +9,9 @@ import {
   CommandItem,
   CommandList,
 } from '@/components/ui/command'
-import { updateGroupMembers } from '@/server/groups'
 import { BotAvatar } from './bot-avatar'
 import type { Bot } from './data'
+import { orpc } from '@/lib/orpc'
 
 function memberInput(memberIds: string[]) {
   return memberIds.map((agentId) => ({ type: 'agent' as const, agentId }))
@@ -41,9 +41,7 @@ function GroupMembersEditor({
     setSaving(true)
     setError('')
     try {
-      await updateGroupMembers({
-        data: { id: group.id, members: memberInput(nextMemberIds) },
-      })
+      await orpc.groups.setMembers({ id: group.id, members: memberInput(nextMemberIds) })
       setQuery('')
       await onChanged()
     } catch (cause) {

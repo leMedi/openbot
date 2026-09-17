@@ -11,16 +11,11 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
-import {
-  addMemoryItem,
-  getMemoryItems,
-  removeMemoryItem,
-  updateMemory,
-} from '@/server/memory'
 import { BotAvatar } from './bot-avatar'
 import type { Bot, Conversation } from './data'
 import { createDesktopClipboardController } from './desktop-clipboard'
 import { desktopReconnectDelay, instrumentDesktopLiveness } from './desktop-liveness'
+import { orpc } from '@/lib/orpc'
 
 export type DesktopConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'error'
 
@@ -166,11 +161,9 @@ export function Inspector({
 
   async function readMemory() {
     const [shared, scoped] = await Promise.all([
-      getMemoryItems({ data: { scope: 'user' } }),
+      orpc.memory.list({ scope: 'user' }),
       activeAgentId
-        ? getMemoryItems({
-            data: { scope: 'agent', subjectAgentId: activeAgentId },
-          })
+        ? orpc.memory.list({ scope: 'agent', subjectAgentId: activeAgentId })
         : Promise.resolve([]),
     ])
     return [...shared, ...scoped]
@@ -232,25 +225,19 @@ export function Inspector({
     setMemoryError('')
     try {
       if (editingMemory) {
-        await updateMemory({
-          data: {
-            selector: selectorFor(editingMemory),
-            patch: { kind: memoryKind, content },
-          },
+        await orpc.memory.update({
+          selector: selectorFor(editingMemory),
+          patch: { kind: memoryKind, content },
         })
       } else if (memoryScope === 'agent' && activeAgentId) {
-        await addMemoryItem({
-          data: {
-            scope: 'agent',
-            subjectAgentId: activeAgentId,
-            kind: memoryKind,
-            content,
-          },
+        await orpc.memory.create({
+          scope: 'agent',
+          subjectAgentId: activeAgentId,
+          kind: memoryKind,
+          content,
         })
       } else {
-        await addMemoryItem({
-          data: { scope: 'user', kind: memoryKind, content },
-        })
+        await orpc.memory.create({ scope: 'user', kind: memoryKind, content })
       }
       setMemoryItems(await readMemory())
       resetMemoryDraft()
@@ -268,7 +255,7 @@ export function Inspector({
     setMemorySaving(true)
     setMemoryError('')
     try {
-      await removeMemoryItem({ data: selectorFor(item) })
+      await orpc.memory.remove(selectorFor(item))
       setMemoryItems((items) => items.filter((candidate) => candidate.id !== item.id))
       if (editingMemory?.id === item.id) resetMemoryDraft()
     } catch (error) {

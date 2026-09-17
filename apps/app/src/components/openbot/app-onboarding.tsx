@@ -6,8 +6,8 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { completeAppOnboarding, saveUserProfile } from '@/server/profile'
 import { ProvidersTab } from './settings-dialog'
+import { orpc } from '@/lib/orpc'
 
 export const APP_ONBOARDING_COPY = {
   profileTitle: 'Tell OpenBot about you',
@@ -52,7 +52,7 @@ export function AppOnboarding({
     setBusy(true)
     setError('')
     try {
-      await saveUserProfile({ data: { firstName, lastName, about, timezone } })
+      await orpc.profile.update({ firstName, lastName, about, timezone })
       setStep(2)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Your profile could not be saved')
@@ -66,7 +66,7 @@ export function AppOnboarding({
     setBusy(true)
     setError('')
     try {
-      const completed = await completeAppOnboarding()
+      const completed = await orpc.profile.completeOnboarding()
       await onComplete(completed)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Onboarding could not be completed')

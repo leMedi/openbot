@@ -32,30 +32,7 @@ import { SettingsDialog } from '@/components/openbot/settings-dialog'
 import { Sidebar } from '@/components/openbot/sidebar'
 import { Button } from '@/components/ui/button'
 import { useIsMobile } from '@/hooks/use-is-mobile'
-import { addAgent, getAgents } from '@/server/agents'
-import { getAiProviders } from '@/server/providers'
-import { addGroup, getGroups } from '@/server/groups'
-import { getAvailableMcpCatalogKeys, getMcpConfiguration } from '@/server/mcp'
-import { getUserProfile } from '@/server/profile'
-import {
-  cancelConversationTurn,
-  getConversationMessages,
-  respondToConversationTurn,
-  sendConversationMessage,
-  toggleConversationReaction,
-} from '@/server/messages'
-import {
-  clearConversation,
-  getConversations,
-  renameConversation,
-  setConversationUnread,
-} from '@/server/conversations'
-import { getDesktopMode } from '@/server/config'
-import {
-  getConversationSubagents,
-  steerAgentSubagent,
-  stopAgentSubagent,
-} from '@/server/subagents'
+import { orpc, subscribe } from '@/lib/orpc'
 
 function authorFromBot(bot: Bot, kind: 'agent' | 'member' = 'agent'): Author {
   return {
@@ -83,14 +60,14 @@ export const Route = createFileRoute('/')({
       providers,
       desktopMode,
     ] = await Promise.all([
-      getAgents(),
-      getGroups(),
-      getConversations(),
-      getMcpConfiguration(),
-      getAvailableMcpCatalogKeys(),
-      getUserProfile(),
-      getAiProviders(),
-      getDesktopMode(),
+      orpc.agents.list(),
+      orpc.groups.list(),
+      orpc.conversations.list(),
+      orpc.mcp.configuration(),
+      orpc.mcp.availableCatalogKeys(),
+      orpc.profile.get(),
+      orpc.providers.list(),
+      orpc.config.desktopMode(),
     ])
     return {
       agents,
@@ -224,20 +201,17 @@ function OpenBot() {
   // Scheduled turns have no composer-known turn id. A global stream refreshes
   // their delivery conversation when a routine emits or settles.
   useEffect(() => {
-    const source = new EventSource('/api/routines/stream')
-    source.onmessage = (message) => {
-      try {
-        const event = JSON.parse(message.data) as { conversationId?: string }
+    return subscribe((options) => orpc.routines.watch(undefined, options), {
+      onEvent: (event) => {
         if (event.conversationId === activeId) {
-          void getConversationMessages({ data: { conversationId: activeId } })
+          void orpc.messages.list({ conversationId: activeId })
             .then(({ rows, pendingTurnId }) => {
               setTranscript({ conversationId: activeId, rows, pendingTurnId })
             })
         }
         void router.invalidate()
-      } catch { /* Ignore malformed live updates. */ }
-    }
-    return () => source.close()
+      },
+    })
   }, [activeId, router])
 
   const findConversation = (id: string) =>
@@ -302,7 +276,7 @@ function OpenBot() {
   useEffect(() => {
     if (!activeId) return
     let cancelled = false
-    getConversationMessages({ data: { conversationId: activeId } })
+    orpc.messages.list({ conversationId: activeId })
       .then(({ rows, pendingTurnId }) => {
         if (!cancelled) setTranscript({ conversationId: activeId, rows, pendingTurnId })
       })
@@ -332,7 +306,7 @@ function OpenBot() {
     openConversation(id)
     const picked = findConversation(id)
     if (picked?.unread) {
-      await setConversationUnread({ data: { id, unread: false } })
+      await orpc.conversations.setUnread({ id, unread: false })
       await router.invalidate()
     }
   }
@@ -340,20 +314,20 @@ function OpenBot() {
   async function toggleUnread(id: string) {
     const target = findConversation(id)
     if (!target) return
-    await setConversationUnread({ data: { id, unread: !target.unread } })
+    await orpc.conversations.setUnread({ id, unread: !target.unread })
     await router.invalidate()
   }
 
   async function submitRename(title: string) {
     if (!renameTarget) return
-    await renameConversation({ data: { id: renameTarget.id, title } })
+    await orpc.conversations.rename({ id: renameTarget.id, title })
     setRenameTarget(null)
     await router.invalidate()
   }
 
   async function confirmClearConversation() {
     if (!clearTarget) return
-    const fresh = await clearConversation({ data: { id: clearTarget.id } })
+    const fresh = await orpc.conversations.clear({ id: clearTarget.id })
     const wasActive = clearTarget.id === activeId
     setClearTarget(null)
     await router.invalidate()
@@ -395,17 +369,15 @@ function OpenBot() {
   }
 
   async function createAgentFromConversation(name: string) {
-    const created = await addAgent({ data: { name } })
+    const created = await orpc.agents.create({ name })
     await router.invalidate()
     openConversation(created.conversation.id)
   }
 
   async function createGroupFromConversation(agentIds: string[], name: string) {
-    const created = await addGroup({
-      data: {
-        name,
-        members: agentIds.map((agentId) => ({ type: 'agent' as const, agentId })),
-      },
+    const created = await orpc.groups.create({
+      name,
+      members: agentIds.map((agentId) => ({ type: 'agent' as const, agentId })),
     })
     await router.invalidate()
     openConversation(created.conversation.id)
@@ -485,21 +457,19 @@ function OpenBot() {
             : undefined
         }
         onSendMessage={(draft) =>
-          sendConversationMessage({
-            data: {
-              conversationId: active.id,
-              text: draft.prompt,
-              // The server drops references it cannot resolve (e.g. an
-              // optimistic local id), degrading to a plain message.
-              replyToEntryId: draft.replyToId ?? null,
-              attachments: draft.attachments.map((attachment) => ({
-                name: attachment.name,
-                mediaType: attachment.mediaType ?? 'application/octet-stream',
-                data: attachment.data ?? '',
-              })),
-              requestId: crypto.randomUUID(),
-              idempotencyKey: draft.idempotencyKey ?? crypto.randomUUID(),
-            },
+          orpc.messages.send({
+            conversationId: active.id,
+            text: draft.prompt,
+            // The server drops references it cannot resolve (e.g. an
+            // optimistic local id), degrading to a plain message.
+            replyToEntryId: draft.replyToId ?? null,
+            attachments: draft.attachments.map((attachment) => ({
+              name: attachment.name,
+              mediaType: attachment.mediaType ?? 'application/octet-stream',
+              data: attachment.data ?? '',
+            })),
+            requestId: crypto.randomUUID(),
+            idempotencyKey: draft.idempotencyKey ?? crypto.randomUUID(),
           })
         }
         onRespondToTurn={({
@@ -511,60 +481,48 @@ function OpenBot() {
           requestId,
           idempotencyKey,
         }) =>
-          respondToConversationTurn({
-            data: {
-              turnId,
-              text,
-              optionId,
-              dismissed,
-              toolCallId,
-              requestId,
-              idempotencyKey,
-            },
+          orpc.messages.respond({
+            turnId,
+            text,
+            optionId,
+            dismissed,
+            toolCallId,
+            requestId,
+            idempotencyKey,
           })
         }
         onToggleReaction={(messageId, reaction) =>
-          toggleConversationReaction({
-            data: { conversationId: active.id, messageId, reaction },
-          })
+          orpc.messages.toggleReaction({ conversationId: active.id, messageId, reaction })
         }
         onRefreshEntries={async () => {
-          const refreshed = await getConversationMessages({
-            data: { conversationId: active.id },
-          })
+          const refreshed = await orpc.messages.list({ conversationId: active.id })
           return entriesFromMessages(
             refreshed.rows,
             authorFromBot(bot),
             transcriptAuthorsById,
           )
         }}
-        onCancelTurn={(turnId) => cancelConversationTurn({ data: { turnId } })}
+        onCancelTurn={(turnId) => orpc.messages.cancelTurn({ turnId })}
         onTurnSettled={async () => {
           // The assistant message advanced the sequence counter; the user
           // is looking at it, so move the read horizon and refresh the
           // sidebar ordering.
-          await setConversationUnread({ data: { id: active.id, unread: false } })
+          await orpc.conversations.setUnread({ id: active.id, unread: false })
           await router.invalidate()
         }}
-        onListSubagents={() => getConversationSubagents({
-          data: {
-            conversationId: active.id,
-            includeSettled: false,
-          },
+        onListSubagents={() => orpc.subagents.list({
+          conversationId: active.id,
+          includeSettled: false,
         })}
-        onSteerSubagent={(subagentId, message) => steerAgentSubagent({
-          data: {
-            conversationId: active.id,
-            subagentId,
-            message,
-            requestId: crypto.randomUUID(),
-          },
+        onSteerSubagent={(subagentId, message) => orpc.subagents.steer({
+          conversationId: active.id,
+          subagentId,
+          message,
+          requestId: crypto.randomUUID(),
         })}
-        onStopSubagent={(subagentId) => stopAgentSubagent({
-          data: {
-            conversationId: active.id,
-            subagentId,
-          },
+        onStopSubagent={(subagentId) => orpc.subagents.stop({
+          conversationId: active.id,
+          subagentId,
         })}
         onEditAgent={
           mainAgent
@@ -572,7 +530,7 @@ function OpenBot() {
             : undefined
         }
         onRenameTitle={async (title) => {
-          await renameConversation({ data: { id: active.id, title } })
+          await orpc.conversations.rename({ id: active.id, title })
           await router.invalidate()
         }}
         onBack={isMobile ? () => setMobileDetail(false) : undefined}

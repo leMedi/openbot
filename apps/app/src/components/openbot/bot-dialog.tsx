@@ -18,11 +18,11 @@ import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
-import { addAgent, removeAgent, updateAgent } from '@/server/agents'
 import { agentAvatarUrl } from './agents'
 import { BotAvatar } from './bot-avatar'
 import { ModelPicker } from './model-picker'
 import { AVATAR_COLORS, AVATAR_SHAPES } from './data'
+import { orpc } from '@/lib/orpc'
 
 const ACCEPTED_AVATAR_TYPES = 'image/png,image/jpeg,image/webp,image/gif'
 
@@ -123,12 +123,10 @@ export function BotDialog({
       let firstConversation: Conversation | null = null
       const existing = editing ? agent : createdRef.current?.agent
       if (existing) {
-        saved = await updateAgent({
-          data: { id: existing.id, patch: profile, mcpAccountIds: grants },
-        })
+        saved = await orpc.agents.update({ id: existing.id, patch: profile, mcpAccountIds: grants })
         firstConversation = createdRef.current?.conversation ?? null
       } else {
-        const created = await addAgent({ data: { ...profile, mcpAccountIds: grants } })
+        const created = await orpc.agents.create({ ...profile, mcpAccountIds: grants })
         createdRef.current = created
         saved = created.agent
         firstConversation = created.conversation
@@ -169,7 +167,7 @@ export function BotDialog({
     setDeleting(true)
     setDeleteError(null)
     try {
-      await removeAgent({ data: { id: agent.id } })
+      await orpc.agents.remove({ id: agent.id })
       setDeleteOpen(false)
       onOpenChange(false)
       try {

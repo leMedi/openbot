@@ -6,8 +6,7 @@ import {
   installServerLogCapture,
   listServerLogs,
   subscribeServerLogs,
-} from './logs.ts'
-import { formatServerLogs } from '../lib/server-logs.ts'
+} from './server-logs.ts'
 
 test('captures console output with a level and notifies subscribers', () => {
   installServerLogCapture()
@@ -27,7 +26,3 @@ test('keeps only the most recent entries', () => {
   assert.equal(entries.at(-1)?.message, `line ${SERVER_LOG_CAPACITY + 19}`)
 })
 
-test('formats entries as downloadable text', () => {
-  const text = formatServerLogs([{ id: 1, time: '2026-09-06T10:00:00.000Z', level: 'info', message: 'ready' }])
-  assert.equal(text, '2026-09-06T10:00:00.000Z INFO  ready')
-})
