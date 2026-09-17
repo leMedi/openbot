@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "OpenBot",
+    "slug": "openbot",
+    "scheme": "openbot",
+    "version": "0.0.1",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0b0b0d",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.openbot.app"
+    },
+    "android": {
+      "package": "com.openbot.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0b0b0d"
+      },
+      "edgeToEdgeEnabled": true
+    },
+    "plugins": [
+      "expo-router",
+      "expo-sqlite",
+      ["expo-splash-screen", { "backgroundColor": "#0b0b0d", "image": "./assets/splash-icon.png", "imageWidth": 160 }]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}

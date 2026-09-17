@@ -6,21 +6,21 @@ import {
   activityFromMessages,
   authorForMessage,
   entriesFromMessages,
-} from '@/components/conversation/adapter'
+} from '@openbot/client/conversation/adapter'
 import { Conversation } from '@/components/conversation/conversation'
-import type { Author } from '@/components/conversation/types'
-import { botFromAgent } from '@/components/openbot/agents'
+import type { Author } from '@openbot/client/conversation/types'
+import { botFromAgent } from '@openbot/client/openbot/agents'
 import { BotDialog } from '@/components/openbot/bot-dialog'
-import { conversationFromRow } from '@/components/openbot/conversations'
-import { botIn, type Bot, type Conversation as BotConversation } from '@/components/openbot/data'
+import { conversationFromRow } from '@openbot/client/openbot/conversations'
+import { botIn, type Bot, type Conversation as BotConversation } from '@openbot/client/openbot/data'
 import { DeleteGroupDialog, GroupDialog } from '@/components/openbot/group-dialog'
-import { botFromGroup, groupMemberIds } from '@/components/openbot/groups'
+import { botFromGroup, groupMemberIds } from '@openbot/client/openbot/groups'
 import { Inspector } from '@/components/openbot/inspector'
 import { MobileStack } from '@/components/openbot/mobile-stack'
 import { NewConversation } from '@/components/openbot/new-conversation'
 import { AppOnboarding } from '@/components/openbot/app-onboarding'
 import { GroupInspector, MobileGroupMembers } from '@/components/openbot/group-inspector'
-import { YOU } from '@/components/conversation/data'
+import { YOU } from '@openbot/client/conversation/data'
 import {
   ClearConversationDialog,
   RenameConversationDialog,

@@ -10,7 +10,7 @@ import {
   deleteAgent as deleteManagedAgent,
 } from '@openbot/agent'
 import * as z from 'zod'
-import { AVATAR_COLORS, AVATAR_SHAPES } from '../avatar'
+import { AVATAR_COLORS, AVATAR_SHAPES } from '@openbot/client/avatar'
 import { badRequest, base, notFound } from '../base'
 
 // Creation defaults live in the registry (createAgent); omitted fields here

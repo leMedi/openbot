@@ -14,7 +14,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { ToolStatusIcon } from './tool-rows'
-import type { ActivityItem, ActivityTab } from './types'
+import type { ActivityItem, ActivityTab } from '@openbot/client/conversation/types'
 
 function TabMarker({ status }: { status?: ActivityTab['status'] }) {
   switch (status) {

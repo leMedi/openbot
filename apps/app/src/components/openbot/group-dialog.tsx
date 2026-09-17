@@ -21,13 +21,13 @@ import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
 import { BotAvatar } from './bot-avatar'
-import type { Bot } from './data'
+import type { Bot } from '@openbot/client/openbot/data'
 import {
   GROUP_AVATAR_COLOR,
   GROUP_AVATAR_SHAPE,
   groupAvatarUrl,
   groupMemberIds,
-} from './groups'
+} from '@openbot/client/openbot/groups'
 import { orpc } from '@/lib/orpc'
 
 const ACCEPTED_AVATAR_TYPES = 'image/png,image/jpeg,image/webp,image/gif'

@@ -16,7 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { BotAvatar } from './bot-avatar'
-import { SKILLS, type Skill } from './data'
+import { SKILLS, type Skill } from '@openbot/client/openbot/data'
 import { orpc } from '@/lib/orpc'
 
 export function PluginsDialog({

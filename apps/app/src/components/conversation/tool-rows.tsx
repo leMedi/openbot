@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ChevronRight, Loader2, Wrench, XCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { ToolCall, ToolResult } from './types'
+import type { ToolCall, ToolResult } from '@openbot/client/conversation/types'
 
 export function ToolStatusIcon({
   status,

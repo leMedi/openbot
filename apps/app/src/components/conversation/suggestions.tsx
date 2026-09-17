@@ -14,7 +14,7 @@ import type { SuggestionOptions, SuggestionProps } from '@tiptap/suggestion'
 import type { Agent } from '@openbot/db'
 import { AtSign, Hash, Plug, SmilePlus, Workflow, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { MENTION_ITEMS, PR_ITEMS, WORKFLOW_ITEMS } from './data'
+import { MENTION_ITEMS, PR_ITEMS, WORKFLOW_ITEMS } from '@openbot/client/conversation/data'
 
 export type SuggestionItem = {
   id: string

@@ -10,7 +10,7 @@ import {
   CommandList,
 } from '@/components/ui/command'
 import { BotAvatar } from './bot-avatar'
-import type { Bot } from './data'
+import type { Bot } from '@openbot/client/openbot/data'
 import { orpc } from '@/lib/orpc'
 
 function memberInput(memberIds: string[]) {

@@ -1,6 +1,6 @@
 import { MessageRow, ThinkingRow, TimelineRow, ToolEntryRow } from './rows'
 import type { MessageRowHandlers } from './rows'
-import type { Entry } from './types'
+import type { Entry } from '@openbot/client/conversation/types'
 
 /** True when the entry starts a new visual group of adjacent same-author messages. */
 function isGroupStart(entries: Entry[], index: number) {

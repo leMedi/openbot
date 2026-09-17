@@ -19,7 +19,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { AgentMarkdown } from './agent-markdown'
-import type { Card } from './types'
+import type { Card } from '@openbot/client/conversation/types'
 
 export function SendMessageCard({ card }: { card: Card }) {
   switch (card.kind) {

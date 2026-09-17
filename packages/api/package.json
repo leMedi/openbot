@@ -5,8 +5,7 @@
   "type": "module",
   "sideEffects": false,
   "exports": {
-    ".": "./src/index.ts",
-    "./avatar": "./src/avatar.ts"
+    ".": "./src/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -18,7 +17,8 @@
     "@openbot/memory": "workspace:*",
     "@openbot/plugins": "workspace:*",
     "@orpc/server": "1.15.1",
-    "zod": "4.4.3"
+    "zod": "4.4.3",
+    "@openbot/client": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "26.4.0",

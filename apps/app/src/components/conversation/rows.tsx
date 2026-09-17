@@ -34,7 +34,7 @@ import type {
   TimelineEntry,
   ToolEntry,
   WidgetResponse,
-} from './types'
+} from '@openbot/client/conversation/types'
 
 export function TypingDots() {
   return (

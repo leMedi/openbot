@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { botIn, type Bot, type Conversation } from './data'
+import { botIn, type Bot, type Conversation } from '@openbot/client/openbot/data'
 
 export function RenameConversationDialog({
   conversation,

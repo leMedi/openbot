@@ -31,7 +31,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { BotAvatar } from './bot-avatar'
-import { botIn, type Bot, type Conversation } from './data'
+import { botIn, type Bot, type Conversation } from '@openbot/client/openbot/data'
 
 type SidebarAvatar = Pick<Bot, 'id' | 'name' | 'color' | 'shape' | 'avatarUrl'>
 

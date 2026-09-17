@@ -124,7 +124,7 @@ export const BOT_COLORS = [
   '#3f8f8a',
 ]
 
-import { AVATAR_COLORS, AVATAR_SHAPES } from '@openbot/api/avatar'
+import { AVATAR_COLORS, AVATAR_SHAPES } from '../avatar'
 
 export { AVATAR_COLORS, AVATAR_SHAPES }
 

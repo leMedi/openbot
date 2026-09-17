@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils'
-import { avatarShapePath, initialOf } from './data'
+import { avatarShapePath, initialOf } from '@openbot/client/openbot/data'
 
 export function BotAvatar({
   name,

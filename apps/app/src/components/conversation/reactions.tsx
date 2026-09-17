@@ -4,8 +4,8 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import { MORE_EMOJI, QUICK_EMOJI } from './data'
-import type { Reaction } from './types'
+import { MORE_EMOJI, QUICK_EMOJI } from '@openbot/client/conversation/data'
+import type { Reaction } from '@openbot/client/conversation/types'
 
 /**
  * Reaction pills. First-seen emoji order is preserved by the entry state;

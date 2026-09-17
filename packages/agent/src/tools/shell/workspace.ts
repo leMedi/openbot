@@ -22,9 +22,12 @@ export function resolveWorkspacePath(workspace: string, relative: string) {
 }
 
 /** Minimal command environment: server credentials never reach agent shells. */
-export function shellEnvironment(workspace: string, displayNumber?: number) {
+// NODE_ENV is forwarded explicitly: the mobile app type-checks this file
+// through @openbot/api, where React Native's globals make it a required key.
+export function shellEnvironment(workspace: string, displayNumber?: number): NodeJS.ProcessEnv {
   return {
     PATH: process.env.PATH,
+    NODE_ENV: process.env.NODE_ENV,
     HOME: workspace,
     LANG: process.env.LANG ?? 'en_US.UTF-8',
     TERM: 'dumb',

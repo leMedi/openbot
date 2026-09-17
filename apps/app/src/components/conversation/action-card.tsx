@@ -6,7 +6,7 @@ import { useState } from 'react'
 import { MCP_CATALOG } from '@openbot/plugins/mcp-catalog'
 import { Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { WidgetOption, WidgetResponse, WidgetView } from './types'
+import type { WidgetOption, WidgetResponse, WidgetView } from '@openbot/client/conversation/types'
 
 export function ActionCard({
   widget,

@@ -21,6 +21,7 @@
     "@novnc/novnc": "1.7.0",
     "@openbot/agent": "workspace:*",
     "@openbot/api": "workspace:*",
+    "@openbot/client": "workspace:*",
     "@openbot/db": "workspace:*",
     "@openbot/memory": "workspace:*",
     "@openbot/plugins": "workspace:*",

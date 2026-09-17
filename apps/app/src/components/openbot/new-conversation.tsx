@@ -1,8 +1,8 @@
 import { useMemo, useRef, useState } from 'react'
 import { BotIcon, ChevronLeft, Loader2, Plus, Users, X } from 'lucide-react'
 import { BotAvatar } from './bot-avatar'
-import type { Bot } from './data'
-import { matchingConversationAgents, namedConversationGroup } from './new-conversation-model'
+import type { Bot } from '@openbot/client/openbot/data'
+import { matchingConversationAgents, namedConversationGroup } from '@openbot/client/openbot/new-conversation-model'
 
 type Mode = 'single' | 'group'
 

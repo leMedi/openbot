@@ -20,7 +20,7 @@ import {
   workflowItems,
   type SuggestionItem,
 } from './suggestions'
-import type { Attachment, Draft, Entry, VoiceState } from './types'
+import type { Attachment, Draft, Entry, VoiceState } from '@openbot/client/conversation/types'
 
 const MAX_ATTACHMENTS = 6
 // Client-persisted, account-sensitive draft storage.

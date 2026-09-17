@@ -6,9 +6,9 @@ import { DesktopDialog } from '@/components/openbot/inspector'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { entryFromMessage } from './adapter'
+import { entryFromMessage } from '@openbot/client/conversation/adapter'
 import { Composer } from './composer'
-import { YOU } from './data'
+import { YOU } from '@openbot/client/conversation/data'
 import { FullConversationDialog } from './full-conversation'
 import type { MessageRowHandlers } from './rows'
 import { Transcript } from './transcript'
@@ -23,7 +23,7 @@ import type {
   WidgetResponse,
   WidgetView,
   SubagentView,
-} from './types'
+} from '@openbot/client/conversation/types'
 
 let seq = 100
 const nextId = () => `local-${seq++}`

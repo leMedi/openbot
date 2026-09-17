@@ -10,7 +10,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
-import type { SubagentView } from './types'
+import type { SubagentView } from '@openbot/client/conversation/types'
 
 type SubagentPanelProps = {
   load: () => Promise<SubagentView[]>

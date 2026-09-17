@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { BotAvatar } from './bot-avatar'
-import type { Bot, Conversation } from './data'
+import type { Bot, Conversation } from '@openbot/client/openbot/data'
 import { createDesktopClipboardController } from './desktop-clipboard'
 import { desktopReconnectDelay, instrumentDesktopLiveness } from './desktop-liveness'
 import { orpc } from '@/lib/orpc'
