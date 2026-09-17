@@ -109,7 +109,6 @@ export function sortProviders<T extends { id: string; name: string }>(providers:
 /** Short descriptions shown under provider names in the settings list. */
 export const PROVIDER_DESCRIPTIONS: Record<string, string> = {
   openai: 'GPT and o-series models with an API key or your ChatGPT account',
-  'openai-codex': 'Codex models through your ChatGPT subscription',
   anthropic: 'Direct access to Claude models, including Pro and Max plans',
   'github-copilot': 'Models included with your GitHub Copilot subscription',
   google: 'Gemini models with an AI Studio key',

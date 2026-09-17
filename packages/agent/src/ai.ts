@@ -4,6 +4,7 @@ import type { Api, Model } from '@earendil-works/pi-ai'
 import { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { dataDirectory } from '@openbot/db'
 import { formatModelReference, parseModelReference } from './model-reference'
+import { combineOpenAIProvider } from './provider-connections'
 
 export * from './model-reference'
 
@@ -140,8 +141,7 @@ export async function getProviderConfiguration(): Promise<ProviderConfigurationD
     modelCount.set(model.provider, (modelCount.get(model.provider) ?? 0) + 1)
   }
 
-  return {
-    providers: providers
+  const providerDtos = providers
       .map((provider) => {
         const status = runtime.getProviderAuthStatus(provider.id)
         const authMethods: ProviderAuthMethodDto[] = []
@@ -163,6 +163,8 @@ export async function getProviderConfiguration(): Promise<ProviderConfigurationD
           modelCount: modelCount.get(provider.id) ?? 0,
         }
       })
+  return {
+    providers: combineOpenAIProvider(providerDtos)
       .sort((left, right) => left.name.localeCompare(right.name)),
     models: available
       .map((model) => toModelDto(model, providerNames.get(model.provider) ?? model.provider))

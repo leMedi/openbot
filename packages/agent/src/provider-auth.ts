@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import type { AuthEvent, AuthPrompt, AuthType } from '@earendil-works/pi-ai'
 import { getModelRuntime, getProviderConfiguration } from './ai'
+import {
+  automaticProviderPrompt,
+  loginProviderId,
+  providerCredentialIds,
+} from './provider-connections'
 
 export type ProviderAuthPromptDto =
   | { type: 'text'; message: string; placeholder?: string }
@@ -89,9 +94,10 @@ function waitForPrompt(flow: AuthFlow, prompt: AuthPrompt): Promise<string> {
 /** Start the same provider-owned flow used by pi's /login command. */
 export async function beginProviderLogin(providerId: string, authType: AuthType) {
   const runtime = await getModelRuntime()
-  const provider = runtime.getProvider(providerId)
+  const runtimeProviderId = loginProviderId(providerId, authType)
+  const provider = runtime.getProvider(runtimeProviderId)
   if (!provider) throw new Error(`Unknown provider: ${providerId}`)
-  if (activeProviderFlows.has(providerId)) {
+  if (activeProviderFlows.has(runtimeProviderId)) {
     throw new Error(`A login for ${provider.name} is already in progress`)
   }
   if (authType === 'api_key' && !provider.auth.apiKey?.login) {
@@ -103,20 +109,21 @@ export async function beginProviderLogin(providerId: string, authType: AuthType)
 
   const flow: AuthFlow = {
     id: `paf_${randomUUID()}`,
-    providerId,
+    providerId: runtimeProviderId,
     controller: new AbortController(),
     events: [],
     subscribers: new Set(),
     terminal: false,
   }
   flows.set(flow.id, flow)
-  activeProviderFlows.set(providerId, flow.id)
+  activeProviderFlows.set(runtimeProviderId, flow.id)
 
   void (async () => {
     try {
-      await runtime.login(providerId, authType, {
+      await runtime.login(runtimeProviderId, authType, {
         signal: flow.controller.signal,
-        prompt: (prompt) => waitForPrompt(flow, prompt),
+        prompt: async (prompt) => automaticProviderPrompt(runtimeProviderId, authType, prompt)
+          ?? waitForPrompt(flow, prompt),
         notify: (notification) => emit(flow, { type: 'notification', notification }),
       })
 
@@ -125,12 +132,12 @@ export async function beginProviderLogin(providerId: string, authType: AuthType)
       try {
         const signal = AbortSignal.any([flow.controller.signal, refreshController.signal])
         const refreshed = await runtime.refresh({
-          providers: [providerId],
+          providers: [runtimeProviderId],
           allowNetwork: true,
           force: true,
           signal,
         })
-        const error = refreshed.errors.get(providerId)
+        const error = refreshed.errors.get(runtimeProviderId)
         if (error) {
           emit(flow, {
             type: 'notification',
@@ -166,7 +173,7 @@ export async function beginProviderLogin(providerId: string, authType: AuthType)
     } finally {
       flow.pending?.reject(new Error('Provider login ended before the prompt was answered'))
       flow.pending = undefined
-      activeProviderFlows.delete(providerId)
+      activeProviderFlows.delete(runtimeProviderId)
       const cleanup = setTimeout(() => flows.delete(flow.id), 10 * 60_000)
       cleanup.unref()
     }
@@ -220,7 +227,7 @@ export async function watchProviderLogin(
 
 export async function disconnectProvider(providerId: string) {
   const runtime = await getModelRuntime()
-  await runtime.logout(providerId)
+  await Promise.all(providerCredentialIds(providerId).map((id) => runtime.logout(id)))
   return getProviderConfiguration()
 }
 
@@ -230,7 +237,7 @@ export async function refreshProviderModels(providerId?: string) {
   const timeout = setTimeout(() => controller.abort(), 15_000)
   try {
     const result = await runtime.refresh({
-      providers: providerId ? [providerId] : undefined,
+      providers: providerId ? providerCredentialIds(providerId) : undefined,
       allowNetwork: true,
       force: true,
       signal: controller.signal,

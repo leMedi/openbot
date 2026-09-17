@@ -1,5 +1,6 @@
 export * from './ai'
 export * from './provider-auth'
+export * from './provider-connections'
 export * from './prompt/system'
 export * from './prompt/assembly'
 export * from './tools'

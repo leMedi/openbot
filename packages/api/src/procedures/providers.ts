@@ -4,6 +4,7 @@ import {
   getProviderConfiguration,
   type ProviderAuthFlowEvent,
   refreshProviderModels,
+  providerCredentialIds,
   resolveKnownModel,
   watchProviderLogin,
 } from '@openbot/agent'
@@ -47,8 +48,9 @@ export const providers = {
         ...reference,
         model: await resolveKnownModel(reference.value),
       })))
+      const credentialIds = new Set(providerCredentialIds(input.providerId))
       const usedBy = resolvedReferences
-        .filter(({ model }) => model?.provider === input.providerId)
+        .filter(({ model }) => model && credentialIds.has(model.provider))
         .map(({ label }) => label)
       if (usedBy.length > 0) {
         throw badRequest(`Choose replacement models before disconnecting; this provider is used by ${usedBy.join(', ')}`)
